@@ -1,3 +1,11 @@
 .local/
 docs/.local/
 .claude/
+
+# Local Go build outputs
+/conductor
+/conductor.exe
+
+# Generated skill-package executables
+/skills/conductor/scripts/conductor
+/skills/conductor/scripts/conductor.exe
