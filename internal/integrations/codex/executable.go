@@ -1,18 +1,18 @@
 package codex
 
 import (
-	"fmt"
-	"os/exec"
 	"strings"
+
+	"github.com/danlavee/Conductor/internal/integrations/execlocate"
 )
 
 func resolveExecutable(executable string) (string, error) {
 	if strings.TrimSpace(executable) != "" {
 		return executable, nil
 	}
-	resolved, err := exec.LookPath("codex")
+	resolved, err := execlocate.Find("Codex CLI", "codex", candidateExecutables())
 	if err != nil {
-		return "", fmt.Errorf("find Codex CLI: install it or set %s to its executable: %w", BinaryEnvironment, err)
+		return "", err
 	}
 	return resolveDesktopExecutable(resolved)
 }

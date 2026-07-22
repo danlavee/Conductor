@@ -29,17 +29,17 @@ func TestWatchAcknowledgementReplaysBeforeCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if replayed != first {
-		t.Fatalf("unacknowledged signal was not replayed: first=%#v replay=%#v", first, replayed)
+		t.Fatalf("unacknowledged summary was not replayed: first=%#v replay=%#v", first, replayed)
 	}
-	if err := a.AcknowledgeSignal(first); err != nil {
+	if err := a.AcknowledgeSummary(first); err != nil {
 		t.Fatal(err)
 	}
 	next, err := a.Watch()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.Index <= first.Index {
-		t.Fatalf("acknowledged signal replayed: first=%d next=%d", first.Index, next.Index)
+	if next.Sequence <= first.Sequence {
+		t.Fatalf("acknowledged summary replayed: first=%d next=%d", first.Sequence, next.Sequence)
 	}
 }
 
@@ -53,25 +53,25 @@ func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.AcknowledgeSignal(join); err != nil {
+	if err := client.AcknowledgeSummary(join); err != nil {
 		t.Fatal(err)
 	}
 	recipients := []string{"a"}
-	if err := client.writeEvent(Event{Signal: Signal{Type: "update", Resource: "dev/tasks", Key: "later", Index: 3, Agent: "a"}, Recipients: recipients}); err != nil {
+	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 3, Agent: "a"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
 	higher, err := client.Watch()
-	if err != nil || higher.Index != 3 {
+	if err != nil || higher.Sequence != 3 {
 		t.Fatalf("higher signal = %#v, %v", higher, err)
 	}
-	if err := client.AcknowledgeSignal(higher); err != nil {
+	if err := client.AcknowledgeSummary(higher); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.writeEvent(Event{Signal: Signal{Type: "update", Resource: "dev/tasks", Key: "late", Index: 2, Agent: "a"}, Recipients: recipients}); err != nil {
+	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 2, Agent: "a"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
 	late, err := client.Watch()
-	if err != nil || late.Index != 2 {
+	if err != nil || late.Sequence != 2 {
 		t.Fatalf("late lower signal was skipped: %#v, %v", late, err)
 	}
 }
@@ -84,28 +84,28 @@ func TestWatchSinceReturnsOnlyHigherIndexes(t *testing.T) {
 	}
 	for index := int64(2); index <= 3; index++ {
 		if err := client.writeEvent(Event{
-			Signal:     Signal{Type: "update", Resource: "dev/tasks", Key: "status", Index: index, Agent: "a"},
+			Summary:    Summary{Type: "update", Topic: "dev/tasks", Sequence: index, Agent: "a"},
 			Recipients: []string{"a"},
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	signal, err := client.WatchSinceContext(context.Background(), 2)
+	summary, err := client.WatchSinceContext(context.Background(), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if signal.Index != 3 {
-		t.Fatalf("watch since 2 returned index %d", signal.Index)
+	if summary.Sequence != 3 {
+		t.Fatalf("watch since 2 returned sequence %d", summary.Sequence)
 	}
-	if err := client.AcknowledgeSignal(signal); err != nil {
+	if err := client.AcknowledgeSummary(summary); err != nil {
 		t.Fatal(err)
 	}
 	cursor, err := client.loadCursor("a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !indexAcknowledged(cursor.SignalRanges, 1) || !indexAcknowledged(cursor.SignalRanges, 2) {
-		t.Fatalf("since floor was not persisted: %#v", cursor.SignalRanges)
+	if !indexAcknowledged(cursor.SummaryRanges, 1) || !indexAcknowledged(cursor.SummaryRanges, 2) {
+		t.Fatalf("since floor was not persisted: %#v", cursor.SummaryRanges)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -114,14 +114,14 @@ func TestWatchSinceReturnsOnlyHigherIndexes(t *testing.T) {
 	}
 }
 
-func TestAcknowledgeSignalRejectsInvalidSDKInput(t *testing.T) {
+func TestAcknowledgeSummaryRejectsInvalidSDKInput(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
 	if _, err := client.Register("a", "development"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.AcknowledgeSignal(Signal{}); err == nil {
-		t.Fatal("invalid signal acknowledgement succeeded")
+	if err := client.AcknowledgeSummary(Summary{}); err == nil {
+		t.Fatal("invalid summary acknowledgement succeeded")
 	}
 	if _, err := os.Stat(filepath.Join(home, "cursors", "a.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("invalid acknowledgement mutated cursor: %v", err)
@@ -138,20 +138,20 @@ func TestWatchReconcilesJournalWhenInboxAppendIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.AcknowledgeSignal(join); err != nil {
+	if err := client.AcknowledgeSummary(join); err != nil {
 		t.Fatal(err)
 	}
 	index, err := client.nextIndex()
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := Event{Signal: Signal{Type: "update", Resource: "dev/tasks", Key: "missing-inbox", Index: index, Agent: "a"}, Recipients: []string{"a"}}
+	event := Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: index, Agent: "a"}, Recipients: []string{"a"}}
 	if err := writeJSONAtomic(filepath.Join(home, "events", indexName(index)), event); err != nil {
 		t.Fatal(err)
 	}
-	signal, err := client.Watch()
-	if err != nil || signal.Index != index {
-		t.Fatalf("journal-only event not reconciled: %#v, %v", signal, err)
+	summary, err := client.Watch()
+	if err != nil || summary.Sequence != index {
+		t.Fatalf("journal-only event not reconciled: %#v, %v", summary, err)
 	}
 }
 

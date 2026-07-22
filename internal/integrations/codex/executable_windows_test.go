@@ -28,6 +28,36 @@ func TestResolveDesktopExecutableUsesMatchingCachedCopy(t *testing.T) {
 	}
 }
 
+func TestCandidateExecutablesListsKnownCodexInstallLocations(t *testing.T) {
+	root := t.TempDir()
+	localAppData := filepath.Join(root, "local")
+	appData := filepath.Join(root, "roaming")
+	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", appData)
+
+	versioned := filepath.Join(localAppData, "OpenAI", "Codex", "bin", "1.2.3", "codex.exe")
+	if err := os.MkdirAll(filepath.Dir(versioned), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(versioned, []byte("codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := candidateExecutables()
+	npmCodex := filepath.Join(appData, "npm", "codex.cmd")
+	want := map[string]bool{versioned: false, npmCodex: false}
+	for _, candidate := range candidates {
+		if _, ok := want[candidate]; ok {
+			want[candidate] = true
+		}
+	}
+	for path, found := range want {
+		if !found {
+			t.Fatalf("candidates = %#v, want them to include %q", candidates, path)
+		}
+	}
+}
+
 func TestResolveDesktopExecutableRejectsUnmatchedPackageResource(t *testing.T) {
 	root := t.TempDir()
 	packaged := filepath.Join(root, "WindowsApps", "OpenAI.Codex_test", "app", "resources", "codex.exe")

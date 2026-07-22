@@ -10,6 +10,30 @@ import (
 	"strings"
 )
 
+// candidateExecutables lists known per-user Codex CLI install locations
+// checked when codex isn't on PATH:
+//   - the Codex Desktop app's bundled, launchable CLI copy under
+//     %LOCALAPPDATA%\OpenAI\Codex\bin\<version>\codex.exe (the same location
+//     resolveDesktopExecutable falls back to below when PATH resolves a
+//     protected packaged copy instead).
+//   - npm's global install directory on Windows (npm's default prefix is
+//     %APPDATA%\npm, where global packages get a .cmd shim), since the
+//     Codex CLI is also distributed as the npm package `@openai/codex`.
+func candidateExecutables() []string {
+	var candidates []string
+	if localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localAppData != "" {
+		matches, err := filepath.Glob(filepath.Join(localAppData, "OpenAI", "Codex", "bin", "*", "codex.exe"))
+		if err == nil {
+			sort.Strings(matches)
+			candidates = append(candidates, matches...)
+		}
+	}
+	if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
+		candidates = append(candidates, filepath.Join(appData, "npm", "codex.cmd"))
+	}
+	return candidates
+}
+
 func resolveDesktopExecutable(resolved string) (string, error) {
 	clean := strings.ToLower(filepath.Clean(resolved))
 	if !strings.Contains(clean, `\windowsapps\openai.codex_`) || !strings.HasSuffix(clean, `\app\resources\codex.exe`) {
@@ -53,5 +77,5 @@ func executableDigest(path string) ([sha256.Size]byte, error) {
 }
 
 func packagedCodexError(resolved string) error {
-	return fmt.Errorf("Codex CLI %q is a protected Codex Desktop package resource and no matching launchable cached copy was found; set %s to a launchable Codex executable", resolved, BinaryEnvironment)
+	return fmt.Errorf("Codex CLI %q is a protected Codex Desktop package resource and no matching launchable cached copy was found; install a launchable Codex CLI (e.g. via npm) or ensure one is on PATH", resolved)
 }

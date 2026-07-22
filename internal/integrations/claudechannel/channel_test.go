@@ -13,28 +13,28 @@ import (
 )
 
 type channelClient struct {
-	signals chan conductor.Signal
-	acks    chan conductor.Signal
+	summaries chan conductor.Summary
+	acks      chan conductor.Summary
 }
 
-func (c *channelClient) WatchContext(ctx context.Context) (conductor.Signal, error) {
+func (c *channelClient) WatchContext(ctx context.Context) (conductor.Summary, error) {
 	select {
-	case signal := <-c.signals:
-		return signal, nil
+	case summary := <-c.summaries:
+		return summary, nil
 	case <-ctx.Done():
-		return conductor.Signal{}, ctx.Err()
+		return conductor.Summary{}, ctx.Err()
 	}
 }
 
-func (c *channelClient) AcknowledgeSignal(signal conductor.Signal) error {
-	c.acks <- signal
+func (c *channelClient) AcknowledgeSummary(summary conductor.Summary) error {
+	c.acks <- summary
 	return nil
 }
 
 func TestRunNegotiatesAndPushesSignal(t *testing.T) {
 	inputReader, inputWriter := io.Pipe()
 	var output bytes.Buffer
-	client := &channelClient{signals: make(chan conductor.Signal, 1), acks: make(chan conductor.Signal, 1)}
+	client := &channelClient{summaries: make(chan conductor.Summary, 1), acks: make(chan conductor.Summary, 1)}
 	result := make(chan error, 1)
 	go func() {
 		result <- Run(context.Background(), client, inputReader, &output, "tester1")
@@ -42,12 +42,12 @@ func TestRunNegotiatesAndPushesSignal(t *testing.T) {
 
 	_, _ = io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`+"\n")
 	_, _ = io.WriteString(inputWriter, `{"jsonrpc":"2.0","method":"notifications/initialized"}`+"\n")
-	signal := conductor.Signal{Type: "update", Resource: "dev/tasks", Key: "task", Index: 12, Agent: "publisher"}
-	client.signals <- signal
+	summary := conductor.Summary{Type: "update", Topic: "dev/tasks", Sequence: 12, Agent: "publisher"}
+	client.summaries <- summary
 
 	select {
 	case acknowledged := <-client.acks:
-		if acknowledged != signal {
+		if acknowledged != summary {
 			t.Fatalf("acknowledged = %#v", acknowledged)
 		}
 	case <-time.After(2 * time.Second):
@@ -76,14 +76,14 @@ func TestRunNegotiatesAndPushesSignal(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &notification); err != nil {
 		t.Fatal(err)
 	}
-	if notification.Method != "notifications/claude/channel" || notification.Params.Meta["signal_index"] != "12" || notification.Params.Meta["resource"] != "dev/tasks" {
+	if notification.Method != "notifications/claude/channel" || notification.Params.Meta["summary_sequence"] != "12" || notification.Params.Meta["topic"] != "dev/tasks" {
 		t.Fatalf("notification = %#v", notification)
 	}
 }
 
 func TestRunDoesNotWatchBeforeInitialized(t *testing.T) {
 	inputReader, inputWriter := io.Pipe()
-	client := &channelClient{signals: make(chan conductor.Signal), acks: make(chan conductor.Signal)}
+	client := &channelClient{summaries: make(chan conductor.Summary), acks: make(chan conductor.Summary)}
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() { result <- Run(ctx, client, inputReader, io.Discard, "tester1") }()
@@ -95,9 +95,9 @@ func TestRunDoesNotWatchBeforeInitialized(t *testing.T) {
 	_ = inputWriter.Close()
 }
 
-func TestSignalNotificationCarriesLocationNotPayload(t *testing.T) {
-	notification := signalNotification("tester1", conductor.Signal{Type: "leave", Resource: "registry", Key: "agent", Index: 7, Agent: "publisher"})
-	if notification.Meta["signal_type"] != "leave" || notification.Meta["publisher"] != "publisher" || !strings.Contains(notification.Content, "refresh the roster") {
+func TestSummaryNotificationCarriesLocationNotContent(t *testing.T) {
+	notification := summaryNotification("tester1", conductor.Summary{Type: "leave", Topic: "registry", Sequence: 7, Agent: "publisher"})
+	if notification.Meta["summary_type"] != "leave" || notification.Meta["source_agent"] != "publisher" || !strings.Contains(notification.Content, "refresh the roster") {
 		t.Fatalf("notification = %#v", notification)
 	}
 }

@@ -44,7 +44,7 @@ type Session struct {
 
 func Start(ctx context.Context, executable, threadID, sandbox string, output, stderr io.Writer) (*Session, error) {
 	if strings.TrimSpace(threadID) == "" {
-		return nil, fmt.Errorf("%s is required for Codex watch", ThreadEnvironment)
+		return nil, errors.New("Codex watch requires a thread ID")
 	}
 	var err error
 	executable, err = resolveExecutable(executable)
@@ -55,7 +55,7 @@ func Start(ctx context.Context, executable, threadID, sandbox string, output, st
 		return nil, err
 	}
 	command := exec.CommandContext(ctx, executable, "app-server", "--listen", "stdio://")
-	command.Env = append(os.Environ(), AppServerDeliveryEnvironment+"=1", ThreadEnvironment+"="+threadID)
+	command.Env = append(os.Environ(), AppServerDeliveryEnvironment+"=1")
 	command.Stderr = stderr
 	input, err := command.StdinPipe()
 	if err != nil {
@@ -92,10 +92,10 @@ func Start(ctx context.Context, executable, threadID, sandbox string, output, st
 	return session, nil
 }
 
-func (s *Session) Activate(ctx context.Context, threadID, agent string, signal conductor.Signal) error {
+func (s *Session) Activate(ctx context.Context, threadID, agent string, delivery conductor.Delivery) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	prompt, err := SignalPrompt(agent, signal)
+	prompt, err := SignalPrompt(agent, delivery)
 	if err != nil {
 		return err
 	}

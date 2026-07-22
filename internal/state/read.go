@@ -9,7 +9,8 @@ import (
 	"strings"
 )
 
-// Get reads published state in delta, historical, or full mode.
+// Get reads a current record range, the full current topic, or unread
+// subscribed content.
 func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 	if err := c.validateProtocol(); err != nil {
 		return ReadResult{}, err
@@ -18,19 +19,23 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 	if err != nil {
 		return ReadResult{}, err
 	}
-	if err := validResource(request.Resource); err != nil {
+	if err := validTopic(request.Topic); err != nil {
 		return ReadResult{}, err
 	}
-	if request.Key != "" {
-		if err := validName(request.Key); err != nil {
-			return ReadResult{}, err
-		}
+	if request.RecordIndex < 0 || request.Start < 0 || request.End < 0 {
+		return ReadResult{}, errors.New("record indexes must not be negative")
 	}
-	release, err := c.acquireRead(request.Resource)
+	if request.End > 0 && request.End < request.Start {
+		return ReadResult{}, errors.New("record range end must be greater than or equal to start")
+	}
+	if request.Limit < 0 {
+		return ReadResult{}, errors.New("read limit must not be negative")
+	}
+	release, err := c.acquireRead(request.Topic)
 	if err != nil {
 		return ReadResult{}, err
 	}
-	history, err := c.readHistory(request.Resource)
+	history, err := c.readHistory(request.Topic)
 	if err != nil {
 		_ = release()
 		return ReadResult{}, err
@@ -38,38 +43,60 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 	if err := release(); err != nil {
 		return ReadResult{}, err
 	}
-	result := ReadResult{Resource: request.Resource, key: request.Key}
+	result := ReadResult{Topic: request.Topic, record: request.RecordIndex, Records: []Record{}, Publications: []Publication{}}
 	switch request.Mode {
-	case ReadHistorical:
-		result.Mode, result.From, result.To = "historical", request.From, request.To
-		for _, change := range history {
-			if change.Index < request.From || (request.To > 0 && change.Index > request.To) || !containsKey(change.Messages, request.Key) {
+	case ReadRange:
+		result.Mode = "range"
+		start, end := request.Start, request.End
+		if request.RecordIndex > 0 {
+			start, end = request.RecordIndex, request.RecordIndex
+		}
+		for _, record := range materialize(history) {
+			if record.Index < start || (end > 0 && record.Index > end) {
 				continue
 			}
-			result.History = append(result.History, filterChange(change, request.Key))
+			result.Records = append(result.Records, record)
+			if request.Limit > 0 && len(result.Records) == request.Limit {
+				break
+			}
+		}
+		if request.RecordIndex > 0 && len(result.Records) == 0 {
+			return ReadResult{}, &ProtocolError{Code: "NOT_FOUND", Text: "record does not exist"}
 		}
 	case ReadFull:
 		result.Mode = "full"
-		result.Messages = materialize(history, request.Key, 0)
-		if len(result.Messages) == 0 && request.Key != "" {
-			return ReadResult{}, &ProtocolError{Code: "NOT_FOUND", Text: "message does not exist"}
-		}
+		result.Records = materialize(history)
 	case ReadDelta:
+		result.Mode = "delta"
+		subscribed, err := c.isSubscribed(agent, request.Topic)
+		if err != nil {
+			return ReadResult{}, err
+		}
+		if !subscribed {
+			return result, nil
+		}
 		cursor, err := c.loadCursor(agent)
 		if err != nil {
 			return ReadResult{}, err
 		}
-		slot := cursorSlot(request.Resource, request.Key)
-		from := cursor.Resources[slot] + 1
-		result.Mode, result.From = "delta", from
-		for _, change := range history {
-			if change.Index < from || !containsKey(change.Messages, request.Key) {
+		from := cursor.Topics[recordSlot(request.Topic, request.RecordIndex)] + 1
+		for _, publication := range history {
+			if publication.Sequence < from || (request.throughSequence > 0 && publication.Sequence > request.throughSequence) {
 				continue
 			}
-			result.History = append(result.History, filterChange(change, request.Key))
-			if change.Index > result.maxIndex {
-				result.maxIndex = change.Index
+			changed := filterRecords(publication.Records, request.RecordIndex)
+			if len(changed) == 0 {
+				continue
 			}
+			if request.Limit > 0 && publicationRecordCount(result.Publications)+len(changed) > request.Limit {
+				if len(result.Publications) == 0 {
+					return ReadResult{}, errors.New("--limit is smaller than the next atomic record change")
+				}
+				break
+			}
+			publication.Records = changed
+			result.Publications = append(result.Publications, publication)
+			result.maxSequence = publication.Sequence
 		}
 	default:
 		return ReadResult{}, errors.New("unknown read mode")
@@ -77,42 +104,42 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 	return result, nil
 }
 
-// AcknowledgeRead persists the last successfully delivered delta index. Call it
-// only after the result has been written to the SDK consumer or CLI stdout.
+// AcknowledgeRead records the internal sequence through which delta content was
+// accepted. Range and full reads never change delta progress.
 func (c *Client) AcknowledgeRead(result ReadResult) error {
 	if err := c.validateProtocol(); err != nil {
 		return err
 	}
-	if result.Mode != "delta" || result.maxIndex == 0 {
+	if result.Mode != "delta" || result.maxSequence == 0 {
 		return nil
 	}
 	agent, err := c.requireAgent()
 	if err != nil {
 		return err
 	}
-	slot := cursorSlot(result.Resource, result.key)
+	slot := recordSlot(result.Topic, result.record)
 	return c.updateCursor(agent, func(cursor *Cursor) {
-		if result.maxIndex > cursor.Resources[slot] {
-			cursor.Resources[slot] = result.maxIndex
+		if result.maxSequence > cursor.Topics[slot] {
+			cursor.Topics[slot] = result.maxSequence
 		}
 	})
 }
 
-func (c *Client) resourceDir(resource string) (string, error) {
-	if err := validResource(resource); err != nil {
+func (c *Client) topicDir(topic string) (string, error) {
+	if err := validTopic(topic); err != nil {
 		return "", err
 	}
-	parts := strings.Split(resource, "/")
+	parts := strings.Split(topic, "/")
 	return filepath.Join(c.Home, "topics", parts[0], parts[1]), nil
 }
 
-func (c *Client) readHistory(resource string) ([]Publication, error) {
-	dir, err := c.resourceDir(resource)
+func (c *Client) readHistory(topic string) ([]Publication, error) {
+	dir, err := c.topicDir(topic)
 	if err != nil {
 		return nil, err
 	}
 	var head struct {
-		Index int64 `json:"index"`
+		Sequence int64 `json:"sequence"`
 	}
 	if err := readJSON(filepath.Join(dir, "head.json"), &head); errors.Is(err, os.ErrNotExist) {
 		entries, readErr := os.ReadDir(filepath.Join(dir, "history"))
@@ -124,19 +151,19 @@ func (c *Client) readHistory(resource string) ([]Publication, error) {
 		}
 		for _, entry := range entries {
 			if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
-				return nil, errors.New("resource history exists without a head")
+				return nil, errors.New("topic history exists without a head")
 			}
 		}
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	if head.Index <= 0 {
-		return nil, errors.New("invalid resource head state")
+	if head.Sequence <= 0 {
+		return nil, errors.New("invalid topic head state")
 	}
 	entries, err := os.ReadDir(filepath.Join(dir, "history"))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, errors.New("resource head exists without history")
+		return nil, errors.New("topic head exists without history")
 	}
 	if err != nil {
 		return nil, err
@@ -144,96 +171,61 @@ func (c *Client) readHistory(resource string) ([]Publication, error) {
 	result := make([]Publication, 0, len(entries))
 	seen := make(map[int64]bool, len(entries))
 	seenHead := false
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+	for _, file := range entries {
+		if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
 			continue
 		}
-		var publication Publication
-		if err := readJSON(filepath.Join(dir, "history", entry.Name()), &publication); err != nil {
+		var entry Publication
+		if err := readJSON(filepath.Join(dir, "history", file.Name()), &entry); err != nil {
 			return nil, err
 		}
-		if publication.Index <= 0 || entry.Name() != indexName(publication.Index) {
-			return nil, fmt.Errorf("invalid history identity in %s", entry.Name())
+		if entry.Sequence <= 0 || file.Name() != indexName(entry.Sequence) {
+			return nil, fmt.Errorf("invalid history identity in %s", file.Name())
 		}
-		if publication.Resource != resource || publication.Agent == "" || publication.Timestamp.IsZero() || len(publication.Messages) == 0 {
-			return nil, fmt.Errorf("invalid history entry %s", entry.Name())
+		if entry.Topic != topic || seen[entry.Sequence] || entry.Sequence > head.Sequence {
+			return nil, fmt.Errorf("invalid history entry %s", file.Name())
 		}
-		if seen[publication.Index] {
-			return nil, fmt.Errorf("duplicate history index %d", publication.Index)
-		}
-		seen[publication.Index] = true
-		for key := range publication.Messages {
-			if err := validName(key); err != nil {
-				return nil, fmt.Errorf("invalid history entry %s: %w", entry.Name(), err)
-			}
-		}
-		if publication.Index > head.Index {
-			return nil, fmt.Errorf("history index %d is beyond resource head %d", publication.Index, head.Index)
-		}
-		seenHead = seenHead || publication.Index == head.Index
-		result = append(result, publication)
+		seen[entry.Sequence] = true
+		seenHead = seenHead || entry.Sequence == head.Sequence
+		result = append(result, entry)
 	}
 	if !seenHead {
-		return nil, fmt.Errorf("resource head %d has no history entry", head.Index)
+		return nil, fmt.Errorf("topic head %d has no history entry", head.Sequence)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Index < result[j].Index })
+	sort.Slice(result, func(i, j int) bool { return result[i].Sequence < result[j].Sequence })
 	return result, nil
 }
 
-func containsKey(values map[string]MessageMutation, key string) bool {
-	_, ok := values[key]
-	return key == "" || ok
-}
-
-func filterChange(change Publication, key string) Publication {
-	if key == "" {
-		return change
+func filterRecords(records []Record, index int64) []Record {
+	if index == 0 {
+		return append([]Record(nil), records...)
 	}
-	change.Messages = map[string]MessageMutation{key: change.Messages[key]}
-	return change
-}
-
-func cursorSlot(resource, key string) string {
-	if key == "" {
-		return resource
-	}
-	return resource + "#" + key
-}
-
-func materializeLatest(history []Publication, key string, through int64) map[string]materializedMessage {
-	messages := map[string]materializedMessage{}
-	for _, publication := range history {
-		if through > 0 && publication.Index > through {
-			break
-		}
-		for changedKey, mutation := range publication.Messages {
-			if key != "" && key != changedKey {
-				continue
-			}
-			message := materializedMessage{Message: Message{Key: changedKey, Agent: publication.Agent, Index: publication.Index, Timestamp: publication.Timestamp}}
-			if mutation.Operation == MutationScratch {
-				message.Scratched = true
-			} else {
-				message.Kind, message.Payload = mutation.Kind, *mutation.Payload
-			}
-			messages[changedKey] = message
+	for _, record := range records {
+		if record.Index == index {
+			return []Record{record}
 		}
 	}
-	return messages
+	return nil
 }
 
-func materialize(history []Publication, key string, through int64) []Message {
-	latest := materializeLatest(history, key, through)
-	keys := make([]string, 0, len(latest))
-	for messageKey, message := range latest {
-		if !message.Scratched {
-			keys = append(keys, messageKey)
+func materializeMap(history []Publication) map[int64]Record {
+	records := map[int64]Record{}
+	for _, entry := range history {
+		for _, record := range entry.Records {
+			records[record.Index] = record
 		}
 	}
-	sort.Strings(keys)
-	result := make([]Message, 0, len(keys))
-	for _, messageKey := range keys {
-		result = append(result, latest[messageKey].Message)
+	return records
+}
+
+func materialize(history []Publication) []Record {
+	return sortedRecords(materializeMap(history))
+}
+
+func publicationRecordCount(publications []Publication) int {
+	count := 0
+	for _, publication := range publications {
+		count += len(publication.Records)
 	}
-	return result
+	return count
 }

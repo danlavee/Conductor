@@ -6,26 +6,29 @@ import (
 )
 
 type Agent = protocol.Agent
-type MessagePayload = protocol.MessagePayload
-type Message = protocol.Message
-type MutationOperation = protocol.MutationOperation
-type MessageMutation = protocol.MessageMutation
-type Signal = protocol.Signal
+type Record = protocol.Record
 type Publication = protocol.Publication
-
-const (
-	MutationSet     = protocol.MutationSet
-	MutationScratch = protocol.MutationScratch
-)
-
-type WriteOptions = state.WriteOptions
+type Summary = protocol.Summary
 type Snapshot = state.Snapshot
+type Subscription = state.Subscription
 type ReadMode = state.ReadMode
 type ReadRequest = state.ReadRequest
 type ReadResult = state.ReadResult
+type DeliveryMode = state.DeliveryMode
+type Delivery = state.Delivery
 
 const (
-	ReadDelta      = state.ReadDelta
-	ReadHistorical = state.ReadHistorical
-	ReadFull       = state.ReadFull
+	ReadRange = state.ReadRange
+	ReadDelta = state.ReadDelta
+	ReadFull  = state.ReadFull
 )
+
+const (
+	DeliverySummary = state.DeliverySummary
+	DeliveryContent = state.DeliveryContent
+)
+
+// ParseDeliveryMode validates a --mode flag value. An empty value defaults to content.
+func ParseDeliveryMode(value string) (DeliveryMode, error) {
+	return state.ParseDeliveryMode(value)
+}

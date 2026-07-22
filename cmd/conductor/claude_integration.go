@@ -9,9 +9,8 @@ import (
 	"github.com/danlavee/Conductor/internal/integrations/claudecli"
 )
 
-func runClaudeCLIWatchCommand(ctx context.Context, client *conductor.Client, agent string) error {
-	environment := claudecli.EnvironmentFrom(os.Getenv)
-	if err := environment.Validate(agent); err != nil {
+func runClaudeCLIWatchCommand(ctx context.Context, client *conductor.Client, agent, sessionID string, mode conductor.DeliveryMode) error {
+	if err := claudecli.Validate(sessionID, agent, os.Getenv(claudecli.LiveSessionEnvironment)); err != nil {
 		return err
 	}
 	client.Agent = agent
@@ -20,14 +19,14 @@ func runClaudeCLIWatchCommand(ctx context.Context, client *conductor.Client, age
 		return err
 	}
 	defer func() { _ = release() }()
-	activator, err := claudecli.New(environment.Executable, os.Stdout, os.Stderr)
+	activator, err := claudecli.New("", os.Stdout, os.Stderr)
 	if err != nil {
 		return err
 	}
 	if err := activator.Check(ctx); err != nil {
 		return err
 	}
-	return claudecli.Run(ctx, client, activator, environment.SessionID, agent)
+	return claudecli.Run(ctx, client, activator, sessionID, agent, mode)
 }
 
 func runClaudeChannelCommand(ctx context.Context, client *conductor.Client, agent string) error {

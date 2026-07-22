@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,48 +75,85 @@ func TestMissingInstallFolderProcessContract(t *testing.T) {
 	}
 }
 
-func TestConditionalConflictProcessContract(t *testing.T) {
+func TestRecordOperationProcessContract(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
-	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "register", "writer", "development")
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development")
 	if err != nil || len(stderr) != 0 || len(stdout) == 0 {
 		t.Fatalf("register error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
 	}
-	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "put", "messages/team", "entry", "note", "created", "--if-index", "entry=0")
+	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "created")
 	if err != nil || len(stderr) != 0 || len(stdout) == 0 {
 		t.Fatalf("create error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
 	}
-	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "put", "messages/team", "entry", "note", "stale", "--if-index", "entry=0")
-	exit, ok := err.(*exec.ExitError)
-	if !ok || exit.ExitCode() != 1 || len(stdout) != 0 {
-		t.Fatalf("conflict error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
+	var created map[string]any
+	if err := json.Unmarshal(stdout, &created); err != nil || len(created) != 2 || created["index"] != float64(1) || created["text"] != "created" {
+		t.Fatalf("created record = %#v, error = %v", created, err)
 	}
-	var response struct {
-		Code     string `json:"code"`
-		Conflict struct {
-			Resource      string `json:"resource"`
-			Key           string `json:"key"`
-			ExpectedIndex int64  `json:"expected_index"`
-			CurrentIndex  int64  `json:"current_index"`
-		} `json:"conflict"`
+	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "edit", "messages/team", "1", "updated")
+	if err != nil || len(stderr) != 0 {
+		t.Fatalf("edit error = %v, stderr = %q", err, stderr)
 	}
-	if err := json.Unmarshal(stderr, &response); err != nil {
-		t.Fatalf("stderr is not JSON: %q: %v", stderr, err)
+	var edited map[string]any
+	if err := json.Unmarshal(stdout, &edited); err != nil || len(edited) != 2 || edited["index"] != float64(1) || edited["text"] != "updated" {
+		t.Fatalf("edited record = %#v, error = %v", edited, err)
 	}
-	if response.Code != "CONFLICT" || response.Conflict.Resource != "messages/team" || response.Conflict.Key != "entry" || response.Conflict.ExpectedIndex != 0 || response.Conflict.CurrentIndex <= 0 {
-		t.Fatalf("conflict response = %+v", response)
+	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "strike", "messages/team", "1")
+	if err != nil || len(stderr) != 0 {
+		t.Fatalf("strike error = %v, stderr = %q", err, stderr)
 	}
+	var struck conductor.Record
+	if err := json.Unmarshal(stdout, &struck); err != nil || struck.Index != 1 || struck.Text != "~~updated~~" {
+		t.Fatalf("struck record = %#v, error = %v", struck, err)
+	}
+}
+
+func TestRecordOperationProcessVisibilityBoundary(t *testing.T) {
+	t.Run("before-head", func(t *testing.T) {
+		state := filepath.Join(t.TempDir(), "runtime-state")
+		if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development"); err != nil {
+			t.Fatal(err)
+		}
+		indexData := fmt.Sprintf("{\n  \"index\": %d\n}\n", int64(math.MaxInt64))
+		if err := os.WriteFile(filepath.Join(state, "state", "index.json"), []byte(indexData), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "not visible")
+		if err == nil || len(stdout) != 0 || len(stderr) == 0 {
+			t.Fatalf("error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
+		}
+	})
+
+	t.Run("after-head", func(t *testing.T) {
+		state := filepath.Join(t.TempDir(), "runtime-state")
+		if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(state, "events", fmt.Sprintf("%020d.json", 2)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "visible")
+		if err == nil || len(stdout) == 0 || len(stderr) == 0 {
+			t.Fatalf("error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
+		}
+		var record conductor.Record
+		if decodeErr := json.Unmarshal(stdout, &record); decodeErr != nil || record.Index != 1 || record.Text != "visible" {
+			t.Fatalf("record = %#v, decode error = %v", record, decodeErr)
+		}
+	})
 }
 
 func TestProtocolMismatchProcessContract(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
-	if _, _, err := runCLIHelper(os.Args[0], state, "", "register", "writer", "coordination"); err != nil {
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "coordination"); err != nil {
 		t.Fatal(err)
 	}
 	declaration := filepath.Join(state, "protocol.json")
-	if err := os.WriteFile(declaration, []byte("{\n  \"version\": 2\n}\n"), 0o600); err != nil {
+	unsupported := conductor.CurrentProtocolVersion + 1
+	declarationText := fmt.Sprintf("{\n  \"version\": %d\n}\n", unsupported)
+	if err := os.WriteFile(declaration, []byte(declarationText), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "list-agents")
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "list-agents")
 	exit, ok := err.(*exec.ExitError)
 	if !ok || exit.ExitCode() != 1 || len(stdout) != 0 {
 		t.Fatalf("error = %v, stdout = %q", err, stdout)
@@ -129,10 +168,10 @@ func TestProtocolMismatchProcessContract(t *testing.T) {
 	if err := json.Unmarshal(stderr, &response); err != nil {
 		t.Fatalf("stderr is not JSON: %q: %v", stderr, err)
 	}
-	if response.Code != "PROTOCOL_MISMATCH" || response.Protocol.Supported != conductor.CurrentProtocolVersion || response.Protocol.Found != 2 {
+	if response.Code != "PROTOCOL_MISMATCH" || response.Protocol.Supported != conductor.CurrentProtocolVersion || response.Protocol.Found != unsupported {
 		t.Fatalf("response = %+v", response)
 	}
-	if data, readErr := os.ReadFile(declaration); readErr != nil || string(data) != "{\n  \"version\": 2\n}\n" {
+	if data, readErr := os.ReadFile(declaration); readErr != nil || string(data) != declarationText {
 		t.Fatalf("declaration changed: %q, %v", data, readErr)
 	}
 }
@@ -218,7 +257,7 @@ func TestVersionDoesNotInitializeRuntime(t *testing.T) {
 
 func TestUsageExposesOnlyTwoCodexTransports(t *testing.T) {
 	message := usageError().Error()
-	for _, flag := range []string{"--codex <name>", "--codex-cli <name>"} {
+	for _, flag := range []string{"--codex <thread-id>", "--codex-cli <thread-id>"} {
 		if !strings.Contains(message, flag) {
 			t.Fatalf("usage omits %s: %s", flag, message)
 		}
@@ -228,12 +267,87 @@ func TestUsageExposesOnlyTwoCodexTransports(t *testing.T) {
 	}
 }
 
-func TestWatchWithoutModeReturnsUsageError(t *testing.T) {
+func TestWatchDefaultsToContent(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
 	t.Setenv("CONDUCTOR_HOME", state)
-	err := run([]string{"watch"})
-	if err == nil || err.Error() != usageError().Error() {
-		t.Fatalf("error = %v, want usage error", err)
+	t.Setenv("CONDUCTOR_AGENT", "a")
+	if err := run([]string{"a", "register", "dev"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"a", "watch"}); err != nil {
+		t.Fatalf("bare watch failed: %v", err)
+	}
+}
+
+func TestRemovedWatchModesReturnUsage(t *testing.T) {
+	t.Setenv("CONDUCTOR_HOME", filepath.Join(t.TempDir(), "runtime-state"))
+	for _, args := range [][]string{{"a", "watch", "--wait"}, {"a", "watch", "--since", "1"}} {
+		if err := run(args); err == nil || err.Error() != usageError().Error() {
+			t.Fatalf("%v: error = %v, want usage error", args, err)
+		}
+	}
+}
+
+func TestParseGetRangeDefaultsAndGuards(t *testing.T) {
+	request, err := parseGet([]string{"messages/team", "7", "--start=0", "--end=12", "--limit=5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Topic != "messages/team" || request.RecordIndex != 7 || request.Mode != conductor.ReadRange || request.Start != 0 || request.End != 12 || request.Limit != 5 {
+		t.Fatalf("request = %+v", request)
+	}
+	defaults, err := parseGet([]string{"messages/team"})
+	if err != nil || defaults.Start != 0 || defaults.End != 0 || defaults.Limit != 0 || defaults.Mode != conductor.ReadRange {
+		t.Fatalf("defaults = %+v, error = %v", defaults, err)
+	}
+}
+
+func TestParseGetDeltaAndFull(t *testing.T) {
+	delta, err := parseGet([]string{"messages/team", "7", "--delta", "--limit=5"})
+	if err != nil || delta.Mode != conductor.ReadDelta || delta.RecordIndex != 7 || delta.Limit != 5 {
+		t.Fatalf("delta = %+v, error = %v", delta, err)
+	}
+	full, err := parseGet([]string{"messages/team", "--full"})
+	if err != nil || full.Mode != conductor.ReadFull {
+		t.Fatalf("full = %+v, error = %v", full, err)
+	}
+	for _, args := range [][]string{
+		{"messages/team", "--delta", "--start=1"},
+		{"messages/team", "--full", "--limit=1"},
+		{"messages/team", "--delta", "--full"},
+	} {
+		if _, err := parseGet(args); err == nil {
+			t.Fatalf("parseGet(%v) succeeded, want error", args)
+		}
+	}
+}
+
+func TestGetDeltaAcknowledgesSuccessfulDelivery(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "runtime-state")
+	t.Setenv("CONDUCTOR_HOME", home)
+	t.Setenv("CONDUCTOR_AGENT", "a")
+	if err := run([]string{"a", "register", "dev"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"a", "subscribe", "--topic=messages/team"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"a", "put", "messages/team", "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"a", "get", "messages/team", "--delta"}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := conductor.New(home, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta, err := client.Get(conductor.ReadRequest{Topic: "messages/team", Mode: conductor.ReadDelta})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(delta.Publications) != 0 {
+		t.Fatalf("CLI delta was not acknowledged: %#v", delta)
 	}
 }
 
@@ -241,67 +355,28 @@ func TestCodexWatchRequiresThreadID(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
 	t.Setenv("CONDUCTOR_HOME", state)
 	t.Setenv("CODEX_THREAD_ID", "")
-	t.Setenv("CONDUCTOR_CODEX_BIN", filepath.Join(t.TempDir(), "missing-codex"))
-	err := run([]string{"watch", "--codex", "native"})
-	if err == nil || !strings.Contains(err.Error(), "CODEX_THREAD_ID is required") {
+	err := run([]string{"a", "watch", "--codex", ""})
+	if err == nil || !strings.Contains(err.Error(), "thread ID") {
 		t.Fatalf("error = %v, want missing thread ID", err)
 	}
 }
 
 func TestUsageExposesTwoAntigravityTransports(t *testing.T) {
 	message := usageError().Error()
-	for _, flag := range []string{"--agy <name>", "--agy-cli <name>"} {
+	for _, flag := range []string{"--agy <conversation-id>", "--agy-cli <conversation-id>"} {
 		if !strings.Contains(message, flag) {
 			t.Fatalf("usage omits %s: %s", flag, message)
 		}
 	}
 }
 
-func TestParseConditionalPut(t *testing.T) {
-	resource, messages, options, err := parsePut([]string{
-		"messages/team",
-		"entry", "note", "done",
-		"--if-index", "entry=12",
-		"other", "rule", "review first",
-		"--if-index", "guard=0",
-	})
-	if err != nil {
-		t.Fatal(err)
+func TestParseRecordIndex(t *testing.T) {
+	if index, err := parseRecordIndex("7"); err != nil || index != 7 {
+		t.Fatalf("index = %d, error = %v", index, err)
 	}
-	if resource != "messages/team" || len(messages) != 2 || messages["entry"].Payload.Text != "done" || options.IfIndex["entry"] != 12 || options.IfIndex["guard"] != 0 {
-		t.Fatalf("resource=%q messages=%v options=%v", resource, messages, options.IfIndex)
-	}
-}
-
-func TestParseConditionalWriteRejectsInvalidConditions(t *testing.T) {
-	for name, args := range map[string][]string{
-		"missing":   {"messages/team", "entry", "note", "x", "--if-index"},
-		"malformed": {"messages/team", "entry", "note", "x", "--if-index", "entry"},
-		"negative":  {"messages/team", "entry", "note", "x", "--if-index", "entry=-1"},
-		"duplicate": {"messages/team", "entry", "note", "x", "--if-index", "entry=1", "--if-index", "entry=2"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, _, _, err := parsePut(args); err == nil {
-				t.Fatal("invalid conditional put succeeded")
-			}
-		})
-	}
-}
-
-func TestParseConditionalBegin(t *testing.T) {
-	resource, options, err := parseBegin([]string{"dev/tasks", "--if-index", "task-42=7"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resource != "dev/tasks" || options.IfIndex["task-42"] != 7 {
-		t.Fatalf("resource=%q options=%v", resource, options.IfIndex)
-	}
-}
-
-func TestParsePutKeepsKindUnrestrictedAndTextIntact(t *testing.T) {
-	_, messages, _, err := parsePut([]string{"messages/team", "entry", "team-defined kind / 任意", "plain text"})
-	message := messages["entry"]
-	if err != nil || message.Kind != "team-defined kind / 任意" || message.Payload == nil || message.Payload.Text != "plain text" {
-		t.Fatalf("message=%#v error=%v", message, err)
+	for _, value := range []string{"", "0", "-1", "text"} {
+		if _, err := parseRecordIndex(value); err == nil {
+			t.Fatalf("invalid index %q succeeded", value)
+		}
 	}
 }

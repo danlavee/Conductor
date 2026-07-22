@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Register adds an agent, auto-subscribes it, and returns the full current snapshot.
+// Register adds an agent and returns the full current snapshot.
 func (c *Client) Register(name, responsibility string) (snapshot Snapshot, err error) {
 	if err := c.validateProtocol(); err != nil {
 		return Snapshot{}, err
@@ -35,9 +35,6 @@ func (c *Client) Register(name, responsibility string) (snapshot Snapshot, err e
 			return Snapshot{}, &ProtocolError{Code: "LOCKED", Agent: name, Text: "agent name is already registered with another responsibility"}
 		}
 		c.Agent = name
-		if err := c.bindSession(name); err != nil {
-			return Snapshot{}, err
-		}
 		latest, err := c.latestMembershipType(name)
 		if err != nil {
 			return Snapshot{}, err
@@ -52,11 +49,12 @@ func (c *Client) Register(name, responsibility string) (snapshot Snapshot, err e
 		return Snapshot{}, readErr
 	}
 	c.Agent = name
-	if err := c.bindSession(name); err != nil {
-		return Snapshot{}, err
-	}
 	agent := Agent{Name: name, Responsibility: responsibility, Timestamp: time.Now().UTC()}
 	if err := writeJSONAtomic(registrationPath, agent); err != nil {
+		return Snapshot{}, err
+	}
+	if err := writeJSONAtomic(c.subscriptionPath(name), Subscription{TopicGroups: []string{}, Topics: []string{}}); err != nil {
+		_ = removeEventually(registrationPath)
 		return Snapshot{}, err
 	}
 	snapshot, err = c.FullSnapshot()
@@ -110,6 +108,9 @@ func (c *Client) Deregister(name string) (err error) {
 	if err := removeEventually(path); err != nil {
 		return err
 	}
+	if err := removeEventually(c.subscriptionPath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	_, err = c.publishEvent("leave", "registry", name, nil)
 	return err
 }
@@ -138,7 +139,7 @@ func (c *Client) ListAgents() ([]Agent, error) {
 	return agents, nil
 }
 
-// FullSnapshot returns all agents and every current message.
+// FullSnapshot returns all agents and every current record.
 func (c *Client) FullSnapshot() (Snapshot, error) {
 	if err := c.validateProtocol(); err != nil {
 		return Snapshot{}, err
@@ -150,7 +151,7 @@ func (c *Client) FullSnapshot() (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	result := Snapshot{Agents: agents, Resources: map[string]map[string]Message{}}
+	result := Snapshot{Agents: agents, Topics: map[string][]Record{}, heads: map[string]int64{}}
 	groups, err := os.ReadDir(filepath.Join(c.Home, "topics"))
 	if err != nil {
 		return Snapshot{}, err
@@ -167,12 +168,12 @@ func (c *Client) FullSnapshot() (Snapshot, error) {
 			if !topic.IsDir() {
 				continue
 			}
-			resource := group.Name() + "/" + topic.Name()
-			release, err := c.acquireRead(resource)
+			topicName := group.Name() + "/" + topic.Name()
+			release, err := c.acquireRead(topicName)
 			if err != nil {
 				return Snapshot{}, err
 			}
-			history, err := c.readHistory(resource)
+			history, err := c.readHistory(topicName)
 			releaseErr := release()
 			if err != nil {
 				return Snapshot{}, err
@@ -180,12 +181,10 @@ func (c *Client) FullSnapshot() (Snapshot, error) {
 			if releaseErr != nil {
 				return Snapshot{}, releaseErr
 			}
-			messages := materialize(history, "", 0)
-			if len(messages) > 0 {
-				result.Resources[resource] = map[string]Message{}
-				for _, message := range messages {
-					result.Resources[resource][message.Key] = message
-				}
+			records := materialize(history)
+			if len(records) > 0 {
+				result.Topics[topicName] = records
+				result.heads[topicName] = history[len(history)-1].Sequence
 			}
 		}
 	}
@@ -203,19 +202,9 @@ func (c *Client) AcknowledgeSnapshot(snapshot Snapshot) error {
 		return err
 	}
 	return c.updateCursor(agent, func(cursor *Cursor) {
-		for resource, messages := range snapshot.Resources {
-			var maximum int64
-			for key, message := range messages {
-				if message.Index > maximum {
-					maximum = message.Index
-				}
-				slot := cursorSlot(resource, key)
-				if message.Index > cursor.Resources[slot] {
-					cursor.Resources[slot] = message.Index
-				}
-			}
-			if maximum > cursor.Resources[resource] {
-				cursor.Resources[resource] = maximum
+		for topic, head := range snapshot.heads {
+			if head > cursor.Topics[topic] {
+				cursor.Topics[topic] = head
 			}
 		}
 	})
@@ -240,8 +229,8 @@ func (c *Client) latestMembershipType(agent string) (string, error) {
 	}
 	latest := ""
 	for _, event := range events {
-		if event.Signal.Resource == "registry" && event.Signal.Key == agent {
-			latest = event.Signal.Type
+		if event.Summary.Topic == "registry" && event.Summary.Agent == agent {
+			latest = event.Summary.Type
 		}
 	}
 	return latest, nil

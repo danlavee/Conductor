@@ -12,7 +12,7 @@ Configure an MCP server using the installed Conductor executable's absolute path
     "conductor": {
       "type": "stdio",
       "command": "C:\\absolute\\path\\to\\conductor.exe",
-      "args": ["channel", "claude", "tester1"],
+      "args": ["tester1", "channel", "claude"],
       "env": {
         "CONDUCTOR_HOME": "C:\\absolute\\path\\to\\team-state"
       }

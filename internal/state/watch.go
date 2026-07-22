@@ -15,51 +15,51 @@ import (
 	"time"
 )
 
-// Watch blocks until one unread signal is available, then returns it.
-func (c *Client) Watch() (Signal, error) {
+// Watch blocks until one unread summary is available, then returns it.
+func (c *Client) Watch() (Summary, error) {
 	return c.WatchContext(context.Background())
 }
 
 // WatchContext returns one unread signal and then exits. An SDK trigger wrapper
 // can use the context for cancellation and submit the signal through its agent runtime.
-func (c *Client) WatchContext(ctx context.Context) (Signal, error) {
+func (c *Client) WatchContext(ctx context.Context) (Summary, error) {
 	return c.WatchSinceContext(ctx, 0)
 }
 
-// WatchSinceContext persists since as a discard floor, then returns one higher unread signal.
-func (c *Client) WatchSinceContext(ctx context.Context, since int64) (Signal, error) {
+// WatchSinceContext persists since as a discard floor, then returns one higher unread summary.
+func (c *Client) WatchSinceContext(ctx context.Context, since int64) (Summary, error) {
 	if err := c.validateProtocol(); err != nil {
-		return Signal{}, err
+		return Summary{}, err
 	}
 	if since < 0 {
-		return Signal{}, errors.New("watch index must not be negative")
+		return Summary{}, errors.New("watch sequence must not be negative")
 	}
 	agent, err := c.requireAgent()
 	if err != nil {
-		return Signal{}, err
+		return Summary{}, err
 	}
 	if since > 0 {
 		if err := c.updateCursor(agent, func(cursor *Cursor) {
-			if since > cursor.Signal {
-				cursor.Signal = since
+			if since > cursor.Summary {
+				cursor.Summary = since
 			}
-			cursor.SignalRanges = acknowledgeThrough(cursor.SignalRanges, since)
+			cursor.SummaryRanges = acknowledgeThrough(cursor.SummaryRanges, since)
 		}); err != nil {
-			return Signal{}, err
+			return Summary{}, err
 		}
 	}
 	cursor, err := c.loadCursor(agent)
 	if err != nil {
-		return Signal{}, err
+		return Summary{}, err
 	}
 	journalToken := ""
 	for {
-		signal, scannedTo, found, err := c.nextInboxSignal(agent, cursor, since)
+		summary, scannedTo, found, err := c.nextInboxSummary(agent, cursor, since)
 		if err != nil {
-			return Signal{}, err
+			return Summary{}, err
 		}
 		if found {
-			return signal, nil
+			return summary, nil
 		}
 		if scannedTo > cursor.InboxOffset {
 			if err := c.updateCursor(agent, func(current *Cursor) {
@@ -67,22 +67,22 @@ func (c *Client) WatchSinceContext(ctx context.Context, since int64) (Signal, er
 					current.InboxOffset = scannedTo
 				}
 			}); err != nil {
-				return Signal{}, err
+				return Summary{}, err
 			}
 			cursor.InboxOffset = scannedTo
 		}
 		currentToken, err := c.eventChangeToken()
 		if err != nil {
-			return Signal{}, err
+			return Summary{}, err
 		}
 		if currentToken != journalToken {
-			events, err := c.unreadEventsAfter(cursor.SignalRanges, since)
+			events, err := c.unreadEventsAfter(cursor.SummaryRanges, since)
 			if err != nil {
-				return Signal{}, err
+				return Summary{}, err
 			}
 			for _, event := range events {
 				if contains(event.Recipients, agent) {
-					return event.Signal, nil
+					return event.Summary, nil
 				}
 			}
 			journalToken = currentToken
@@ -91,64 +91,64 @@ func (c *Client) WatchSinceContext(ctx context.Context, since int64) (Signal, er
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return Signal{}, ctx.Err()
+			return Summary{}, ctx.Err()
 		case <-timer.C:
 		}
 		cursor, err = c.loadCursor(agent)
 		if err != nil {
-			return Signal{}, err
+			return Summary{}, err
 		}
 	}
 }
 
-// AcknowledgeSignal advances the wake cursor after its consumer accepts the
-// signal. A crash before this checkpoint causes replay, never silent loss.
-func (c *Client) AcknowledgeSignal(signal Signal) error {
+// AcknowledgeSummary advances the wake cursor after its consumer accepts the
+// summary. A crash before this checkpoint causes replay, never silent loss.
+func (c *Client) AcknowledgeSummary(summary Summary) error {
 	if err := c.validateProtocol(); err != nil {
 		return err
 	}
-	if err := validateSignal(&signal); err != nil {
+	if err := validateSummary(&summary); err != nil {
 		return err
 	}
 	agent, err := c.requireAgent()
 	if err != nil {
 		return err
 	}
-	offset, err := c.inboxOffsetThrough(agent, signal.Index)
+	offset, err := c.inboxOffsetThrough(agent, summary.Sequence)
 	if err != nil {
 		return err
 	}
 	return c.updateCursor(agent, func(cursor *Cursor) {
-		if signal.Index > cursor.Signal {
-			cursor.Signal = signal.Index
+		if summary.Sequence > cursor.Summary {
+			cursor.Summary = summary.Sequence
 		}
-		cursor.SignalRanges = acknowledgeIndex(cursor.SignalRanges, signal.Index)
+		cursor.SummaryRanges = acknowledgeIndex(cursor.SummaryRanges, summary.Sequence)
 		if offset > cursor.InboxOffset {
 			cursor.InboxOffset = offset
 		}
 	})
 }
 
-func (c *Client) publishEvent(kind, resource, key string, recipients []string) (Signal, error) {
-	index, err := c.nextIndex()
+func (c *Client) publishEvent(kind, topic, agent string, recipients []string) (Summary, error) {
+	sequence, err := c.nextIndex()
 	if err != nil {
-		return Signal{}, err
+		return Summary{}, err
 	}
 	if recipients == nil {
 		recipients, err = c.recipientNames()
 		if err != nil {
-			return Signal{}, err
+			return Summary{}, err
 		}
 	}
-	signal := Signal{Type: kind, Resource: resource, Key: key, Index: index, Agent: c.Agent}
-	return signal, c.writeEvent(Event{Signal: signal, Recipients: recipients})
+	summary := Summary{Type: kind, Topic: topic, Sequence: sequence, Agent: agent}
+	return summary, c.writeEvent(Event{Summary: summary, Recipients: recipients})
 }
 
 func (c *Client) writeEvent(event Event) error {
-	if err := writeJSONAtomic(filepath.Join(c.Home, "events", indexName(event.Signal.Index)), event); err != nil {
+	if err := writeJSONAtomic(filepath.Join(c.Home, "events", indexName(event.Summary.Sequence)), event); err != nil {
 		return err
 	}
-	line, err := json.Marshal(event.Signal)
+	line, err := json.Marshal(event.Summary)
 	if err != nil {
 		return err
 	}
@@ -185,48 +185,48 @@ func (c *Client) appendInbox(agent string, line []byte) error {
 	return err
 }
 
-func (c *Client) nextInboxSignal(agent string, cursor Cursor, since int64) (Signal, int64, bool, error) {
+func (c *Client) nextInboxSummary(agent string, cursor Cursor, since int64) (Summary, int64, bool, error) {
 	file, err := os.Open(filepath.Join(c.Home, "inbox", agent))
 	if errors.Is(err, os.ErrNotExist) {
-		return Signal{}, cursor.InboxOffset, false, nil
+		return Summary{}, cursor.InboxOffset, false, nil
 	}
 	if err != nil {
-		return Signal{}, cursor.InboxOffset, false, err
+		return Summary{}, cursor.InboxOffset, false, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Signal{}, cursor.InboxOffset, false, err
+		return Summary{}, cursor.InboxOffset, false, err
 	}
 	offset := cursor.InboxOffset
 	if offset > info.Size() {
 		offset = 0
 	}
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
-		return Signal{}, offset, false, err
+		return Summary{}, offset, false, err
 	}
 	reader := bufio.NewReader(file)
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) == 0 && errors.Is(readErr, io.EOF) {
-			return Signal{}, offset, false, nil
+			return Summary{}, offset, false, nil
 		}
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return Signal{}, offset, false, readErr
+			return Summary{}, offset, false, readErr
 		}
 		offset += int64(len(line))
-		var signal Signal
-		if err := json.Unmarshal(line, &signal); err != nil {
-			return Signal{}, offset, false, fmt.Errorf("malformed inbox line for %s: %w", agent, err)
+		var summary Summary
+		if err := json.Unmarshal(line, &summary); err != nil {
+			return Summary{}, offset, false, fmt.Errorf("malformed inbox line for %s: %w", agent, err)
 		}
-		if err := validateSignal(&signal); err != nil {
-			return Signal{}, offset, false, fmt.Errorf("invalid inbox line for %s: %w", agent, err)
+		if err := validateSummary(&summary); err != nil {
+			return Summary{}, offset, false, fmt.Errorf("invalid inbox line for %s: %w", agent, err)
 		}
-		if signal.Index > since && !indexAcknowledged(cursor.SignalRanges, signal.Index) {
-			return signal, offset, true, nil
+		if summary.Sequence > since && !indexAcknowledged(cursor.SummaryRanges, summary.Sequence) {
+			return summary, offset, true, nil
 		}
 		if errors.Is(readErr, io.EOF) {
-			return Signal{}, offset, false, nil
+			return Summary{}, offset, false, nil
 		}
 	}
 }
@@ -258,11 +258,11 @@ func (c *Client) inboxOffsetThrough(agent string, index int64) (int64, error) {
 			return 0, readErr
 		}
 		offset += int64(len(line))
-		var candidate Signal
+		var candidate Summary
 		if err := json.Unmarshal(line, &candidate); err != nil {
 			return 0, fmt.Errorf("malformed inbox line for %s: %w", agent, err)
 		}
-		if candidate.Index == index {
+		if candidate.Sequence == index {
 			return offset, nil
 		}
 		if errors.Is(readErr, io.EOF) {
@@ -296,7 +296,7 @@ func (c *Client) unreadEventsAfter(acknowledged []IndexRange, since int64) ([]Ev
 		}
 		result = append(result, event)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Signal.Index < result[j].Signal.Index })
+	sort.Slice(result, func(i, j int) bool { return result[i].Summary.Sequence < result[j].Summary.Sequence })
 	return result, nil
 }
 

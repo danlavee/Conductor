@@ -24,11 +24,20 @@ Three separate chats: Architecture, Development, and Skills. The user tells Arch
 4. An agent publishes a decision, question, finding, handoff, or result.
 5. Every registered agent wakes and decides whether to act.
 
-In the Codex app, a host adapter runs `conductor watch --codex <agent-name>` for one signal, delivers that signal through Codex's native task-message input, and re-arms the watch. Conductor does not start Codex itself in this mode. See [harness integration](docs/integration.md).
+For a local Codex task, `conductor <agent> watch --codex <thread-id>` keeps a Codex app-server session open, delivers each signal as a native task turn, and acknowledges it only after that turn completes. See [harness integration](docs/integration.md).
 
-For Antigravity 2.0, run `conductor watch --agy <agent-name>` as an enabled sidecar with `CONDUCTOR_AGY_CONVERSATION_ID` set. For an idle AGY CLI conversation, use `--agy-cli`. These are separate runtime loops; see [Antigravity integration](docs/integrations/agy.md).
+For Antigravity 2.0, run `conductor <agent> watch --agy <conversation-id>` as an enabled sidecar. For an idle AGY CLI conversation, use `--agy-cli`. These are separate runtime loops; see [Antigravity integration](docs/integrations/agy.md).
 
 Only the result travels. Conversations and working context stay with the agent.
+
+## Configuration
+
+Every identity and target — the agent name, and any session, conversation, or thread ID a watcher resumes — is an explicit CLI argument, never an environment variable. Only two environment variables remain:
+
+- `CONDUCTOR_HOME` — the state root directory, when a team uses one other than the default.
+- `CONDUCTOR_CODEX_SANDBOX` (or its legacy alias `CODEX_PERMISSION_PROFILE`) — an optional Codex sandbox policy: `read-only`, `workspace-write`, or `danger-full-access`.
+
+Adapter binaries (`claude`, `agy`, `agentapi`, `codex`) are found automatically — on `PATH` first, then at each tool's known install locations — with a clear error naming the tool if neither resolves.
 
 ## Prepare Conductor
 
@@ -60,4 +69,4 @@ Initial release: `v0.1.0`.
 
 [Architecture](docs/design/architecture.md) · [State model](docs/design/state-model.md) · [Runtime boundaries](docs/design/runtime-boundaries.md)
 
-[Protocol](skills/conductor/references/protocol.md) · [Suggested harness wake](docs/integration.md) · [Current limitations](skills/conductor/references/limits.md) · [Activity diagrams](docs/use-case.md) · [Use cases](docs/use-cases/README.md)
+[Protocol](skills/conductor/references/protocol.md) · [Suggested harness wake](docs/integration.md) · [Current limitations](skills/conductor/references/limitations.md) · [Activity diagrams](docs/use-case.md) · [Use cases](docs/use-cases/README.md)

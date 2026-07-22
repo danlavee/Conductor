@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"runtime"
 	"runtime/debug"
@@ -12,6 +11,7 @@ import (
 
 	conductor "github.com/danlavee/Conductor"
 	"github.com/danlavee/Conductor/internal/install"
+	"github.com/danlavee/Conductor/internal/migrate"
 	skillbundle "github.com/danlavee/Conductor/skills"
 )
 
@@ -64,17 +64,32 @@ func run(args []string) error {
 			Version  string `json:"version"`
 			Protocol int    `json:"protocol"`
 		}{Version: currentVersion(), Protocol: conductor.CurrentProtocolVersion})
+	case "migrate":
+		if len(args) != 3 {
+			return errors.New("usage: conductor migrate <absolute-v1-root> <absolute-v2-root>")
+		}
+		report, err := migrate.Run(args[1], args[2])
+		if err != nil {
+			return err
+		}
+		return conductor.WriteJSON(os.Stdout, report)
 	}
-	client, err := conductor.New(os.Getenv("CONDUCTOR_HOME"), os.Getenv("CONDUCTOR_AGENT"))
+	if len(args) < 2 {
+		return usageError()
+	}
+	agent := args[0]
+	command := args[1]
+	rest := args[2:]
+	client, err := conductor.New(os.Getenv("CONDUCTOR_HOME"), agent)
 	if err != nil {
 		return err
 	}
-	switch args[0] {
+	switch command {
 	case "register":
-		if len(args) != 3 {
+		if len(rest) != 1 {
 			return usageError()
 		}
-		snapshot, err := client.Register(args[1], args[2])
+		snapshot, err := client.Register(agent, rest[0])
 		if err != nil {
 			return err
 		}
@@ -83,16 +98,15 @@ func run(args []string) error {
 		}
 		return client.AcknowledgeSnapshot(snapshot)
 	case "deregister":
-		if len(args) != 2 {
+		if len(rest) != 0 {
 			return usageError()
 		}
-		client.Agent = args[1]
-		if err := client.Deregister(args[1]); err != nil {
+		if err := client.Deregister(agent); err != nil {
 			return err
 		}
-		return conductor.WriteJSON(os.Stdout, map[string]string{"deregistered": args[1]})
+		return conductor.WriteJSON(os.Stdout, map[string]string{"deregistered": agent})
 	case "list-agents":
-		if len(args) != 1 {
+		if len(rest) != 0 {
 			return usageError()
 		}
 		agents, err := client.ListAgents()
@@ -100,33 +114,54 @@ func run(args []string) error {
 			return err
 		}
 		return conductor.WriteJSON(os.Stdout, agents)
+	case "subscribe":
+		if len(rest) != 1 {
+			return usageError()
+		}
+		if group, ok := strings.CutPrefix(rest[0], "--topic-group="); ok {
+			subscription, err := client.SubscribeTopicGroup(group)
+			if err != nil {
+				return err
+			}
+			return conductor.WriteJSON(os.Stdout, subscription)
+		}
+		if topic, ok := strings.CutPrefix(rest[0], "--topic="); ok {
+			subscription, err := client.SubscribeTopic(topic)
+			if err != nil {
+				return err
+			}
+			return conductor.WriteJSON(os.Stdout, subscription)
+		}
+		return usageError()
+	case "list":
+		if len(rest) != 1 {
+			return usageError()
+		}
+		if rest[0] == "--topic-groups" {
+			groups, err := client.ListTopicGroups()
+			if err != nil {
+				return err
+			}
+			return conductor.WriteJSON(os.Stdout, groups)
+		}
+		if group, ok := strings.CutPrefix(rest[0], "--topic-group="); ok {
+			topics, err := client.ListTopics(group)
+			if err != nil {
+				return err
+			}
+			return conductor.WriteJSON(os.Stdout, topics)
+		}
+		return usageError()
 	case "begin":
-		resource, options, err := parseBegin(args[1:])
-		if err != nil {
-			return err
-		}
-		if err := client.BeginWithOptions(resource, options); err != nil {
-			return err
-		}
-		return conductor.WriteJSON(os.Stdout, map[string]string{"status": "begun", "resource": resource})
-	case "set":
-		if len(args) != 4 {
+		if len(rest) != 1 {
 			return usageError()
 		}
-		if err := client.Set(args[1], args[2], args[3]); err != nil {
+		if err := client.Begin(rest[0]); err != nil {
 			return err
 		}
-		return conductor.WriteJSON(os.Stdout, map[string]string{"status": "buffered", "key": args[1]})
-	case "unset":
-		if len(args) != 2 {
-			return usageError()
-		}
-		if err := client.Scratch(args[1]); err != nil {
-			return err
-		}
-		return conductor.WriteJSON(os.Stdout, map[string]string{"status": "buffered", "key": args[1]})
+		return conductor.WriteJSON(os.Stdout, map[string]string{"status": "begun", "topic": rest[0]})
 	case "commit":
-		if len(args) != 1 {
+		if len(rest) != 0 {
 			return usageError()
 		}
 		result, err := client.Commit()
@@ -135,7 +170,7 @@ func run(args []string) error {
 		}
 		return conductor.WriteJSON(os.Stdout, result)
 	case "abort":
-		if len(args) != 1 {
+		if len(rest) != 0 {
 			return usageError()
 		}
 		if err := client.Abort(); err != nil {
@@ -143,29 +178,56 @@ func run(args []string) error {
 		}
 		return conductor.WriteJSON(os.Stdout, map[string]bool{"aborted": true})
 	case "put":
-		resource, messages, options, err := parsePut(args[1:])
-		if err != nil {
-			return err
+		var result conductor.Record
+		var err error
+		if len(rest) == 1 {
+			result, err = client.StagePut(rest[0])
+		} else if len(rest) == 2 {
+			result, err = client.Put(rest[0], rest[1])
+		} else {
+			return usageError()
 		}
-		result, err := client.PutWithOptions(resource, messages, options)
-		if err != nil {
-			return err
+		return writeRecordResult(result, err)
+	case "edit":
+		var result conductor.Record
+		var err error
+		if len(rest) == 2 {
+			index, parseErr := parseRecordIndex(rest[0])
+			if parseErr != nil {
+				return parseErr
+			}
+			result, err = client.StageEdit(index, rest[1])
+		} else if len(rest) == 3 {
+			index, parseErr := parseRecordIndex(rest[1])
+			if parseErr != nil {
+				return parseErr
+			}
+			result, err = client.Edit(rest[0], index, rest[2])
+		} else {
+			return usageError()
 		}
-		return conductor.WriteJSON(os.Stdout, result)
-	case "scratch":
-		resource, key, options, err := parseScratch(args[1:])
-		if err != nil {
-			return err
+		return writeRecordResult(result, err)
+	case "strike":
+		var result conductor.Record
+		var err error
+		if len(rest) == 1 {
+			index, parseErr := parseRecordIndex(rest[0])
+			if parseErr != nil {
+				return parseErr
+			}
+			result, err = client.StageStrike(index)
+		} else if len(rest) == 2 {
+			index, parseErr := parseRecordIndex(rest[1])
+			if parseErr != nil {
+				return parseErr
+			}
+			result, err = client.Strike(rest[0], index)
+		} else {
+			return usageError()
 		}
-		result, err := client.PutWithOptions(resource, map[string]conductor.MessageMutation{
-			key: {Operation: conductor.MutationScratch},
-		}, options)
-		if err != nil {
-			return err
-		}
-		return conductor.WriteJSON(os.Stdout, result)
+		return writeRecordResult(result, err)
 	case "get":
-		request, err := parseGet(args[1:])
+		request, err := parseGet(rest)
 		if err != nil {
 			return err
 		}
@@ -176,187 +238,181 @@ func run(args []string) error {
 		if err := conductor.WriteJSON(os.Stdout, result); err != nil {
 			return err
 		}
-		return client.AcknowledgeRead(result)
+		if request.Mode == conductor.ReadDelta {
+			return client.AcknowledgeRead(result)
+		}
+		return nil
 	case "watch":
-		if len(args) == 1 {
+		watchArgs, modeValue, err := extractMode(rest)
+		if err != nil {
+			return err
+		}
+		mode, err := conductor.ParseDeliveryMode(modeValue)
+		if err != nil {
+			return err
+		}
+		if len(watchArgs) == 0 {
+			return runOneShotWatch(context.Background(), client, mode)
+		}
+		if len(watchArgs) != 2 {
 			return usageError()
 		}
-		if len(args) == 3 && args[1] == "--codex" {
-			return runCodexWatchCommand(context.Background(), client, args[2])
-		} else if len(args) == 3 && args[1] == "--codex-cli" {
-			return runCodexCLIWatchCommand(context.Background(), client, args[2])
-		} else if len(args) == 3 && args[1] == "--agy" {
-			return runAgyWatchCommand(context.Background(), client, args[2])
-		} else if len(args) == 3 && args[1] == "--agy-cli" {
-			return runAgyCLIWatchCommand(context.Background(), client, args[2])
-		} else if len(args) == 3 && args[1] == "--claude-cli" {
-			return runClaudeCLIWatchCommand(context.Background(), client, args[2])
-		} else if len(args) == 3 && args[1] == "--since" {
-			since, err := strconv.ParseInt(args[2], 10, 64)
-			if err != nil || since < 0 {
-				return errors.New("--since requires a non-negative index")
-			}
-			return runOneShotWatch(context.Background(), client, since)
+		switch watchArgs[0] {
+		case "--codex":
+			return runCodexWatchCommand(context.Background(), client, agent, watchArgs[1], mode)
+		case "--codex-cli":
+			return runCodexCLIWatchCommand(context.Background(), client, agent, watchArgs[1], mode)
+		case "--agy":
+			return runAgyWatchCommand(context.Background(), client, agent, watchArgs[1], mode)
+		case "--agy-cli":
+			return runAgyCLIWatchCommand(context.Background(), client, agent, watchArgs[1], mode)
+		case "--claude-cli":
+			return runClaudeCLIWatchCommand(context.Background(), client, agent, watchArgs[1], mode)
 		}
 		return usageError()
 	case "channel":
-		if len(args) != 3 || args[1] != "claude" {
+		if len(rest) != 1 || rest[0] != "claude" {
 			return usageError()
 		}
-		return runClaudeChannelCommand(context.Background(), client, args[2])
+		return runClaudeChannelCommand(context.Background(), client, agent)
 	default:
 		return usageError()
 	}
 }
 
-func runOneShotWatch(ctx context.Context, client *conductor.Client, since int64) error {
+func writeRecordResult(record conductor.Record, operationErr error) error {
+	if operationErr == nil {
+		return conductor.WriteJSON(os.Stdout, record)
+	}
+	if record.Index == 0 {
+		return operationErr
+	}
+	if writeErr := conductor.WriteJSON(os.Stdout, record); writeErr != nil {
+		return errors.Join(operationErr, writeErr)
+	}
+	return operationErr
+}
+
+func runOneShotWatch(ctx context.Context, client *conductor.Client, mode conductor.DeliveryMode) error {
 	release, err := client.AcquireWatchOwnership()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = release() }()
-	signal, err := client.WatchSinceContext(ctx, since)
+	summary, err := client.WatchContext(ctx)
 	if err != nil {
 		return err
 	}
-	if err := conductor.WriteJSON(os.Stdout, signal); err != nil {
+	delivery, err := client.ResolveDelivery(summary, mode)
+	if err != nil {
 		return err
 	}
-	return client.AcknowledgeSignal(signal)
+	if mode != conductor.DeliveryContent {
+		if err := conductor.WriteJSON(os.Stdout, summary); err != nil {
+			return err
+		}
+	} else if err := conductor.WriteJSON(os.Stdout, delivery); err != nil {
+		return err
+	}
+	return client.AcknowledgeDelivery(delivery)
 }
 
-func parseBegin(args []string) (string, conductor.WriteOptions, error) {
-	if len(args) == 0 {
-		return "", conductor.WriteOptions{}, usageError()
-	}
-	options := conductor.WriteOptions{}
-	for index := 1; index < len(args); index++ {
-		if args[index] != "--if-index" || index+1 >= len(args) {
-			return "", conductor.WriteOptions{}, usageError()
-		}
-		if err := addExpectedIndex(&options, args[index+1]); err != nil {
-			return "", conductor.WriteOptions{}, err
-		}
-		index++
-	}
-	return args[0], options, nil
-}
-
-func parsePut(args []string) (string, map[string]conductor.MessageMutation, conductor.WriteOptions, error) {
-	if len(args) < 4 {
-		return "", nil, conductor.WriteOptions{}, usageError()
-	}
-	messages := make(map[string]conductor.MessageMutation)
-	options := conductor.WriteOptions{}
-	for index := 1; index < len(args); index++ {
-		if args[index] == "--if-index" {
-			if index+1 >= len(args) {
-				return "", nil, conductor.WriteOptions{}, usageError()
-			}
-			if err := addExpectedIndex(&options, args[index+1]); err != nil {
-				return "", nil, conductor.WriteOptions{}, err
-			}
-			index++
+// extractMode pulls an optional "--mode=<value>" argument out of watch.
+func extractMode(args []string) ([]string, string, error) {
+	rest := make([]string, 0, len(args))
+	mode := ""
+	for _, argument := range args {
+		value, found := strings.CutPrefix(argument, "--mode=")
+		if !found {
+			rest = append(rest, argument)
 			continue
 		}
-		if index+2 >= len(args) {
-			return "", nil, conductor.WriteOptions{}, usageError()
+		if mode != "" {
+			return nil, "", errors.New("--mode may only be given once")
 		}
-		key, kind, text := args[index], args[index+1], args[index+2]
-		if key == "" || strings.HasPrefix(key, "--") {
-			return "", nil, conductor.WriteOptions{}, fmt.Errorf("invalid message key %q", key)
+		if value == "" {
+			return nil, "", errors.New("--mode requires a value")
 		}
-		if _, exists := messages[key]; exists {
-			return "", nil, conductor.WriteOptions{}, fmt.Errorf("duplicate message key %s", key)
-		}
-		payload := conductor.MessagePayload{Text: text}
-		messages[key] = conductor.MessageMutation{Operation: conductor.MutationSet, Kind: kind, Payload: &payload}
-		index += 2
+		mode = value
 	}
-	if len(messages) == 0 {
-		return "", nil, conductor.WriteOptions{}, errors.New("put requires at least one message")
-	}
-	return args[0], messages, options, nil
+	return rest, mode, nil
 }
 
-func parseScratch(args []string) (string, string, conductor.WriteOptions, error) {
-	if len(args) < 2 {
-		return "", "", conductor.WriteOptions{}, usageError()
+func parseRecordIndex(raw string) (int64, error) {
+	index, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || index <= 0 {
+		return 0, errors.New("record index must be a positive integer")
 	}
-	options := conductor.WriteOptions{}
-	for index := 2; index < len(args); index++ {
-		if args[index] != "--if-index" || index+1 >= len(args) {
-			return "", "", conductor.WriteOptions{}, usageError()
-		}
-		if err := addExpectedIndex(&options, args[index+1]); err != nil {
-			return "", "", conductor.WriteOptions{}, err
-		}
-		index++
-	}
-	return args[0], args[1], options, nil
-}
-
-func addExpectedIndex(options *conductor.WriteOptions, condition string) error {
-	key, rawIndex, ok := strings.Cut(condition, "=")
-	if !ok || key == "" || rawIndex == "" {
-		return fmt.Errorf("invalid condition %q; expected key=index", condition)
-	}
-	index, err := strconv.ParseInt(rawIndex, 10, 64)
-	if err != nil || index < 0 {
-		return fmt.Errorf("invalid condition %q; index must be non-negative", condition)
-	}
-	if options.IfIndex == nil {
-		options.IfIndex = make(map[string]int64)
-	}
-	if _, exists := options.IfIndex[key]; exists {
-		return fmt.Errorf("duplicate expected index for %s", key)
-	}
-	options.IfIndex[key] = index
-	return nil
+	return index, nil
 }
 
 func parseGet(args []string) (conductor.ReadRequest, error) {
 	if len(args) == 0 {
 		return conductor.ReadRequest{}, usageError()
 	}
-	request := conductor.ReadRequest{Resource: args[0], Mode: conductor.ReadDelta}
+	request := conductor.ReadRequest{Topic: args[0], Mode: conductor.ReadRange}
+	modeSet := false
+	hasBounds := false
+	hasLimit := false
 	for index := 1; index < len(args); index++ {
-		switch args[index] {
-		case "--full":
-			request.Mode = conductor.ReadFull
-		case "--from", "--to":
-			if index+1 >= len(args) {
-				return conductor.ReadRequest{}, usageError()
+		argument := args[index]
+		switch {
+		case argument == "--delta" || argument == "--full":
+			if modeSet {
+				return conductor.ReadRequest{}, errors.New("get mode may only be given once")
 			}
-			value, err := strconv.ParseInt(args[index+1], 10, 64)
-			if err != nil || value < 1 {
-				return conductor.ReadRequest{}, fmt.Errorf("%s requires a positive index", args[index])
-			}
-			if args[index] == "--from" {
-				request.From = value
+			modeSet = true
+			if argument == "--delta" {
+				request.Mode = conductor.ReadDelta
 			} else {
-				request.To = value
+				request.Mode = conductor.ReadFull
 			}
-			request.Mode = conductor.ReadHistorical
-			index++
+		case strings.HasPrefix(argument, "--start="):
+			value, err := strconv.ParseInt(strings.TrimPrefix(argument, "--start="), 10, 64)
+			if err != nil || value < 0 {
+				return conductor.ReadRequest{}, errors.New("--start requires a non-negative index")
+			}
+			request.Start = value
+			hasBounds = true
+		case strings.HasPrefix(argument, "--end="):
+			value, err := strconv.ParseInt(strings.TrimPrefix(argument, "--end="), 10, 64)
+			if err != nil || value < 0 {
+				return conductor.ReadRequest{}, errors.New("--end requires a non-negative index")
+			}
+			request.End = value
+			hasBounds = true
+		case strings.HasPrefix(argument, "--limit="):
+			value, err := strconv.Atoi(strings.TrimPrefix(argument, "--limit="))
+			if err != nil || value <= 0 {
+				return conductor.ReadRequest{}, errors.New("--limit requires a positive integer")
+			}
+			request.Limit = value
+			hasLimit = true
 		default:
-			if strings.HasPrefix(args[index], "--") || request.Key != "" {
+			if strings.HasPrefix(argument, "--") || request.RecordIndex != 0 {
 				return conductor.ReadRequest{}, usageError()
 			}
-			request.Key = args[index]
+			value, err := parseRecordIndex(argument)
+			if err != nil {
+				return conductor.ReadRequest{}, err
+			}
+			request.RecordIndex = value
 		}
 	}
-	if request.Mode == conductor.ReadHistorical && request.From == 0 {
-		return conductor.ReadRequest{}, errors.New("historical mode requires --from")
+	if request.End > 0 && request.End < request.Start {
+		return conductor.ReadRequest{}, errors.New("--end must be greater than or equal to --start")
 	}
-	if request.Mode == conductor.ReadHistorical && request.To > 0 && request.To < request.From {
-		return conductor.ReadRequest{}, errors.New("--to must be greater than or equal to --from")
+	if request.Mode == conductor.ReadDelta && hasBounds {
+		return conductor.ReadRequest{}, errors.New("--start and --end cannot be used with --delta")
+	}
+	if request.Mode == conductor.ReadFull && (hasBounds || hasLimit) {
+		return conductor.ReadRequest{}, errors.New("range options cannot be used with --full")
 	}
 	return request, nil
 }
 
 func usageError() error {
-	return errors.New("usage: conductor install <absolute-skill-directory> | version | register <name> <responsibility> | deregister <name> | list-agents | begin <resource> [--if-index <key>=<index>]... | set <key> <kind> <text> | unset <key> | commit | abort | put <resource> <key> <kind> <text> [<key> <kind> <text>]... [--if-index <key>=<index>]... | scratch <resource> <key> [--if-index <key>=<index>]... | get <resource> [key] [--full | --from N [--to N]] | watch [--since N | --codex <name> | --codex-cli <name> | --agy <name> | --agy-cli <name> | --claude-cli <name>] | channel claude <name>")
+	return errors.New("usage: conductor install <absolute-skill-directory> | conductor migrate <absolute-v1-root> <absolute-v2-root> | conductor version | conductor <agent> register <responsibility> | conductor <agent> deregister | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--codex <thread-id> | --codex-cli <thread-id> | --agy <conversation-id> | --agy-cli <conversation-id> | --claude-cli <session-id>] [--mode=summary|content] | conductor <agent> channel claude")
 }
 
 func installUsageError() error {

@@ -8,7 +8,7 @@ The root `protocol.json` is the compatibility gate for all of that state. Conduc
 
 An **agent** is a registered name and responsibility. A terminal binding associates that name with one process instance; an SDK caller may supply identity explicitly. A binding is not membership: every operation still requires the registry entry to exist.
 
-A **resource** is a `<topic-group>/<topic>` name. A **record** is one key within it. One publication may change several keys, but only within one resource.
+A **resource** is a `<topic-group>/<topic>` name. A **record** is exactly a positive topic-local `index` and plain `text`. Conductor assigns the index when creating the record; edit and strike preserve it. One publication may change several records, but only within one resource.
 
 A **publication index** identifies global reservation order. Completion may occur out of order, and a crash may leave a gap. Timestamps describe events; they do not order publications or signal delivery.
 
@@ -31,32 +31,32 @@ A coordinated change moves through five meaningful conditions:
 ```mermaid
 stateDiagram-v2
     [*] --> Buffered: begin
-    Buffered --> Buffered: set
+    Buffered --> Buffered: put, edit, or strike
     Buffered --> [*]: abort
     Buffered --> Indexed: commit reserves index
     Indexed --> Visible: write history and advance head
-    Visible --> Announced: refresh cache, event, and inboxes
+    Visible --> Announced: write event and inboxes
     Announced --> Settled: remove transaction and release lease
     Settled --> [*]
 ```
 
-`begin` acquires the resource lease and creates a durable transaction. Each `set` updates that transaction and renews the lease. `abort` removes the buffer without making its values visible.
+`begin` acquires the resource lease and creates a durable transaction. `put` allocates a new record index; `edit` replaces text under an existing index; `strike` literally wraps existing text in `~~` markers. Each staged operation updates the transaction and renews the lease. `abort` removes the buffer without making its values visible. A reserved record index may remain unused after abort.
 
-Conditional admission compares supplied per-record indexes with authoritative history while the resource lease is held. Lease acquisition may first complete an earlier dead writer's publication; the rejected request itself creates no transaction or publication state. After admission, conditions are not rechecked; once commit assigns its index, the accepted transaction can only be completed by commit retry or recovery.
+The transaction records which indexes it created. Before commit first reserves a publication index, it verifies that created indexes are absent and edited indexes exist in authoritative current state. Once commit assigns its publication index, the transaction can only be completed by commit retry or recovery.
 
 `commit` reserves an index, writes immutable history, and advances the resource head. The head transition is the visibility boundary: before it, readers see the previous complete state; after it, they see the new complete state.
 
-Conductor then refreshes record caches, writes an event, appends signals to recipient inboxes, removes the transaction, and releases the lease. A crash after visibility may leave these later steps unfinished. Recovery completes them without creating a second publication.
+Conductor then writes an event, appends signals to recipient inboxes, removes the transaction, and releases the lease. A crash after visibility may leave these later steps unfinished. Recovery completes them without creating a second publication.
 
 ## Reading and delivery
 
 Three read views share the same published history:
 
-- **Delta** returns changes after the accepted resource-wide or key-specific cursor.
+- **Delta** returns changes after the accepted resource-wide or record-specific cursor.
 - **Historical** returns an inclusive index range without moving that cursor.
 - **Full** reconstructs the current records through the head without moving that cursor.
 
-A signal is a location hint: type, resource, key, index, and publishing agent. One watch returns one unread signal. Explicit acknowledgement advances the signal cursor. Compact acknowledged ranges preserve a late lower index even when a higher one finished first.
+A signal is a location hint outside the record model. One watch returns one unread signal or its resolved payload. Explicit acknowledgement advances the signal cursor. Compact acknowledged ranges preserve a late lower publication index even when a higher one finished first.
 
 `watch --since N` is different. It records an intentional discard floor through `N`; a late signal at or below that index remains discarded.
 
@@ -78,10 +78,11 @@ Recovery is opportunistic. `watch` consumes existing signals and never recovers 
 | State compatibility | Root protocol declaration | Installer and version metadata |
 | Membership | Registry entries | Terminal session bindings |
 | Interrupted write | Transaction and lease | None |
-| Published value | Immutable history through head | Record files |
+| Published value | Immutable history through head | None |
+| Record identity | Topic-local record-index allocator | None |
 | Created signal | Event with its recipient set | Per-agent inbox entry |
 | Accepted progress | Cursor | None |
-| Global order | Next-index state | Timestamps |
+| Publication order | Global next-index state | Timestamps |
 
 These distinctions make repair bounded. A stale cache can be rebuilt from history. A missing inbox append can be reconciled from its event. Neither repair changes the publication itself.
 

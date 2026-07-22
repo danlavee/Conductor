@@ -7,20 +7,11 @@ import (
 )
 
 type Agent = protocol.Agent
-type MessagePayload = protocol.MessagePayload
-type Message = protocol.Message
-type MutationOperation = protocol.MutationOperation
-type MessageMutation = protocol.MessageMutation
-type Signal = protocol.Signal
+type Record = protocol.Record
 type Publication = protocol.Publication
+type Summary = protocol.Summary
 type ProtocolError = protocol.Error
-type ConflictDetail = protocol.ConflictDetail
 type ProtocolVersionDetail = protocol.ProtocolVersionDetail
-
-const (
-	MutationSet     = protocol.MutationSet
-	MutationScratch = protocol.MutationScratch
-)
 
 // Lock is durable resource-lease metadata.
 type Lock struct {
@@ -32,22 +23,15 @@ type Lock struct {
 	TimeoutSec   int       `json:"timeout_sec"`
 }
 
-// Transaction is the durable buffer created by Begin and updated by Set.
+// Transaction is the durable overlay created by Begin.
 type Transaction struct {
-	Resource string                     `json:"resource"`
-	Agent    string                     `json:"agent"`
-	PID      int                        `json:"pid"`
-	Started  time.Time                  `json:"started"`
-	Index    int64                      `json:"index,omitempty"`
-	Messages map[string]MessageMutation `json:"messages"`
-}
-
-// WriteOptions controls admission of a resource write. A zero value is unconditional.
-type WriteOptions struct {
-	// IfIndex requires each named message to remain at its last-read publication
-	// index. Index zero requires absence. Conditions may include unchanged messages;
-	// changed messages without a condition remain unconditional. The map is copied.
-	IfIndex map[string]int64
+	Topic    string           `json:"topic"`
+	Agent    string           `json:"agent"`
+	PID      int              `json:"pid"`
+	Started  time.Time        `json:"started"`
+	Sequence int64            `json:"sequence,omitempty"`
+	Records  map[int64]Record `json:"records"`
+	Created  map[int64]bool   `json:"created"`
 }
 
 type IndexRange struct {
@@ -56,57 +40,52 @@ type IndexRange struct {
 }
 
 type Cursor struct {
-	Signal       int64            `json:"signal_index"`
-	SignalRanges []IndexRange     `json:"signal_ranges,omitempty"`
-	InboxOffset  int64            `json:"inbox_offset"`
-	Resources    map[string]int64 `json:"resource_indexes"`
+	Summary       int64            `json:"summary_sequence"`
+	SummaryRanges []IndexRange     `json:"summary_ranges,omitempty"`
+	InboxOffset   int64            `json:"inbox_offset"`
+	Topics        map[string]int64 `json:"topic_sequences"`
 }
 
 type Event struct {
-	Signal     Signal   `json:"signal"`
+	Summary    Summary  `json:"summary"`
 	Recipients []string `json:"recipients"`
 }
 
-type Session struct {
-	Agent       string    `json:"agent"`
-	ParentPID   int       `json:"parent_pid"`
-	ParentStart string    `json:"parent_start"`
-	BoundAt     time.Time `json:"bound_at"`
-}
-
 type Snapshot struct {
-	Agents    []Agent                       `json:"agents"`
-	Resources map[string]map[string]Message `json:"resources"`
+	Agents []Agent             `json:"agents"`
+	Topics map[string][]Record `json:"topics"`
+	heads  map[string]int64
 }
 
 type ReadMode int
 
 const (
-	ReadDelta ReadMode = iota
-	ReadHistorical
+	ReadRange ReadMode = iota
+	ReadDelta
 	ReadFull
 )
 
 type ReadRequest struct {
-	Resource string
-	Key      string
-	Mode     ReadMode
-	From     int64
-	To       int64
+	Topic           string
+	RecordIndex     int64
+	Mode            ReadMode
+	Start           int64
+	End             int64
+	Limit           int
+	throughSequence int64
 }
 
 type ReadResult struct {
-	Mode     string        `json:"mode"`
-	Resource string        `json:"resource"`
-	From     int64         `json:"from,omitempty"`
-	To       int64         `json:"to,omitempty"`
-	Messages []Message     `json:"messages,omitempty"`
-	History  []Publication `json:"history,omitempty"`
-	maxIndex int64
-	key      string
+	Mode         string        `json:"mode"`
+	Topic        string        `json:"topic"`
+	Records      []Record      `json:"records,omitempty"`
+	Publications []Publication `json:"publications,omitempty"`
+	maxSequence  int64
+	record       int64
 }
 
-type materializedMessage struct {
-	Message
-	Scratched bool `json:"scratched,omitempty"`
+// Subscription selects topic content for one agent's delta.
+type Subscription struct {
+	TopicGroups []string `json:"topic_groups"`
+	Topics      []string `json:"topics"`
 }

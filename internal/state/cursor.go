@@ -7,16 +7,16 @@ import (
 )
 
 func (c *Client) loadCursor(agent string) (Cursor, error) {
-	cursor := Cursor{Resources: map[string]int64{}}
+	cursor := Cursor{Topics: map[string]int64{}}
 	err := readJSON(filepath.Join(c.Home, "cursors", agent+".json"), &cursor)
 	if errors.Is(err, os.ErrNotExist) {
 		return cursor, nil
 	}
-	if cursor.Resources == nil {
-		cursor.Resources = map[string]int64{}
+	if cursor.Topics == nil {
+		cursor.Topics = map[string]int64{}
 	}
-	if len(cursor.SignalRanges) == 0 && cursor.Signal > 0 {
-		cursor.SignalRanges = []IndexRange{{From: 1, To: cursor.Signal}}
+	if len(cursor.SummaryRanges) == 0 && cursor.Summary > 0 {
+		cursor.SummaryRanges = []IndexRange{{From: 1, To: cursor.Summary}}
 	}
 	return cursor, err
 }

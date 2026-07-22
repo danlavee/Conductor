@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,10 +22,10 @@ func TestNewDeclaresProtocolBeforeStateDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 1\n}\n" {
+	if string(data) != fmt.Sprintf("{\n  \"version\": %d\n}\n", CurrentProtocolVersion) {
 		t.Fatalf("protocol declaration = %q", data)
 	}
-	for _, name := range []string{"registry", "topics", "locks", "inbox", "events", "cursors", "transactions", "sessions", "state"} {
+	for _, name := range []string{"registry", "topics", "locks", "inbox", "events", "cursors", "transactions", "state"} {
 		if info, err := os.Stat(filepath.Join(home, name)); err != nil || !info.IsDir() {
 			t.Fatalf("state directory %s is unavailable: %v", name, err)
 		}
@@ -49,13 +50,28 @@ func TestNewRejectsUnversionedStateWithoutChangingIt(t *testing.T) {
 	}
 }
 
+func TestNewRejectsVersionOneWithoutChangingIt(t *testing.T) {
+	home := t.TempDir()
+	want := []byte("{\n  \"version\": 1\n}\n")
+	if err := os.WriteFile(protocolPath(home), want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	found := 1
+	_, err := New(home, "")
+	assertProtocolMismatch(t, err, &found)
+	got, readErr := os.ReadFile(protocolPath(home))
+	if readErr != nil || !bytes.Equal(got, want) {
+		t.Fatalf("version-one declaration changed: %q, %v", got, readErr)
+	}
+}
+
 func TestNewRejectsInvalidProtocolDeclarations(t *testing.T) {
-	negative, zero, two := -1, 0, 2
+	negative, zero, unsupported := -1, 0, CurrentProtocolVersion+1
 	for name, test := range map[string]struct {
 		data  string
 		found *int
 	}{
-		"unsupported": {`{"version":2}`, &two},
+		"unsupported": {fmt.Sprintf(`{"version":%d}`, unsupported), &unsupported},
 		"zero":        {`{"version":0}`, &zero},
 		"negative":    {`{"version":-1}`, &negative},
 		"missing":     {`{}`, nil},
@@ -167,15 +183,15 @@ func TestStatefulBoundariesDoNotRecreateMissingProtocol(t *testing.T) {
 		"list":         func() error { _, err := client.ListAgents(); return err },
 		"snapshot":     func() error { _, err := client.FullSnapshot(); return err },
 		"ack-snapshot": func() error { return client.AcknowledgeSnapshot(Snapshot{}) },
-		"get":          func() error { _, err := client.Get(ReadRequest{Resource: "messages/team", Mode: ReadFull}); return err },
+		"get":          func() error { _, err := client.Get(ReadRequest{Topic: "messages/team", Mode: ReadFull}); return err },
 		"ack-read":     func() error { return client.AcknowledgeRead(ReadResult{}) },
 		"watch":        func() error { _, err := client.WatchSinceContext(context.Background(), 0); return err },
-		"ack-signal":   func() error { return client.AcknowledgeSignal(Signal{}) },
+		"ack-summary":  func() error { return client.AcknowledgeSummary(Summary{}) },
 		"watch-owner":  func() error { _, err := client.AcquireWatchOwnership(); return err },
 		"begin":        func() error { return client.Begin("messages/team") },
-		"set":          func() error { return client.Set("entry", "note", "text") },
+		"stage-put":    func() error { _, err := client.StagePut("text"); return err },
 		"commit":       func() error { _, err := client.Commit(); return err },
-		"put":          func() error { _, err := client.Put("messages/team", nil); return err },
+		"put":          func() error { _, err := client.Put("messages/team", "text"); return err },
 		"abort":        func() error { return client.Abort() },
 	}
 	for name, check := range checks {

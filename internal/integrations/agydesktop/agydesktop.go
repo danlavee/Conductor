@@ -11,37 +11,19 @@ import (
 	"strings"
 
 	conductor "github.com/danlavee/Conductor"
-)
-
-const (
-	BinaryEnvironment       = "CONDUCTOR_AGY_AGENTAPI_BIN"
-	ConversationEnvironment = "CONDUCTOR_AGY_CONVERSATION_ID"
+	"github.com/danlavee/Conductor/internal/integrations/execlocate"
 )
 
 type WatchClient interface {
-	WatchContext(context.Context) (conductor.Signal, error)
-	AcknowledgeSignal(conductor.Signal) error
+	WatchContext(context.Context) (conductor.Summary, error)
+	ResolveDelivery(conductor.Summary, conductor.DeliveryMode) (conductor.Delivery, error)
+	AcknowledgeDelivery(conductor.Delivery) error
 }
 
-type Environment struct {
-	Executable     string
-	ConversationID string
-}
-
-func EnvironmentFrom(getenv func(string) string) Environment {
-	conversationID := getenv(ConversationEnvironment)
+// Validate checks the explicit conversation ID and agent name given on the command line.
+func Validate(conversationID, agent string) error {
 	if strings.TrimSpace(conversationID) == "" {
-		conversationID = getenv("ANTIGRAVITY_CONVERSATION_ID")
-	}
-	return Environment{
-		Executable:     getenv(BinaryEnvironment),
-		ConversationID: conversationID,
-	}
-}
-
-func (e Environment) Validate(agent string) error {
-	if strings.TrimSpace(e.ConversationID) == "" {
-		return fmt.Errorf("%s is required for Antigravity watch", ConversationEnvironment)
+		return errors.New("Antigravity watch requires a conversation ID")
 	}
 	if strings.TrimSpace(agent) == "" {
 		return errors.New("Antigravity watch requires an agent name")
@@ -51,7 +33,7 @@ func (e Environment) Validate(agent string) error {
 
 type Activator interface {
 	Check(context.Context, string) error
-	Activate(context.Context, string, string, conductor.Signal) error
+	Activate(context.Context, string, string, conductor.Delivery) error
 }
 
 type AgentAPI struct {
@@ -61,12 +43,15 @@ type AgentAPI struct {
 	command    func(context.Context, string, ...string) *exec.Cmd
 }
 
+// agentapi has no confidently known standard install location beyond PATH:
+// Antigravity 2.0 adds it to PATH itself when run as an enabled sidecar, so
+// resolution relies on PATH alone.
 func New(executable string, stdout, stderr io.Writer) (*AgentAPI, error) {
 	if strings.TrimSpace(executable) == "" {
 		var err error
-		executable, err = exec.LookPath("agentapi")
+		executable, err = execlocate.Find("Antigravity agentapi", "agentapi", nil)
 		if err != nil {
-			return nil, fmt.Errorf("find Antigravity agentapi: run this watcher as an enabled Antigravity sidecar or set %s: %w", BinaryEnvironment, err)
+			return nil, err
 		}
 	}
 	return &AgentAPI{executable: executable, stdout: stdout, stderr: stderr, command: exec.CommandContext}, nil
@@ -82,8 +67,8 @@ func (a *AgentAPI) Check(ctx context.Context, conversationID string) error {
 	return nil
 }
 
-func (a *AgentAPI) Activate(ctx context.Context, conversationID, agent string, signal conductor.Signal) error {
-	prompt, err := SignalPrompt(agent, signal)
+func (a *AgentAPI) Activate(ctx context.Context, conversationID, agent string, delivery conductor.Delivery) error {
+	prompt, err := SignalPrompt(agent, delivery)
 	if err != nil {
 		return err
 	}
@@ -96,33 +81,37 @@ func (a *AgentAPI) Activate(ctx context.Context, conversationID, agent string, s
 	return nil
 }
 
-func Run(ctx context.Context, client WatchClient, activator Activator, conversationID, agent string) error {
-	if strings.TrimSpace(conversationID) == "" {
-		return fmt.Errorf("%s is required for Antigravity watch", ConversationEnvironment)
-	}
-	if strings.TrimSpace(agent) == "" {
-		return errors.New("Antigravity watch requires an agent name")
+func Run(ctx context.Context, client WatchClient, activator Activator, conversationID, agent string, mode conductor.DeliveryMode) error {
+	if err := Validate(conversationID, agent); err != nil {
+		return err
 	}
 	for {
-		signal, err := client.WatchContext(ctx)
+		summary, err := client.WatchContext(ctx)
 		if err != nil {
 			return err
 		}
-		if err := activator.Activate(ctx, conversationID, agent, signal); err != nil {
-			return fmt.Errorf("deliver Conductor signal %d to Antigravity: %w", signal.Index, err)
+		delivery, err := client.ResolveDelivery(summary, mode)
+		if err != nil {
+			return fmt.Errorf("resolve Conductor summary %d for Antigravity: %w", summary.Sequence, err)
 		}
-		if err := client.AcknowledgeSignal(signal); err != nil {
-			return fmt.Errorf("acknowledge Conductor signal %d after Antigravity delivery: %w", signal.Index, err)
+		if err := activator.Activate(ctx, conversationID, agent, delivery); err != nil {
+			return fmt.Errorf("deliver Conductor summary %d to Antigravity: %w", summary.Sequence, err)
+		}
+		if err := client.AcknowledgeDelivery(delivery); err != nil {
+			return fmt.Errorf("acknowledge Conductor summary %d after Antigravity delivery: %w", summary.Sequence, err)
 		}
 	}
 }
 
-func SignalPrompt(agent string, signal conductor.Signal) (string, error) {
-	payload, err := json.Marshal(signal)
+func SignalPrompt(agent string, delivery conductor.Delivery) (string, error) {
+	payload, err := json.Marshal(delivery)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Conductor activated this Antigravity turn for agent %q with signal %s. Use the installed Conductor skill now and set CONDUCTOR_AGENT=%s on every Conductor command. For an update, read the named resource; for a join or leave, refresh the roster. The Antigravity sidecar already owns the wait loop, so do not start conductor watch. Process this signal idempotently and report the result.", agent, payload, agent), nil
+	if delivery.Mode == conductor.DeliverySummary {
+		return fmt.Sprintf("Conductor activated this Antigravity turn for agent %q with signal summary %s. Resolve it as needed and process it idempotently. The sidecar already owns the watch loop.", agent, payload), nil
+	}
+	return fmt.Sprintf("Conductor activated this Antigravity turn for agent %q with delivery %s. The complete topic delta or roster is included; do not fetch it again. Process it idempotently. The sidecar already owns the watch loop.", agent, payload), nil
 }
 
 func writerOrDiscard(writer io.Writer) io.Writer {

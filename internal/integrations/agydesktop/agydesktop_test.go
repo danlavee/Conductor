@@ -12,21 +12,25 @@ import (
 )
 
 type stubWatchClient struct {
-	signal       conductor.Signal
+	summary      conductor.Summary
 	delivered    bool
 	acknowledged bool
 	stop         error
 }
 
-func (c *stubWatchClient) WatchContext(context.Context) (conductor.Signal, error) {
+func (c *stubWatchClient) WatchContext(context.Context) (conductor.Summary, error) {
 	if c.delivered {
-		return conductor.Signal{}, c.stop
+		return conductor.Summary{}, c.stop
 	}
 	c.delivered = true
-	return c.signal, nil
+	return c.summary, nil
 }
 
-func (c *stubWatchClient) AcknowledgeSignal(conductor.Signal) error {
+func (c *stubWatchClient) ResolveDelivery(summary conductor.Summary, mode conductor.DeliveryMode) (conductor.Delivery, error) {
+	return conductor.Delivery{Summary: summary, Mode: mode}, nil
+}
+
+func (c *stubWatchClient) AcknowledgeDelivery(conductor.Delivery) error {
 	c.acknowledged = true
 	return nil
 }
@@ -39,7 +43,7 @@ type stubActivator struct {
 
 func (a *stubActivator) Check(context.Context, string) error { return nil }
 
-func (a *stubActivator) Activate(_ context.Context, conversation, agent string, _ conductor.Signal) error {
+func (a *stubActivator) Activate(_ context.Context, conversation, agent string, _ conductor.Delivery) error {
 	a.conversation = conversation
 	a.agent = agent
 	return a.err
@@ -47,33 +51,28 @@ func (a *stubActivator) Activate(_ context.Context, conversation, agent string, 
 
 func TestRunDeliversThenAcknowledges(t *testing.T) {
 	stop := errors.New("stop")
-	client := &stubWatchClient{signal: conductor.Signal{Type: "update", Resource: "dev/tasks", Index: 4}, stop: stop}
+	client := &stubWatchClient{summary: conductor.Summary{Type: "update", Topic: "dev/tasks", Sequence: 4, Agent: "writer"}, stop: stop}
 	activator := &stubActivator{}
-	err := Run(context.Background(), client, activator, "conversation-1", "tester1")
+	err := Run(context.Background(), client, activator, "conversation-1", "tester1", conductor.DeliveryContent)
 	if !errors.Is(err, stop) || !client.acknowledged || activator.conversation != "conversation-1" || activator.agent != "tester1" {
 		t.Fatalf("error=%v acknowledged=%v activator=%#v", err, client.acknowledged, activator)
 	}
 }
 
 func TestRunLeavesFailedDeliveryUnread(t *testing.T) {
-	client := &stubWatchClient{signal: conductor.Signal{Type: "join", Resource: "registry", Index: 5}}
-	err := Run(context.Background(), client, &stubActivator{err: errors.New("failed")}, "conversation-1", "tester1")
-	if err == nil || client.acknowledged || !strings.Contains(err.Error(), "signal 5") {
+	client := &stubWatchClient{summary: conductor.Summary{Type: "join", Topic: "registry", Sequence: 5, Agent: "writer"}}
+	err := Run(context.Background(), client, &stubActivator{err: errors.New("failed")}, "conversation-1", "tester1", conductor.DeliveryContent)
+	if err == nil || client.acknowledged || !strings.Contains(err.Error(), "summary 5") {
 		t.Fatalf("error=%v acknowledged=%v", err, client.acknowledged)
 	}
 }
 
 func TestEnvironmentAndPrompt(t *testing.T) {
-	environment := EnvironmentFrom(func(key string) string {
-		return map[string]string{
-			BinaryEnvironment: "agentapi-test", ConversationEnvironment: "conversation-1",
-		}[key]
-	})
-	if environment.Executable != "agentapi-test" || environment.ConversationID != "conversation-1" || environment.Validate("tester1") != nil {
-		t.Fatalf("environment=%+v", environment)
+	if err := Validate("conversation-1", "tester1"); err != nil {
+		t.Fatal(err)
 	}
-	prompt, err := SignalPrompt("tester1", conductor.Signal{Type: "update", Resource: "dev/tasks", Index: 8})
-	if err != nil || !strings.Contains(prompt, `"index":8`) || !strings.Contains(prompt, "CONDUCTOR_AGENT=tester1") || !strings.Contains(prompt, "do not start conductor watch") {
+	prompt, err := SignalPrompt("tester1", conductor.Delivery{Summary: conductor.Summary{Type: "update", Topic: "dev/tasks", Sequence: 8, Agent: "writer"}, Mode: conductor.DeliveryContent})
+	if err != nil || !strings.Contains(prompt, `"sequence":8`) || !strings.Contains(prompt, `"mode":"content"`) || !strings.Contains(prompt, "complete topic delta or roster") {
 		t.Fatalf("prompt=%q error=%v", prompt, err)
 	}
 }
@@ -90,7 +89,7 @@ func TestAgentAPIValidatesThenSendsMessage(t *testing.T) {
 	if err := api.Check(context.Background(), "conversation-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := api.Activate(context.Background(), "conversation-1", "tester1", conductor.Signal{Type: "update", Resource: "dev/tasks", Index: 9}); err != nil {
+	if err := api.Activate(context.Background(), "conversation-1", "tester1", conductor.Delivery{Summary: conductor.Summary{Type: "update", Topic: "dev/tasks", Sequence: 9, Agent: "writer"}, Mode: conductor.DeliveryContent}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -110,7 +109,7 @@ func TestAgentAPIHelperProcess(t *testing.T) {
 	if len(arguments) == 2 && arguments[0] == "get-conversation-metadata" && arguments[1] == "conversation-1" {
 		os.Exit(0)
 	}
-	if len(arguments) == 3 && arguments[0] == "send-message" && arguments[1] == "conversation-1" && strings.Contains(arguments[2], `"index":9`) {
+	if len(arguments) == 3 && arguments[0] == "send-message" && arguments[1] == "conversation-1" && strings.Contains(arguments[2], `"sequence":9`) {
 		os.Exit(0)
 	}
 	os.Exit(2)

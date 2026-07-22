@@ -49,7 +49,7 @@ func TestActivateWaitsForMatchingCompletedTurn(t *testing.T) {
 		serverDone <- encoder.Encode(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": "turn-1", "status": "completed"}}})
 	}()
 
-	err := session.Activate(context.Background(), "thread-1", "tester1", conductor.Signal{Index: 3, Type: "update", Resource: "dev/tasks", Key: "probe"})
+	err := session.Activate(context.Background(), "thread-1", "tester1", conductor.Delivery{Summary: conductor.Summary{Sequence: 3, Type: "update", Topic: "dev/tasks", Agent: "tester1"}, Mode: conductor.DeliveryContent})
 	if err != nil {
 		t.Fatalf("Activate() error = %v", err)
 	}

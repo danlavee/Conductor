@@ -18,7 +18,7 @@ func TestRepositoryPackageIsValid(t *testing.T) {
 func TestValidateSkillRejectsEscapingLinksAndInvalidAssets(t *testing.T) {
 	skill := fstest.MapFS{
 		"SKILL.md":                                  &fstest.MapFile{Data: []byte("---\r\nname: conductor\r\ndescription: Test.\r\n---\r\n\r\n[Escape](../outside.md)\r\n")},
-		"references/limits.md":                      &fstest.MapFile{Data: []byte("# Limits\n")},
+		"references/limitations.md":                      &fstest.MapFile{Data: []byte("# Limits\n")},
 		"references/protocol.md":                    &fstest.MapFile{Data: []byte("# Protocol\n")},
 		"references/integrations/README.md":         &fstest.MapFile{Data: []byte("# Integrations\n")},
 		"references/integrations/codex.md":          &fstest.MapFile{Data: []byte("# Codex\n")},

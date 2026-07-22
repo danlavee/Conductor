@@ -1,674 +1,373 @@
 package state
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
-func TestTransactionSurvivesSeparateClients(t *testing.T) {
+func TestStagedOperationsUseStableRecordIndexAndOverlay(t *testing.T) {
 	home := t.TempDir()
 	first := newTestClient(t, home, "")
-	if _, err := first.Register("writer", "development"); err != nil {
+	if _, err := first.Register("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	if err := first.Begin("dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
-
 	second := newTestClient(t, home, "writer")
-	if err := second.Set("task-42", "task", "done"); err != nil {
+	created, err := second.StagePut("initial")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Commit(); err != nil {
-		t.Fatal(err)
+	edited, err := second.StageEdit(created.Index, "updated")
+	if err != nil || edited.Index != created.Index {
+		t.Fatalf("edited = %#v, error = %v", edited, err)
 	}
-	if _, err := os.Stat(filepath.Join(home, "transactions", "writer.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("transaction file remains after commit: %v", err)
+	struck, err := second.StageStrike(created.Index)
+	if err != nil || struck.Text != "~~updated~~" {
+		t.Fatalf("struck = %#v, error = %v", struck, err)
+	}
+	publication, err := second.Commit()
+	if err != nil || publication.Topic != "dev/tasks" || len(publication.Records) != 1 || publication.Records[0] != struck {
+		t.Fatalf("publication = %#v, error = %v", publication, err)
 	}
 }
 
-func TestConcurrentSameAgentSetsAreSerialized(t *testing.T) {
+func TestOneShotOperationsAndLiteralStrike(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Register("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	record, err := client.Put("messages/team", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = client.Strike("messages/team", record.Index)
+	if err != nil || record.Text != "~~~~" {
+		t.Fatalf("first strike = %#v, error = %v", record, err)
+	}
+	record, err = client.Strike("messages/team", record.Index)
+	if err != nil || record.Text != "~~~~~~"+"~~" {
+		t.Fatalf("second strike = %#v, error = %v", record, err)
+	}
+	record, err = client.Edit("messages/team", record.Index, "exact")
+	if err != nil || record.Text != "exact" {
+		t.Fatalf("edit = %#v, error = %v", record, err)
+	}
+}
+
+func TestTopicLocalIndexesAndAbortGap(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Register("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	a, err := client.Put("group/alpha", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Put("group/beta", "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Index != 1 || b.Index != 1 {
+		t.Fatalf("topic-local indexes = %d and %d", a.Index, b.Index)
+	}
+	if err := client.Begin("group/alpha"); err != nil {
+		t.Fatal(err)
+	}
+	aborted, err := client.StagePut("aborted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Abort(); err != nil {
+		t.Fatal(err)
+	}
+	next, err := client.Put("group/alpha", "next")
+	if err != nil || next.Index <= aborted.Index {
+		t.Fatalf("next = %#v, aborted = %#v, error = %v", next, aborted, err)
+	}
+	full, err := client.Get(ReadRequest{Topic: "group/alpha", Mode: ReadFull})
+	if err != nil || len(full.Records) != 2 {
+		t.Fatalf("full = %#v, error = %v", full, err)
+	}
+}
+
+func TestMissingOperationsDoNotLeakOneShotLease(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Register("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Edit("dev/tasks", 1, "missing"); err == nil {
+		t.Fatal("missing edit succeeded")
+	} else {
+		assertCode(t, err, "NOT_FOUND")
+	}
+	if _, err := client.Strike("dev/tasks", 99); err == nil {
+		t.Fatal("missing strike succeeded")
+	} else {
+		assertCode(t, err, "NOT_FOUND")
+	}
+	history, err := client.readHistory("dev/tasks")
+	if err != nil || len(history) != 0 {
+		t.Fatalf("rejected operations published history: %#v, %v", history, err)
+	}
+	if _, err := client.Put("dev/tasks", "works after failure"); err != nil {
+		t.Fatalf("failed one-shot leaked lease: %v", err)
+	}
+}
+
+func TestSameIndexInOtherTopicIsIndependent(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Register("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	alpha, err := client.Put("group/alpha", "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beta, err := client.Put("group/beta", "beta")
+	if err != nil || beta.Index != alpha.Index {
+		t.Fatalf("beta = %#v, alpha = %#v, %v", beta, alpha, err)
+	}
+	if _, err := client.Edit("group/alpha", alpha.Index, "changed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Strike("group/alpha", alpha.Index); err != nil {
+		t.Fatal(err)
+	}
+	full, err := client.Get(ReadRequest{Topic: "group/beta", Mode: ReadFull})
+	if err != nil || len(full.Records) != 1 || full.Records[0] != beta {
+		t.Fatalf("other topic changed: %#v, %v", full, err)
+	}
+}
+
+func TestTextIsPreservedExactly(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Register("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"   ", "first\nsecond", "שלום 🌍"} {
+		record, err := client.Put("messages/exact", text)
+		if err != nil || record.Text != text {
+			t.Fatalf("put %#v = %#v, %v", text, record, err)
+		}
+		edited := text + "\nchanged"
+		record, err = client.Edit("messages/exact", record.Index, edited)
+		if err != nil || record.Text != edited {
+			t.Fatalf("edit %#v = %#v, %v", edited, record, err)
+		}
+	}
+}
+
+func TestRecordAllocatorRejectsMissingRegressedAndExhaustedState(t *testing.T) {
+	for name, allocator := range map[string]*int64{
+		"missing":   nil,
+		"regressed": int64Pointer(0),
+		"exhausted": int64Pointer(math.MaxInt64),
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			client := newTestClient(t, home, "")
+			if _, err := client.Register("writer", "records"); err != nil {
+				t.Fatal(err)
+			}
+			first, err := client.Put("dev/tasks", "first")
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(home, "topics", "dev", "tasks", "record-index.json")
+			if allocator == nil {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := writeJSONAtomic(path, map[string]int64{"index": *allocator}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Put("dev/tasks", "must fail"); err == nil {
+				t.Fatal("create accepted inconsistent allocator")
+			}
+			full, err := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
+			if err != nil || len(full.Records) != 1 || full.Records[0] != first {
+				t.Fatalf("current records changed: %#v, %v", full, err)
+			}
+		})
+	}
+}
+
+func TestRecoveryPublishesDurableRecordOverlayOnce(t *testing.T) {
 	home := t.TempDir()
 	owner := newTestClient(t, home, "")
-	if _, err := owner.Register("writer", "development"); err != nil {
+	if _, err := owner.Register("owner", "records"); err != nil {
+		t.Fatal(err)
+	}
+	rescuer := newTestClient(t, home, "")
+	if _, err := rescuer.Register("rescuer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	base, err := owner.Put("dev/tasks", "base")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := owner.Begin("dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
-	results := make(chan error, 2)
-	for key, value := range map[string]string{"alpha": "one", "beta": "two"} {
-		go func(key, value string) {
-			client := newTestClient(t, home, "writer")
-			results <- client.Set(key, "test", value)
-		}(key, value)
-	}
-	for range 2 {
-		if err := <-results; err != nil {
-			t.Fatal(err)
-		}
-	}
-	change, err := owner.Commit()
+	created, err := owner.StagePut("created")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(change.Messages) != 2 {
-		t.Fatalf("concurrent set lost a message: %#v", change.Messages)
+	if _, err := owner.StageEdit(base.Index, "edited"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.StageStrike(base.Index); err != nil {
+		t.Fatal(err)
+	}
+	var lock Lock
+	if err := readJSON(owner.writeLockPath("dev/tasks"), &lock); err != nil {
+		t.Fatal(err)
+	}
+	lock.PID = math.MaxInt32
+	lock.ProcessStart = "dead-owner"
+	lock.Timestamp = time.Now().Add(-2 * owner.LockTimeout)
+	lock.TimeoutSec = 1
+	if err := writeJSONAtomic(owner.writeLockPath("dev/tasks"), lock); err != nil {
+		t.Fatal(err)
+	}
+	rescuer.Agent = "rescuer"
+	next, err := rescuer.Put("dev/tasks", "after recovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Index <= created.Index {
+		t.Fatalf("allocator reused recovered index: created=%d next=%d", created.Index, next.Index)
+	}
+	full, err := rescuer.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(full.Records)
+	want := `[{"index":1,"text":"~~edited~~"},{"index":2,"text":"created"},{"index":3,"text":"after recovery"}]`
+	if string(encoded) != want {
+		t.Fatalf("recovered records = %s, want %s", encoded, want)
+	}
+	history, err := rescuer.readHistory("dev/tasks")
+	if err != nil || len(history) != 3 {
+		t.Fatalf("history = %#v, %v", history, err)
 	}
 }
 
-func TestConditionalEditRejectsStaleMessageIndex(t *testing.T) {
-	home := t.TempDir()
-	client := newTestClient(t, home, "")
-	if _, err := client.Register("writer", "development"); err != nil {
-		t.Fatal(err)
-	}
-	created, err := client.Put("dev/tasks", map[string]MessageMutation{"task-42": testMessage("old")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	updated, err := client.PutWithOptions(
-		"dev/tasks",
-		map[string]MessageMutation{"task-42": testMessage("new")},
-		WriteOptions{IfIndex: map[string]int64{"task-42": created.Index}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var indexState struct {
-		Index int64 `json:"index"`
-	}
-	if err := readJSON(filepath.Join(home, "state", "index.json"), &indexState); err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.PutWithOptions(
-		"dev/tasks",
-		map[string]MessageMutation{"task-42": testMessage("stale")},
-		WriteOptions{IfIndex: map[string]int64{"task-42": created.Index}},
-	)
-	var protocol *ProtocolError
-	if !errors.As(err, &protocol) || protocol.Code != "CONFLICT" || protocol.Conflict == nil {
-		t.Fatalf("error = %#v", err)
-	}
-	detail := protocol.Conflict
-	if detail.Resource != "dev/tasks" || detail.Key != "task-42" || detail.ExpectedIndex != created.Index || detail.CurrentIndex != updated.Index {
-		t.Fatalf("conflict = %+v", detail)
-	}
-	var afterConflict struct {
-		Index int64 `json:"index"`
-	}
-	if err := readJSON(filepath.Join(home, "state", "index.json"), &afterConflict); err != nil {
-		t.Fatal(err)
-	}
-	if afterConflict.Index != indexState.Index {
-		t.Fatalf("conflict advanced global index from %d to %d", indexState.Index, afterConflict.Index)
-	}
-	if _, err := os.Stat(client.transactionPath("writer")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("rejected write left a transaction: %v", err)
-	}
-	if _, err := os.Stat(client.writeGuardPath("dev/tasks")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("rejected write left a resource guard: %v", err)
-	}
-	if _, err := os.Stat(client.writeLockPath("dev/tasks")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("rejected write left a resource lock: %v", err)
-	}
-	history, err := client.readHistory("dev/tasks")
-	if err != nil || len(history) != 2 || history[len(history)-1].Index != updated.Index {
-		t.Fatalf("history changed after conflict: %#v, %v", history, err)
-	}
-	var head struct {
-		Index int64 `json:"index"`
-	}
-	if err := readJSON(filepath.Join(home, "topics", "dev", "tasks", "head.json"), &head); err != nil || head.Index != updated.Index {
-		t.Fatalf("head after conflict = %+v, %v", head, err)
-	}
-	events, err := os.ReadDir(filepath.Join(home, "events"))
-	if err != nil || len(events) != 3 {
-		t.Fatalf("events after conflict = %d, %v", len(events), err)
-	}
-	inbox, err := os.ReadFile(filepath.Join(home, "inbox", "writer"))
-	if err != nil || bytes.Count(inbox, []byte{'\n'}) != 3 {
-		t.Fatalf("inbox after conflict = %q, %v", inbox, err)
-	}
-	full, err := client.Get(ReadRequest{Resource: "dev/tasks", Key: "task-42", Mode: ReadFull})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(full.Messages) != 1 || full.Messages[0].Index != updated.Index || full.Messages[0].Payload.Text != "new" {
-		t.Fatalf("full result = %#v", full)
-	}
-}
+func int64Pointer(value int64) *int64 { return &value }
 
-func TestConditionalWriteSupportsCreateAndPerKeyIndexes(t *testing.T) {
+func TestStagedFailureLeavesOwnedTransactionUnchanged(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "development"); err != nil {
+	if _, err := client.Register("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
-	alpha, err := client.PutWithOptions(
-		"dev/tasks",
-		map[string]MessageMutation{"alpha": testMessage("one")},
-		WriteOptions{IfIndex: map[string]int64{"alpha": 0}},
-	)
-	if err != nil {
+	if err := client.Begin("dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
-	beta, err := client.Put("dev/tasks", map[string]MessageMutation{"beta": testMessage("two")})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := client.StageStrike(99); err == nil {
+		t.Fatal("missing strike succeeded")
 	}
-	changed, err := client.PutWithOptions(
-		"dev/tasks",
-		map[string]MessageMutation{"alpha": testMessage("updated")},
-		WriteOptions{IfIndex: map[string]int64{"alpha": alpha.Index, "beta": beta.Index}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed.Index <= beta.Index {
-		t.Fatalf("conditional update index = %d", changed.Index)
-	}
-	sameValue, err := client.PutWithOptions(
-		"dev/tasks",
-		map[string]MessageMutation{"alpha": testMessage("updated")},
-		WriteOptions{IfIndex: map[string]int64{"alpha": changed.Index}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sameValue.Index <= changed.Index {
-		t.Fatalf("same-value replacement did not publish: %d", sameValue.Index)
-	}
-	_, err = client.PutWithOptions(
-		"dev/tasks",
-		map[string]MessageMutation{"alpha": testMessage("again")},
-		WriteOptions{IfIndex: map[string]int64{"alpha": 0}},
-	)
-	var protocol *ProtocolError
-	if !errors.As(err, &protocol) || protocol.Conflict == nil || protocol.Conflict.ExpectedIndex != 0 || protocol.Conflict.CurrentIndex != sameValue.Index {
-		t.Fatalf("create conflict = %#v", err)
-	}
-}
-
-func TestConflictEnvelopePreservesZeroIndexes(t *testing.T) {
-	payload, err := json.Marshal(&ProtocolError{
-		Code: "CONFLICT",
-		Text: "message changed since it was read",
-		Conflict: &ConflictDetail{
-			Resource:      "dev/tasks",
-			Key:           "task-42",
-			ExpectedIndex: 0,
-			CurrentIndex:  0,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var envelope map[string]any
-	if err := json.Unmarshal(payload, &envelope); err != nil {
-		t.Fatal(err)
-	}
-	conflict, ok := envelope["conflict"].(map[string]any)
-	if !ok || conflict["expected_index"] != float64(0) || conflict["current_index"] != float64(0) {
-		t.Fatalf("conflict envelope = %s", payload)
-	}
-}
-
-func TestConditionalStagedWriteAndStaleBegin(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "development"); err != nil {
-		t.Fatal(err)
-	}
-	created, err := client.Put("dev/tasks", map[string]MessageMutation{"task": testMessage("old")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	options := WriteOptions{IfIndex: map[string]int64{"task": created.Index}}
-	if err := client.BeginWithOptions("dev/tasks", options); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Set("task", "test", "new"); err != nil {
-		t.Fatal(err)
+	if _, err := client.StagePut("still open"); err != nil {
+		t.Fatalf("transaction did not remain usable: %v", err)
 	}
 	if _, err := client.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	assertCode(t, client.BeginWithOptions("dev/tasks", options), "CONFLICT")
-}
-
-func TestConditionalAdmissionFailsClosedWhenHistoryIsIncomplete(t *testing.T) {
-	home := t.TempDir()
-	client := newTestClient(t, home, "")
-	if _, err := client.Register("writer", "development"); err != nil {
-		t.Fatal(err)
-	}
-	alpha, err := client.Put("dev/tasks", map[string]MessageMutation{"alpha": testMessage("one")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	beta, err := client.Put("dev/tasks", map[string]MessageMutation{"beta": testMessage("two")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	historyPath := filepath.Join(home, "topics", "dev", "tasks", "history", indexName(alpha.Index))
-	if err := os.Remove(historyPath); err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.PutWithOptions(
-		"dev/tasks",
-		map[string]MessageMutation{"alpha": testMessage("unsafe")},
-		WriteOptions{IfIndex: map[string]int64{"alpha": 0}},
-	)
-	if err == nil {
-		t.Fatal("conditional write succeeded with incomplete authoritative history")
-	}
-	var indexState struct {
-		Index int64 `json:"index"`
-	}
-	if err := readJSON(filepath.Join(home, "state", "index.json"), &indexState); err != nil || indexState.Index != beta.Index {
-		t.Fatalf("index after rejected corrupt state = %+v, %v", indexState, err)
-	}
-}
-
-func TestSameAgentRecoversExpiredPreTransactionLease(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "development"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.acquireWrite("dev/tasks", "writer"); err != nil {
-		t.Fatal(err)
-	}
-	var abandoned Lock
-	if err := readJSON(client.writeLockPath("dev/tasks"), &abandoned); err != nil {
-		t.Fatal(err)
-	}
-	abandoned.PID = 999999
-	abandoned.ProcessStart = "dead"
-	abandoned.Timestamp = time.Now().Add(-time.Minute)
-	abandoned.TimeoutSec = 1
-	if err := writeJSONAtomic(client.writeLockPath("dev/tasks"), abandoned); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.BeginWithOptions("dev/tasks", WriteOptions{IfIndex: map[string]int64{"task": 0}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Abort(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestOrphanRecoveryPreservesTransactionForAnotherResource(t *testing.T) {
-	home := t.TempDir()
-	owner := newTestClient(t, home, "")
-	if _, err := owner.Register("owner", "development"); err != nil {
-		t.Fatal(err)
-	}
-	recoverer := newTestClient(t, home, "")
-	if _, err := recoverer.Register("recoverer", "review"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := owner.acquireWrite("dev/orphan", "owner"); err != nil {
-		t.Fatal(err)
-	}
-	expireTestWriter(t, owner, "dev/orphan")
-	if err := owner.Begin("dev/active"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := recoverer.Get(ReadRequest{Resource: "dev/orphan", Mode: ReadFull}); err != nil {
-		t.Fatal(err)
-	}
-	if err := owner.Set("task", "test", "preserved"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := owner.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	result, err := recoverer.Get(ReadRequest{Resource: "dev/active", Key: "task", Mode: ReadFull})
-	if err != nil || len(result.Messages) != 1 || result.Messages[0].Payload.Text != "preserved" {
-		t.Fatalf("active transaction = %#v, %v", result, err)
-	}
-}
-
-func TestConditionalCheckSeesRecoveredPredecessor(t *testing.T) {
-	home := t.TempDir()
-	owner := newTestClient(t, home, "")
-	if _, err := owner.Register("owner", "development"); err != nil {
-		t.Fatal(err)
-	}
-	contender := newTestClient(t, home, "")
-	if _, err := contender.Register("contender", "review"); err != nil {
-		t.Fatal(err)
-	}
-	if err := owner.Begin("dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	if err := owner.Set("task", "test", "predecessor"); err != nil {
-		t.Fatal(err)
-	}
-	expireTestWriter(t, owner, "dev/tasks")
-	_, err := contender.PutWithOptions(
-		"dev/tasks",
-		map[string]MessageMutation{"task": testMessage("contender")},
-		WriteOptions{IfIndex: map[string]int64{"task": 0}},
-	)
-	assertCode(t, err, "CONFLICT")
-	history, err := contender.readHistory("dev/tasks")
-	if err != nil || len(history) != 1 || history[0].Messages["task"].Payload.Text != "predecessor" {
-		t.Fatalf("recovered history = %#v, %v", history, err)
-	}
-}
-
-func TestAcceptedConditionalTransactionRecoversWithoutRecheck(t *testing.T) {
-	home := t.TempDir()
-	owner := newTestClient(t, home, "")
-	if _, err := owner.Register("owner", "development"); err != nil {
-		t.Fatal(err)
-	}
-	reader := newTestClient(t, home, "")
-	if _, err := reader.Register("reader", "review"); err != nil {
-		t.Fatal(err)
-	}
-	if err := owner.BeginWithOptions("dev/tasks", WriteOptions{IfIndex: map[string]int64{"task": 0}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := owner.Set("task", "test", "accepted"); err != nil {
-		t.Fatal(err)
-	}
-	expireTestWriter(t, owner, "dev/tasks")
-	result, err := reader.Get(ReadRequest{Resource: "dev/tasks", Key: "task", Mode: ReadFull})
-	if err != nil || len(result.Messages) != 1 || result.Messages[0].Payload.Text != "accepted" {
-		t.Fatalf("recovered record = %#v, %v", result, err)
-	}
-}
-
-func expireTestWriter(t *testing.T, client *Client, resource string) {
-	t.Helper()
-	var lock Lock
-	if err := readJSON(client.writeLockPath(resource), &lock); err != nil {
-		t.Fatal(err)
-	}
-	lock.PID = 999999
-	lock.ProcessStart = "dead"
-	lock.Timestamp = time.Now().Add(-time.Minute)
-	lock.TimeoutSec = 1
-	if err := writeJSONAtomic(client.writeLockPath(resource), lock); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestConditionalMismatchIsDeterministicAndAtomic(t *testing.T) {
-	home := t.TempDir()
-	client := newTestClient(t, home, "")
-	if _, err := client.Register("writer", "development"); err != nil {
-		t.Fatal(err)
-	}
-	baseline, err := client.Put("dev/tasks", map[string]MessageMutation{"alpha": testMessage("one"), "zeta": testMessage("two")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.PutWithOptions(
-		"dev/tasks",
-		map[string]MessageMutation{"alpha": testMessage("changed"), "zeta": testMessage("changed")},
-		WriteOptions{IfIndex: map[string]int64{"zeta": baseline.Index - 1, "alpha": baseline.Index - 1}},
-	)
-	var protocol *ProtocolError
-	if !errors.As(err, &protocol) || protocol.Conflict == nil || protocol.Conflict.Key != "alpha" {
-		t.Fatalf("deterministic conflict = %#v", err)
-	}
-	full, err := client.Get(ReadRequest{Resource: "dev/tasks", Mode: ReadFull})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(full.Messages) != 2 || full.Messages[0].Index != baseline.Index || full.Messages[1].Index != baseline.Index {
-		t.Fatalf("rejected multi-write changed state: %#v", full.Messages)
-	}
 }
 
 func TestTransactionCannotChangeAfterCommitStarts(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "development"); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Begin("dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Set("task", "test", "value"); err != nil {
-		t.Fatal(err)
-	}
-	var transaction Transaction
-	if err := readJSON(client.transactionPath("writer"), &transaction); err != nil {
-		t.Fatal(err)
-	}
-	transaction.Index = 99
-	if err := writeJSONAtomic(client.transactionPath("writer"), transaction); err != nil {
-		t.Fatal(err)
-	}
-	assertCode(t, client.Set("task", "test", "changed"), "LOCKED")
-	assertCode(t, client.Abort(), "LOCKED")
-	transaction.Index = 0
-	if err := writeJSONAtomic(client.transactionPath("writer"), transaction); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Abort(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestExpiredTransactionFlushesBeforeTakeover(t *testing.T) {
-	home := t.TempDir()
-	a := newTestClient(t, home, "")
-	if _, err := a.Register("a", "dev"); err != nil {
-		t.Fatal(err)
-	}
-	b := newTestClient(t, home, "")
-	if _, err := b.Register("b", "review"); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Begin("dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Set("from-a", "test", "staged"); err != nil {
-		t.Fatal(err)
-	}
-	var abandoned Lock
-	if err := readJSON(a.writeLockPath("dev/tasks"), &abandoned); err != nil {
-		t.Fatal(err)
-	}
-	abandoned.PID = 999999
-	abandoned.ProcessStart = "dead"
-	abandoned.Timestamp = time.Now().Add(-time.Minute)
-	abandoned.TimeoutSec = 1
-	if err := writeJSONAtomic(a.writeLockPath("dev/tasks"), abandoned); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := b.Put("dev/tasks", map[string]MessageMutation{"from-b": testMessage("done")}); err != nil {
-		t.Fatal(err)
-	}
-	full, err := b.Get(ReadRequest{Resource: "dev/tasks", Mode: ReadFull})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(full.Messages) != 2 {
-		t.Fatalf("recovery did not flush then apply: %#v", full.Messages)
-	}
-}
-
-func TestReadFlushesExpiredDeadTransaction(t *testing.T) {
-	home := t.TempDir()
-	writer := newTestClient(t, home, "")
-	if _, err := writer.Register("writer", "development"); err != nil {
-		t.Fatal(err)
-	}
-	reader := newTestClient(t, home, "")
-	if _, err := reader.Register("reader", "review"); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Begin("dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Set("status", "test", "staged"); err != nil {
-		t.Fatal(err)
-	}
-	var abandoned Lock
-	if err := readJSON(writer.writeLockPath("dev/tasks"), &abandoned); err != nil {
-		t.Fatal(err)
-	}
-	abandoned.PID = 999999
-	abandoned.ProcessStart = "dead"
-	abandoned.Timestamp = time.Now().Add(-time.Minute)
-	abandoned.TimeoutSec = 1
-	if err := writeJSONAtomic(writer.writeLockPath("dev/tasks"), abandoned); err != nil {
-		t.Fatal(err)
-	}
-	result, err := reader.Get(ReadRequest{Resource: "dev/tasks", Mode: ReadFull})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Messages) != 1 || result.Messages[0].Payload.Text != "staged" {
-		t.Fatalf("read did not recover buffered write: %#v", result)
-	}
-}
-
-func TestDeregisterRequiresTransactionResolution(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "development"); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Begin("dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	assertCode(t, client.Deregister("writer"), "LOCKED")
-	if err := client.Abort(); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Deregister("writer"); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestExpiredLiveOwnerReturnsTimeout(t *testing.T) {
-	home := t.TempDir()
-	a := newTestClient(t, home, "")
-	if _, err := a.Register("a", "dev"); err != nil {
-		t.Fatal(err)
-	}
-	b := newTestClient(t, home, "")
-	if _, err := b.Register("b", "review"); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Begin("dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	var live Lock
-	if err := readJSON(a.writeLockPath("dev/tasks"), &live); err != nil {
-		t.Fatal(err)
-	}
-	live.Timestamp = time.Now().Add(-time.Minute)
-	live.TimeoutSec = 1
-	if err := writeJSONAtomic(a.writeLockPath("dev/tasks"), live); err != nil {
-		t.Fatal(err)
-	}
-	_, err := b.Put("dev/tasks", map[string]MessageMutation{"status": testMessage("done")})
-	assertCode(t, err, "TIMEOUT")
-	if err := a.Abort(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestBeginLeaseTracksTerminalOwnerProcess(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("a", "dev"); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Begin("dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	var lock Lock
-	if err := readJSON(client.writeLockPath("dev/tasks"), &lock); err != nil {
-		t.Fatal(err)
-	}
-	if lock.PID != os.Getppid() {
-		t.Fatalf("lease PID = %d, want terminal parent %d", lock.PID, os.Getppid())
-	}
-	if err := client.Abort(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestInitialLeaseTracksCallingProcessUntilTransactionIsDurable(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("a", "development"); err != nil {
-		t.Fatal(err)
-	}
-	lock, err := client.acquireWrite("dev/tasks", "a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lock.PID != os.Getpid() {
-		t.Fatalf("initial lease PID = %d, want calling process %d", lock.PID, os.Getpid())
-	}
-	if err := client.releaseWrite("dev/tasks", "a"); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestReaderRecoversOrphanWriterGuard(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("reader", "review"); err != nil {
+	if _, err := client.Register("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
-	guard := client.writeGuardPath("dev/tasks")
-	if err := os.Mkdir(guard, 0o700); err != nil {
+	if err := client.Begin("dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
-	old := time.Now().Add(-time.Minute)
-	if err := os.Chtimes(guard, old, old); err != nil {
+	if _, err := client.StagePut("value"); err != nil {
 		t.Fatal(err)
 	}
-	client.LockTimeout = time.Second
-	if _, err := client.Get(ReadRequest{Resource: "dev/tasks", Mode: ReadFull}); err != nil {
+	var txn Transaction
+	if err := readJSON(client.transactionPath("writer"), &txn); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(guard); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("orphan guard remains: %v", err)
+	txn.Sequence = 99
+	if err := writeJSONAtomic(client.transactionPath("writer"), txn); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.StagePut("changed"); err == nil {
+		t.Fatal("stage succeeded after commit started")
+	} else {
+		assertCode(t, err, "LOCKED")
 	}
 }
 
-func TestProtocolErrors(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("a", "dev"); err != nil {
-		t.Fatal(err)
-	}
-	assertCode(t, client.Set("key", "test", "value"), "NO_BUFFER")
-	_, err := client.Commit()
-	assertCode(t, err, "NO_LOCK")
-	_, err = client.Get(ReadRequest{Resource: "dev/tasks", Key: "missing", Mode: ReadFull})
-	assertCode(t, err, "NOT_FOUND")
-}
-
-func TestExpiredDeadReaderMarkerIsRecovered(t *testing.T) {
+func TestOneShotReturnsRecordWhenSettlementFailsAfterVisibility(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("writer", "dev"); err != nil {
+	if _, err := client.Register("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
-	readerDir := client.readerLockDir("dev/tasks")
-	if err := os.MkdirAll(readerDir, 0o700); err != nil {
+	eventPath := filepath.Join(home, "events", indexName(2))
+	if err := os.Mkdir(eventPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	reader := Lock{PID: 999999, ProcessStart: "dead", LeaseID: 1, Agent: "dead-reader", Timestamp: time.Now().Add(-time.Minute), TimeoutSec: 1}
-	if err := writeJSONAtomic(filepath.Join(readerDir, "orphan.lock"), reader); err != nil {
+	record, err := client.Put("dev/tasks", "visible")
+	if err == nil || record.Index != 1 || record.Text != "visible" {
+		t.Fatalf("result = %#v, error = %v", record, err)
+	}
+	full, readErr := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
+	if readErr == nil {
+		t.Fatal("read unexpectedly bypassed unsettled transaction")
+	}
+	if len(full.Records) != 0 {
+		t.Fatalf("failed read returned records: %#v", full)
+	}
+	history, historyErr := client.readHistory("dev/tasks")
+	if historyErr != nil || len(history) != 1 || history[0].Records[0] != record {
+		t.Fatalf("authoritative history = %#v, %v", history, historyErr)
+	}
+}
+
+func TestOneShotReturnsNoRecordWhenCommitFailsBeforeVisibility(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+	if _, err := client.Register("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Put("dev/tasks", map[string]MessageMutation{"status": testMessage("done")}); err != nil {
+	if err := writeJSONAtomic(filepath.Join(home, "state", "index.json"), map[string]int64{"index": math.MaxInt64}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(readerDir, "orphan.lock")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dead reader marker remains: %v", err)
+	record, err := client.Put("dev/tasks", "not visible")
+	if err == nil || record != (Record{}) {
+		t.Fatalf("result = %#v, error = %v", record, err)
+	}
+	history, historyErr := client.readHistory("dev/tasks")
+	if historyErr != nil || len(history) != 0 {
+		t.Fatalf("history = %#v, %v", history, historyErr)
+	}
+}
+
+func TestTextIdenticalEditStillPublishes(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Register("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	record, err := client.Put("dev/tasks", "same")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited, err := client.Edit("dev/tasks", record.Index, record.Text)
+	if err != nil || edited != record {
+		t.Fatalf("edit = %#v, %v", edited, err)
+	}
+	history, err := client.readHistory("dev/tasks")
+	if err != nil || len(history) != 2 {
+		t.Fatalf("history = %#v, %v", history, err)
 	}
 }

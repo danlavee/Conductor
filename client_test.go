@@ -6,23 +6,28 @@ import (
 	conductor "github.com/danlavee/Conductor"
 )
 
-func TestPublicFacadePublishesProtocolMessages(t *testing.T) {
-	client, err := conductor.New(t.TempDir(), "")
+func TestPublicFacadeCreatesEditsAndStrikesRecords(t *testing.T) {
+	client, err := conductor.New(t.TempDir(), "writer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Register("writer", "messages"); err != nil {
+	if _, err := client.Register("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
-	payload := conductor.MessagePayload{Text: "hello"}
-	publication, err := client.Put("messages/team", map[string]conductor.MessageMutation{
-		"entry": {Operation: conductor.MutationSet, Kind: "any kind", Payload: &payload},
-	})
+	record, err := client.Put("messages/team", "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := client.Get(conductor.ReadRequest{Resource: "messages/team", Key: "entry", Mode: conductor.ReadFull})
-	if err != nil || len(result.Messages) != 1 || result.Messages[0].Index != publication.Index || result.Messages[0].Payload.Text != "hello" {
-		t.Fatalf("public read = %#v, %v", result, err)
+	record, err = client.Edit("messages/team", record.Index, "updated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = client.Strike("messages/team", record.Index)
+	if err != nil || record.Text != "~~updated~~" {
+		t.Fatalf("record = %#v, error = %v", record, err)
+	}
+	result, err := client.Get(conductor.ReadRequest{Topic: "messages/team", RecordIndex: record.Index, Mode: conductor.ReadFull})
+	if err != nil || len(result.Records) != 1 || result.Records[0] != record {
+		t.Fatalf("result = %#v, error = %v", result, err)
 	}
 }

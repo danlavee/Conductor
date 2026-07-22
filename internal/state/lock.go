@@ -131,8 +131,8 @@ func (c *Client) recoverExpired(resource string, lock Lock) error {
 func (c *Client) recoverExpiredWhileHoldingTransactionGuard(resource string, lock Lock) error {
 	var txn Transaction
 	err := readJSON(c.transactionPath(lock.Agent), &txn)
-	if err == nil && txn.Resource == resource {
-		if len(txn.Messages) > 0 {
+	if err == nil && txn.Topic == resource {
+		if len(txn.Records) > 0 {
 			if _, err := c.commitTransaction(txn); err != nil {
 				return fmt.Errorf("expired transaction could not be flushed: %w", err)
 			}
@@ -198,7 +198,7 @@ func (c *Client) renewWrite(resource, agent string) error {
 }
 
 func (c *Client) acquireRead(resource string) (func() error, error) {
-	if err := validResource(resource); err != nil {
+	if err := validTopic(resource); err != nil {
 		return nil, err
 	}
 	for {

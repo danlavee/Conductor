@@ -9,9 +9,8 @@ import (
 	"github.com/danlavee/Conductor/internal/integrations/agydesktop"
 )
 
-func runAgyWatchCommand(ctx context.Context, client *conductor.Client, agent string) error {
-	environment := agydesktop.EnvironmentFrom(os.Getenv)
-	if err := environment.Validate(agent); err != nil {
+func runAgyWatchCommand(ctx context.Context, client *conductor.Client, agent, conversationID string, mode conductor.DeliveryMode) error {
+	if err := agydesktop.Validate(conversationID, agent); err != nil {
 		return err
 	}
 	client.Agent = agent
@@ -20,19 +19,18 @@ func runAgyWatchCommand(ctx context.Context, client *conductor.Client, agent str
 		return err
 	}
 	defer func() { _ = release() }()
-	activator, err := agydesktop.New(environment.Executable, os.Stdout, os.Stderr)
+	activator, err := agydesktop.New("", os.Stdout, os.Stderr)
 	if err != nil {
 		return err
 	}
-	if err := activator.Check(ctx, environment.ConversationID); err != nil {
+	if err := activator.Check(ctx, conversationID); err != nil {
 		return err
 	}
-	return agydesktop.Run(ctx, client, activator, environment.ConversationID, agent)
+	return agydesktop.Run(ctx, client, activator, conversationID, agent, mode)
 }
 
-func runAgyCLIWatchCommand(ctx context.Context, client *conductor.Client, agent string) error {
-	environment := agycli.EnvironmentFrom(os.Getenv)
-	if err := environment.Validate(agent); err != nil {
+func runAgyCLIWatchCommand(ctx context.Context, client *conductor.Client, agent, conversationID string, mode conductor.DeliveryMode) error {
+	if err := agycli.Validate(conversationID, agent); err != nil {
 		return err
 	}
 	client.Agent = agent
@@ -41,12 +39,12 @@ func runAgyCLIWatchCommand(ctx context.Context, client *conductor.Client, agent 
 		return err
 	}
 	defer func() { _ = release() }()
-	activator, err := agycli.New(environment.Executable, os.Stdout, os.Stderr)
+	activator, err := agycli.New("", os.Stdout, os.Stderr)
 	if err != nil {
 		return err
 	}
 	if err := activator.Check(ctx); err != nil {
 		return err
 	}
-	return agycli.Run(ctx, client, activator, environment.ConversationID, agent)
+	return agycli.Run(ctx, client, activator, conversationID, agent, mode)
 }

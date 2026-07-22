@@ -34,23 +34,23 @@ sequenceDiagram
     B->>C: "list-agents"
 
     alt "One-step publication"
-        A->>C: "put resource key=value"
+        A->>C: "put topic text"
     else "Staged atomic publication"
-        A->>C: "begin resource"
+        A->>C: "begin topic"
         C->>D: "Acquire lease and create durable buffer"
-        A->>C: "set key value, repeated"
+        A->>C: "put, edit, or strike records"
         C->>D: "Update buffer and renew lease"
         A->>C: "commit"
     end
 
-    C->>D: "Reserve index"
+    C->>D: "Reserve publication index"
     C->>D: "Write history, then advance head"
-    C->>D: "Refresh records, event, and every inbox"
+    C->>D: "Write event and every inbox"
     C->>D: "Remove transaction and release lease"
-    C-->>A: "Complete indexed change set"
+    C-->>A: "Resulting index-and-text records"
 
     W->>C: "watch"
-    C-->>W: "One signal: type, resource, key, index, agent"
+    C-->>W: "One signal or resolved payload"
     W-->>B: "Deliver signal"
     B->>C: "get resource"
     C->>D: "Read changes after B's cursor"
@@ -71,30 +71,28 @@ The alternative read modes do not move the delta cursor:
 
 ```mermaid
 flowchart LR
-    R["Read request"] --> D["Delta, default"]
-    R --> H["Historical: from and optional to"]
+    R["Read request"] --> H["Historical range, default"]
+    R --> D["Delta: explicit"]
     R --> F["Full current state"]
     D --> A["Acknowledge after delivery"]
-    A --> C["Advance resource or key cursor"]
+    A --> C["Advance resource or record cursor"]
     H --> N["Return without cursor change"]
     F --> N
 ```
 
 An unfinished staged change may be cancelled with `abort`; its buffered values never become visible.
 
-Replacing a record adds admission before the normal publication path:
+Editing a record preserves its identity:
 
 ```mermaid
 flowchart TD
-    E["Edit using the record index that was read"] --> L{"Writer lease available?"}
-    L -- "No" --> B["LOCKED: retry the same conditional request after it clears"]
-    L -- "Yes" --> R["Complete any predecessor recovery"]
-    R --> V["Verify authoritative history and current record materialization"]
-    V --> C{"Every expected record index still matches?"}
-    C -- "Yes" --> A["Admit one durable transaction"]
+    E["Edit topic, record index, replacement text"] --> L{"Writer lease available?"}
+    L -- "No" --> B["LOCKED or TIMEOUT"]
+    L -- "Yes" --> R["Complete eligible predecessor recovery"]
+    R --> V{"Record exists?"}
+    V -- "No" --> N["NOT_FOUND; publish nothing"]
+    V -- "Yes" --> A["Replace text under the same index"]
     A --> P["Publish through the normal commit path"]
-    C -- "No" --> X["Release lease; create no transaction or publication"]
-    X --> F["CONFLICT: re-read and reassess the edit"]
 ```
 
 ## Timing, races, and timeouts
@@ -146,8 +144,7 @@ flowchart TD
     S["Commit starts"] --> I["Index persisted in transaction"]
     I --> H["Immutable history renamed into place"]
     H --> HD["Head renamed: publication is visible"]
-    HD --> R["Record caches refreshed"]
-    R --> E["Event written"]
+    HD --> E["Event written"]
     E --> N["Signals appended to inboxes"]
     N --> C["Transaction removed and lease released"]
 

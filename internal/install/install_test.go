@@ -71,7 +71,7 @@ func TestInstallPublishesCompleteIdempotentSkill(t *testing.T) {
 	}
 	for _, relative := range []string{
 		"SKILL.md",
-		"references/limits.md",
+		"references/limitations.md",
 		"references/protocol.md",
 		"references/guide.md",
 		"references/integrations/README.md",
@@ -125,7 +125,7 @@ func TestInstallRejectsTamperedAndExtraFilesWithoutRepair(t *testing.T) {
 			return os.WriteFile(filepath.Join(destination, "extra.txt"), []byte("extra"), 0o644)
 		},
 		"missing": func(destination string) error {
-			return os.Remove(filepath.Join(destination, "references", "limits.md"))
+			return os.Remove(filepath.Join(destination, "references", "limitations.md"))
 		},
 		"empty directory": func(destination string) error {
 			return os.Mkdir(filepath.Join(destination, "unexpected"), 0o755)
@@ -383,7 +383,7 @@ func testSource(t *testing.T) Source {
 func testBundle() fs.FS {
 	return fstest.MapFS{
 		"SKILL.md":                                  &fstest.MapFile{Data: []byte("---\nname: conductor\ndescription: Test Conductor.\n---\n\n[Guide](references/guide.md)\n")},
-		"references/limits.md":                      &fstest.MapFile{Data: []byte("# Limits\n")},
+		"references/limitations.md":                      &fstest.MapFile{Data: []byte("# Limits\n")},
 		"references/protocol.md":                    &fstest.MapFile{Data: []byte("# Protocol\n\n[Skill](../SKILL.md)\n")},
 		"references/guide.md":                       &fstest.MapFile{Data: []byte("# Guide\n")},
 		"references/integrations/README.md":         &fstest.MapFile{Data: []byte("# Integrations\n")},

@@ -26,12 +26,12 @@ var requiredRepositoryFiles = []string{
 var requiredSkillFiles = []string{
 	"SKILL.md",
 	"references/protocol.md",
-	"references/limits.md",
+	"references/limitations.md",
 }
 
 var supportedCommands = map[string]bool{
 	"register": true, "deregister": true, "list-agents": true,
-	"begin": true, "set": true, "unset": true, "commit": true, "abort": true, "put": true, "scratch": true,
+	"begin": true, "commit": true, "abort": true, "put": true, "edit": true, "strike": true,
 	"get": true, "watch": true, "install": true, "version": true,
 	"channel": true,
 }

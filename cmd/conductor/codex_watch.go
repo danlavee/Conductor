@@ -2,22 +2,15 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
-	"strings"
 
 	conductor "github.com/danlavee/Conductor"
 	"github.com/danlavee/Conductor/internal/integrations/codex"
 )
 
-func runCodexWatchCommand(ctx context.Context, client *conductor.Client, agent string) error {
-	threadID := os.Getenv(codex.ThreadEnvironment)
-	if strings.TrimSpace(threadID) == "" {
-		return fmt.Errorf("%s is required for Codex watch", codex.ThreadEnvironment)
-	}
-	if strings.TrimSpace(agent) == "" {
-		return errors.New("Codex watch requires an agent name")
+func runCodexWatchCommand(ctx context.Context, client *conductor.Client, agent, threadID string, mode conductor.DeliveryMode) error {
+	if err := codex.Validate(threadID, agent); err != nil {
+		return err
 	}
 	client.Agent = agent
 	release, err := client.AcquireWatchOwnership()
@@ -25,7 +18,7 @@ func runCodexWatchCommand(ctx context.Context, client *conductor.Client, agent s
 		return err
 	}
 	defer release()
-	session, err := codex.Start(ctx, os.Getenv(codex.BinaryEnvironment), threadID, codex.Sandbox(map[string]string{
+	session, err := codex.Start(ctx, "", threadID, codex.Sandbox(map[string]string{
 		codex.SandboxEnvironment:    os.Getenv(codex.SandboxEnvironment),
 		codex.PermissionEnvironment: os.Getenv(codex.PermissionEnvironment),
 	}), os.Stdout, os.Stderr)
@@ -33,16 +26,12 @@ func runCodexWatchCommand(ctx context.Context, client *conductor.Client, agent s
 		return err
 	}
 	defer session.Close()
-	return codex.Run(ctx, client, session, threadID, agent)
+	return codex.Run(ctx, client, session, threadID, agent, mode)
 }
 
-func runCodexCLIWatchCommand(ctx context.Context, client *conductor.Client, agent string) error {
-	threadID := os.Getenv(codex.ThreadEnvironment)
-	if strings.TrimSpace(threadID) == "" {
-		return fmt.Errorf("%s is required for Codex CLI watch", codex.ThreadEnvironment)
-	}
-	if strings.TrimSpace(agent) == "" {
-		return errors.New("Codex CLI watch requires an agent name")
+func runCodexCLIWatchCommand(ctx context.Context, client *conductor.Client, agent, threadID string, mode conductor.DeliveryMode) error {
+	if err := codex.Validate(threadID, agent); err != nil {
+		return err
 	}
 	client.Agent = agent
 	release, err := client.AcquireWatchOwnership()
@@ -50,7 +39,7 @@ func runCodexCLIWatchCommand(ctx context.Context, client *conductor.Client, agen
 		return err
 	}
 	defer release()
-	activator, err := codex.New(os.Getenv(codex.BinaryEnvironment), codex.Sandbox(map[string]string{
+	activator, err := codex.New("", codex.Sandbox(map[string]string{
 		codex.SandboxEnvironment:    os.Getenv(codex.SandboxEnvironment),
 		codex.PermissionEnvironment: os.Getenv(codex.PermissionEnvironment),
 	}), os.Stdout, os.Stderr)
@@ -60,5 +49,5 @@ func runCodexCLIWatchCommand(ctx context.Context, client *conductor.Client, agen
 	if err := activator.Check(ctx); err != nil {
 		return err
 	}
-	return codex.Run(ctx, client, activator, threadID, agent)
+	return codex.Run(ctx, client, activator, threadID, agent, mode)
 }

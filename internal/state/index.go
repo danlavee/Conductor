@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 )
@@ -22,6 +23,9 @@ func (c *Client) nextIndex() (int64, error) {
 	}
 	if state.Index < 0 {
 		return 0, errors.New("invalid global index state")
+	}
+	if state.Index == math.MaxInt64 {
+		return 0, errors.New("global sequence is exhausted")
 	}
 	state.Index++
 	if err := writeJSONAtomic(path, state); err != nil {

@@ -73,8 +73,8 @@ func readJSON(path string, value any) error {
 		return validateAgent(typed)
 	case *Publication:
 		return validatePublication(typed)
-	case *Signal:
-		return validateSignal(typed)
+	case *Summary:
+		return validateSummary(typed)
 	default:
 		if validator, ok := value.(stateValidator); ok {
 			return validator.validate()
@@ -108,10 +108,10 @@ func windowsReservedName(value string) bool {
 	return false
 }
 
-func validResource(resource string) error {
-	parts := strings.Split(resource, "/")
+func validTopic(topic string) error {
+	parts := strings.Split(topic, "/")
 	if len(parts) != 2 {
-		return fmt.Errorf("resource must be <group>/<topic>: %q", resource)
+		return fmt.Errorf("topic must be <group>/<topic>: %q", topic)
 	}
 	if err := validName(parts[0]); err != nil {
 		return err
@@ -119,21 +119,17 @@ func validResource(resource string) error {
 	return validName(parts[1])
 }
 
-func cloneMutation(value MessageMutation) MessageMutation {
-	if value.Payload != nil {
-		payload := *value.Payload
-		value.Payload = &payload
-	}
-	return value
-}
-
 func indexName(index int64) string { return fmt.Sprintf("%020d.json", index) }
 
-func sortedKeys(values map[string]MessageMutation) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
+func sortedRecords(values map[int64]Record) []Record {
+	indexes := make([]int64, 0, len(values))
+	for index := range values {
+		indexes = append(indexes, index)
 	}
-	sort.Strings(keys)
-	return keys
+	sort.Slice(indexes, func(i, j int) bool { return indexes[i] < indexes[j] })
+	records := make([]Record, 0, len(indexes))
+	for _, index := range indexes {
+		records = append(records, values[index])
+	}
+	return records
 }

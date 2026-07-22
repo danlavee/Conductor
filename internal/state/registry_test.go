@@ -2,7 +2,6 @@ package state
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,25 +20,28 @@ func TestRegisterPutGetAndDiskState(t *testing.T) {
 		t.Fatalf("unexpected registration snapshot: %#v", snapshot)
 	}
 
-	change, err := client.Put("messages/team", map[string]MessageMutation{"status": testMessage("done")})
+	record, err := client.Put("messages/team", "done")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if change.Index != 2 {
-		t.Fatalf("put index = %d, want 2 after join event", change.Index)
+	if record.Index != 1 {
+		t.Fatalf("record index = %d, want 1", record.Index)
 	}
 
-	result, err := client.Get(ReadRequest{Resource: "messages/team", Key: "status", Mode: ReadFull})
+	result, err := client.Get(ReadRequest{Topic: "messages/team", RecordIndex: record.Index, Mode: ReadFull})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Messages) != 1 || result.Messages[0].Kind != "test" || result.Messages[0].Payload.Text != "done" {
+	if len(result.Records) != 1 || result.Records[0].Text != "done" {
 		t.Fatalf("unexpected full read: %#v", result)
 	}
 
 	assertJSONFile(t, filepath.Join(home, "registry", "a.json"))
-	assertJSONFile(t, filepath.Join(home, "topics", "messages", "team", "messages", "status.json"))
-	assertJSONFile(t, filepath.Join(home, "topics", "messages", "team", "history", indexName(change.Index)))
+	history, err := client.readHistory("messages/team")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONFile(t, filepath.Join(home, "topics", "messages", "team", "history", indexName(history[0].Sequence)))
 	assertJSONFile(t, filepath.Join(home, "topics", "messages", "team", "head.json"))
 	assertJSONFile(t, filepath.Join(home, "state", "index.json"))
 	assertJSONFile(t, filepath.Join(home, "events", indexName(1)))
@@ -52,11 +54,8 @@ func TestIdentityIsNeverInferredFromSoleRegistration(t *testing.T) {
 	if _, err := registered.Register("only", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(home, "sessions", fmt.Sprintf("%d.json", os.Getppid()))); err != nil {
-		t.Fatal(err)
-	}
 	unbound := newTestClient(t, home, "")
-	if _, err := unbound.Put("messages/team", map[string]MessageMutation{"status": testMessage("done")}); err == nil || !strings.Contains(err.Error(), "identity is not bound") {
+	if _, err := unbound.Put("messages/team", "done"); err == nil || !strings.Contains(err.Error(), "identity is required") {
 		t.Fatalf("unbound client silently used sole identity: %v", err)
 	}
 }
@@ -78,27 +77,6 @@ func TestNamesArePortableAcrossSupportedPlatforms(t *testing.T) {
 		if err := validName(name); err != nil {
 			t.Errorf("portable name rejected: %q: %v", name, err)
 		}
-	}
-}
-
-func TestStaleTerminalSessionCannotBindIdentity(t *testing.T) {
-	home := t.TempDir()
-	registered := newTestClient(t, home, "")
-	if _, err := registered.Register("only", "dev"); err != nil {
-		t.Fatal(err)
-	}
-	sessionPath := filepath.Join(home, "sessions", fmt.Sprintf("%d.json", os.Getppid()))
-	var session Session
-	if err := readJSON(sessionPath, &session); err != nil {
-		t.Fatal(err)
-	}
-	session.ParentStart = "stale-process-instance"
-	if err := writeJSONAtomic(sessionPath, session); err != nil {
-		t.Fatal(err)
-	}
-	unbound := newTestClient(t, home, "")
-	if _, err := unbound.ResolveAgent(); err == nil {
-		t.Fatal("stale parent-PID session silently bound identity")
 	}
 }
 
@@ -192,12 +170,12 @@ func TestConcurrentRegisterAndDeregisterStayOrdered(t *testing.T) {
 	if err != nil || len(events) < 2 || len(events) > 3 {
 		t.Fatalf("events = %#v, %v", events, err)
 	}
-	if events[0].Signal.Type != "join" || events[1].Signal.Type != "leave" || len(events) == 3 && events[2].Signal.Type != "join" {
+	if events[0].Summary.Type != "join" || events[1].Summary.Type != "leave" || len(events) == 3 && events[2].Summary.Type != "join" {
 		t.Fatalf("membership events are not ordered: %#v", events)
 	}
 	_, statErr := os.Stat(filepath.Join(home, "registry", "same.json"))
 	present := statErr == nil
-	lastType := events[len(events)-1].Signal.Type
+	lastType := events[len(events)-1].Summary.Type
 	if present != (lastType == "join") {
 		t.Fatalf("registry present=%v but last membership event=%s", present, lastType)
 	}

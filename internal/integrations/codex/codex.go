@@ -1,5 +1,4 @@
-// Package codex delivers Conductor signals to a local Codex thread through
-// either a persistent app-server or a process-per-signal CLI transport.
+// Package codex delivers Conductor summaries to a local Codex thread.
 package codex
 
 import (
@@ -17,20 +16,30 @@ import (
 )
 
 const (
-	BinaryEnvironment      = "CONDUCTOR_CODEX_BIN"
 	SandboxEnvironment     = "CONDUCTOR_CODEX_SANDBOX"
-	ThreadEnvironment      = "CODEX_THREAD_ID"
 	CLIDeliveryEnvironment = "CONDUCTOR_CODEX_DELIVERY"
 	PermissionEnvironment  = "CODEX_PERMISSION_PROFILE"
 )
 
 type WatchClient interface {
-	WatchContext(context.Context) (conductor.Signal, error)
-	AcknowledgeSignal(conductor.Signal) error
+	WatchContext(context.Context) (conductor.Summary, error)
+	ResolveDelivery(conductor.Summary, conductor.DeliveryMode) (conductor.Delivery, error)
+	AcknowledgeDelivery(conductor.Delivery) error
 }
 
 type Activator interface {
-	Activate(context.Context, string, string, conductor.Signal) error
+	Activate(context.Context, string, string, conductor.Delivery) error
+}
+
+// Validate checks the explicit thread ID and agent name given on the command line.
+func Validate(threadID, agent string) error {
+	if strings.TrimSpace(threadID) == "" {
+		return errors.New("Codex watch requires a thread ID")
+	}
+	if strings.TrimSpace(agent) == "" {
+		return errors.New("Codex watch requires an agent name")
+	}
+	return nil
 }
 
 type CLI struct {
@@ -69,16 +78,14 @@ func (a *CLI) Check(ctx context.Context) error {
 	return nil
 }
 
-func (a *CLI) Activate(ctx context.Context, threadID, agent string, signal conductor.Signal) error {
-	prompt, err := SignalPrompt(agent, signal)
+func (a *CLI) Activate(ctx context.Context, threadID, agent string, delivery conductor.Delivery) error {
+	prompt, err := SignalPrompt(agent, delivery)
 	if err != nil {
 		return err
 	}
 	command := exec.CommandContext(ctx, a.executable, ResumeArguments(threadID, prompt, a.sandbox)...)
 	command.Env = setEnvironment(os.Environ(), map[string]string{
-		"CONDUCTOR_AGENT":      agent,
 		CLIDeliveryEnvironment: "1",
-		ThreadEnvironment:      threadID,
 	})
 	command.Stderr = a.stderr
 	stdout, err := command.StdoutPipe()
@@ -102,23 +109,24 @@ func (a *CLI) Activate(ctx context.Context, threadID, agent string, signal condu
 	return nil
 }
 
-func Run(ctx context.Context, client WatchClient, activator Activator, threadID, agent string) error {
-	if strings.TrimSpace(threadID) == "" {
-		return fmt.Errorf("%s is required for Codex watch", ThreadEnvironment)
-	}
-	if strings.TrimSpace(agent) == "" {
-		return errors.New("Codex watch requires an agent name")
+func Run(ctx context.Context, client WatchClient, activator Activator, threadID, agent string, mode conductor.DeliveryMode) error {
+	if err := Validate(threadID, agent); err != nil {
+		return err
 	}
 	for {
-		signal, err := client.WatchContext(ctx)
+		summary, err := client.WatchContext(ctx)
 		if err != nil {
 			return err
 		}
-		if err := activator.Activate(ctx, threadID, agent, signal); err != nil {
-			return fmt.Errorf("deliver Conductor signal %d to Codex: %w", signal.Index, err)
+		delivery, err := client.ResolveDelivery(summary, mode)
+		if err != nil {
+			return fmt.Errorf("resolve Conductor summary %d for Codex: %w", summary.Sequence, err)
 		}
-		if err := client.AcknowledgeSignal(signal); err != nil {
-			return fmt.Errorf("acknowledge Conductor signal %d after Codex delivery: %w", signal.Index, err)
+		if err := activator.Activate(ctx, threadID, agent, delivery); err != nil {
+			return fmt.Errorf("deliver Conductor summary %d to Codex: %w", summary.Sequence, err)
+		}
+		if err := client.AcknowledgeDelivery(delivery); err != nil {
+			return fmt.Errorf("acknowledge Conductor summary %d after Codex delivery: %w", summary.Sequence, err)
 		}
 	}
 }
@@ -131,12 +139,15 @@ func ResumeArguments(threadID, prompt, sandbox string) []string {
 	return append(arguments, "resume", threadID, prompt)
 }
 
-func SignalPrompt(agent string, signal conductor.Signal) (string, error) {
-	payload, err := json.Marshal(signal)
+func SignalPrompt(agent string, delivery conductor.Delivery) (string, error) {
+	payload, err := json.Marshal(delivery)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Conductor activated this Codex turn for agent %q with signal %s. Use the installed Conductor skill to process the signal. For an update, read the named resource; for a join or leave, refresh the roster. The adapter already owns the wait loop, so do not start conductor watch. Process this signal idempotently and report the result.", agent, payload), nil
+	if delivery.Mode == conductor.DeliverySummary {
+		return fmt.Sprintf("Conductor activated this Codex turn for agent %q with summary %s. Resolve it as needed, process it idempotently, and report the result. The adapter already owns the watch loop.", agent, payload), nil
+	}
+	return fmt.Sprintf("Conductor activated this Codex turn for agent %q with delivery %s. The complete topic delta or roster is included; do not fetch it again. Process it idempotently and report the result. The adapter already owns the watch loop.", agent, payload), nil
 }
 
 func ObserveEvents(input io.Reader, output io.Writer) (bool, error) {

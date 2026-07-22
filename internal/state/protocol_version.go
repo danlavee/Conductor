@@ -11,7 +11,7 @@ import (
 )
 
 // CurrentProtocolVersion is the one on-disk state protocol this binary supports.
-const CurrentProtocolVersion = 1
+const CurrentProtocolVersion = 2
 
 const (
 	protocolFileName = "protocol.json"
@@ -189,6 +189,9 @@ func validateInitSupport(path string) error {
 			return protocolMismatch("protocol initialization support contains an unknown entry", nil)
 		}
 		entryInfo, err := os.Lstat(filepath.Join(path, entry.Name()))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return err
 		}

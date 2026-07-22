@@ -18,8 +18,8 @@ import (
 const protocolVersion = "2025-11-25"
 
 type WatchClient interface {
-	WatchContext(context.Context) (conductor.Signal, error)
-	AcknowledgeSignal(conductor.Signal) error
+	WatchContext(context.Context) (conductor.Summary, error)
+	AcknowledgeSummary(conductor.Summary) error
 }
 
 type message struct {
@@ -143,7 +143,7 @@ func Run(ctx context.Context, client WatchClient, input io.Reader, output io.Wri
 
 func watch(ctx context.Context, client WatchClient, writer *synchronizedEncoder, agent string, result chan<- error) {
 	for {
-		signal, err := client.WatchContext(ctx)
+		summary, err := client.WatchContext(ctx)
 		if err != nil {
 			result <- err
 			return
@@ -151,30 +151,29 @@ func watch(ctx context.Context, client WatchClient, writer *synchronizedEncoder,
 		notification := outboundNotification{
 			JSONRPC: "2.0",
 			Method:  "notifications/claude/channel",
-			Params:  signalNotification(agent, signal),
+			Params:  summaryNotification(agent, summary),
 		}
 		if err := writer.write(notification); err != nil {
-			result <- fmt.Errorf("deliver Conductor signal %d to Claude channel: %w", signal.Index, err)
+			result <- fmt.Errorf("deliver Conductor summary %d to Claude channel: %w", summary.Sequence, err)
 			return
 		}
-		if err := client.AcknowledgeSignal(signal); err != nil {
-			result <- fmt.Errorf("acknowledge Conductor signal %d after Claude channel delivery: %w", signal.Index, err)
+		if err := client.AcknowledgeSummary(summary); err != nil {
+			result <- fmt.Errorf("acknowledge Conductor summary %d after Claude channel delivery: %w", summary.Sequence, err)
 			return
 		}
 	}
 }
 
-func signalNotification(agent string, signal conductor.Signal) channelNotification {
-	content := fmt.Sprintf("Conductor signal %d (%s) for agent %q. Use the installed Conductor skill now. Read resource %q for an update; refresh the roster for a join or leave. The channel owns the wait loop, so do not start conductor watch. Process idempotently.", signal.Index, signal.Type, agent, signal.Resource)
+func summaryNotification(agent string, summary conductor.Summary) channelNotification {
+	content := fmt.Sprintf("Conductor summary %d (%s) for agent %q. Use the installed Conductor skill now. Read topic %q for an update; refresh the roster for a join or leave. The channel owns the wait loop, so do not start conductor watch. Process idempotently.", summary.Sequence, summary.Type, agent, summary.Topic)
 	return channelNotification{
 		Content: content,
 		Meta: map[string]string{
 			"agent":        agent,
-			"signal_index": strconv.FormatInt(signal.Index, 10),
-			"signal_type":  signal.Type,
-			"resource":     signal.Resource,
-			"key":          signal.Key,
-			"publisher":    signal.Agent,
+			"summary_sequence": strconv.FormatInt(summary.Sequence, 10),
+			"summary_type":     summary.Type,
+			"topic":            summary.Topic,
+			"source_agent":     summary.Agent,
 		},
 	}
 }

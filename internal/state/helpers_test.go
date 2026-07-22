@@ -56,8 +56,3 @@ func assertCode(t *testing.T, err error, code string) {
 		t.Fatalf("error = %v, want protocol code %s", err, code)
 	}
 }
-
-func testMessage(text string) MessageMutation {
-	payload := MessagePayload{Text: text}
-	return MessageMutation{Operation: MutationSet, Kind: "test", Payload: &payload}
-}

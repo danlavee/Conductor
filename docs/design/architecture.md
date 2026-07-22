@@ -30,7 +30,7 @@ Agents reach one local state root under one trusted OS user on one Windows or Li
 
 1. An agent registers a name and responsibility. Registration produces the current roster and shared state, binds terminal identity when needed, and announces the join.
 2. The agent reads what its work requires. Collaboration rules are ordinary shared records, not a second control plane.
-3. The agent publishes one complete change to one resource. A short update uses `put`; work assembled across calls uses a durable transaction.
+3. The agent creates a record with `put`, replaces its text with `edit`, or marks its text literally with `strike`. Work assembled across calls uses a durable transaction.
 4. Conductor makes the change visible, then signals every registered agent, including the publisher. A signal names where to look; it does not carry the shared work.
 5. A recipient accepts the signal, then reads the resource or refreshes the roster. Conductor records each accepted delivery; uncertainty favors replay.
 
@@ -38,11 +38,11 @@ When no call or wait is active, Conductor is idle. The files remain.
 
 ## The shape of shared work
 
-A resource is named `<topic-group>/<topic>`. It contains independently addressed records. The team chooses names such as `collaboration/rules` or `development/work`; Conductor preserves those names but does not interpret them.
+A resource is named `<topic-group>/<topic>`. It contains records whose complete public shape is a stable positive `index` and plain `text`. Conductor assigns indexes independently inside each topic. Topic group and topic names carry semantics; records do not carry a kind, payload wrapper, status, or hidden deletion state.
 
 Every registered agent receives every signal. There are no per-topic subscriptions or private routes. This keeps discovery simple and makes filtering an agent decision.
 
-Publication is atomic within one resource. Immutable history records the change, and a head marks the last visible publication. Record files are materialized views. Events record created signals; inboxes deliver them; cursors record accepted progress.
+Publication is atomic within one resource. Immutable history records the change, and a head marks the last visible publication. Current reads reconstruct records from that authority. Events record created signals; inboxes deliver them; cursors record accepted progress.
 
 ## Invariants
 

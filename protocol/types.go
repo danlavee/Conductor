@@ -10,50 +10,27 @@ type Agent struct {
 	Timestamp      time.Time `json:"timestamp"`
 }
 
-// MessagePayload is the complete authored message payload.
-type MessagePayload struct {
-	Text string `json:"text"`
+// Record is one editable topic value. Its index is its stable key.
+type Record struct {
+	Index int64  `json:"index"`
+	Text  string `json:"text"`
 }
 
-// Message is the latest current message for one resource key.
-type Message struct {
-	Key       string         `json:"key"`
-	Kind      string         `json:"kind"`
-	Payload   MessagePayload `json:"payload"`
-	Agent     string         `json:"agent"`
-	Index     int64          `json:"index"`
-	Timestamp time.Time      `json:"timestamp"`
-}
-
-// MutationOperation identifies a protocol edit. Message kinds remain unrestricted strings.
-type MutationOperation string
-
-const (
-	MutationSet     MutationOperation = "set"
-	MutationScratch MutationOperation = "scratch"
-)
-
-// MessageMutation creates, replaces, or scratches one keyed message.
-type MessageMutation struct {
-	Operation MutationOperation `json:"operation"`
-	Kind      string            `json:"kind,omitempty"`
-	Payload   *MessagePayload   `json:"payload,omitempty"`
-}
-
-// Signal wakes an agent after membership or resource publication.
-type Signal struct {
-	Type     string `json:"type"`
-	Resource string `json:"resource"`
-	Key      string `json:"key"`
-	Index    int64  `json:"index"`
-	Agent    string `json:"agent"`
-}
-
-// Publication is one atomically published resource update.
+// Publication is one atomic addition or change of records in one topic.
+// Sequence orders publications globally and is unrelated to record indexes.
 type Publication struct {
-	Index     int64                      `json:"index"`
-	Resource  string                     `json:"resource"`
-	Agent     string                     `json:"agent"`
-	Timestamp time.Time                  `json:"timestamp"`
-	Messages  map[string]MessageMutation `json:"messages"`
+	Sequence  int64     `json:"sequence"`
+	Topic     string    `json:"topic"`
+	Agent     string    `json:"agent"`
+	Timestamp time.Time `json:"timestamp"`
+	Records   []Record  `json:"records"`
+}
+
+// Summary is the lightweight wake information returned instead of content.
+// Its sequence identifies the publication for an update.
+type Summary struct {
+	Type     string `json:"type"`
+	Topic    string `json:"topic"`
+	Sequence int64  `json:"sequence"`
+	Agent    string `json:"agent"`
 }

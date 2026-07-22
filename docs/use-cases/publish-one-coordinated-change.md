@@ -15,7 +15,7 @@ Other agents should see either the complete change or none of it. They should ne
 - Until the agent publishes, the staged parts are not visible to readers.
 - When it publishes, the complete set becomes visible at once and the team receives one notification.
 - If it cancels, none of the staged work becomes visible.
-- When replacing previously read records, it supplies their record indexes. If any changed meanwhile, Conductor rejects the entire publication so the agent can re-read and reassess rather than overwrite newer work.
+- Create assigns each new record an index. Edit and strike target an existing index and preserve it. The topic lease serializes writers; operations use the latest authoritative text when they execute.
 
 ## Outcome
 
