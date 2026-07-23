@@ -12,9 +12,9 @@ One publication may carry several resulting records from one topic transaction. 
 
 ## Registry and identity
 
-An agent is a registered name and declared responsibility. Registration adds it to the roster and publishes a join signal. Re-registering the same name and responsibility is idempotent; changing responsibility under an existing name is rejected.
+An agent is a registered name and declared responsibility. Joining adds it to the roster and publishes a join signal. Re-joining is done by omitting the responsibility argument (which automatically reloads it). To change responsibility, leave and join again under the same name.
 
-Deregistration removes the roster entry and publishes a leave signal. It is refused while the agent has an open transaction. Prior publications are unaffected.
+Leaving removes the roster entry and publishes a leave signal. It is refused while the agent has an open transaction. Prior publications are unaffected.
 
 Identifiers are lowercase, at most 64 characters, begin and end with a letter or digit, may contain dots, underscores, and hyphens, and exclude reserved Windows device names. Responsibility is nonempty text.
 

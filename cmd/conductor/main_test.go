@@ -77,9 +77,9 @@ func TestMissingInstallFolderProcessContract(t *testing.T) {
 
 func TestRecordOperationProcessContract(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
-	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development")
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development")
 	if err != nil || len(stderr) != 0 || len(stdout) == 0 {
-		t.Fatalf("register error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
+		t.Fatalf("join error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
 	}
 	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "created")
 	if err != nil || len(stderr) != 0 || len(stdout) == 0 {
@@ -109,7 +109,7 @@ func TestRecordOperationProcessContract(t *testing.T) {
 
 func TestPutFileBulkLoadsAsOneTransaction(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
-	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development"); err != nil {
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
 		t.Fatal(err)
 	}
 	jsonlPath := filepath.Join(t.TempDir(), "rules.jsonl")
@@ -149,7 +149,7 @@ func TestPutFileBulkLoadsAsOneTransaction(t *testing.T) {
 
 func TestPutFileMalformedLineAbortsWithoutPartialRecords(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
-	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development"); err != nil {
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
 		t.Fatal(err)
 	}
 	jsonlPath := filepath.Join(t.TempDir(), "bad.jsonl")
@@ -188,7 +188,7 @@ func TestPutFileMalformedLineAbortsWithoutPartialRecords(t *testing.T) {
 func TestRecordOperationProcessVisibilityBoundary(t *testing.T) {
 	t.Run("before-head", func(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "runtime-state")
-		if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development"); err != nil {
+		if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
 			t.Fatal(err)
 		}
 		indexData := fmt.Sprintf("{\n  \"index\": %d\n}\n", int64(math.MaxInt64))
@@ -203,7 +203,7 @@ func TestRecordOperationProcessVisibilityBoundary(t *testing.T) {
 
 	t.Run("after-head", func(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "runtime-state")
-		if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development"); err != nil {
+		if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
 			t.Fatal(err)
 		}
 		// Registration itself already consumes global sequences 1 (the
@@ -225,7 +225,7 @@ func TestRecordOperationProcessVisibilityBoundary(t *testing.T) {
 
 func TestProtocolMismatchProcessContract(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
-	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "coordination"); err != nil {
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "coordination"); err != nil {
 		t.Fatal(err)
 	}
 	declaration := filepath.Join(state, "protocol.json")
@@ -352,7 +352,7 @@ func TestWatchDefaultsToContent(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
 	t.Setenv("CONDUCTOR_HOME", state)
 	t.Setenv("CONDUCTOR_AGENT", "a")
-	if err := run([]string{"a", "register", "dev"}); err != nil {
+	if err := run([]string{"a", "join", "dev"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := run([]string{"a", "watch"}); err != nil {
@@ -407,7 +407,7 @@ func TestGetDeltaAcknowledgesSuccessfulDelivery(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "runtime-state")
 	t.Setenv("CONDUCTOR_HOME", home)
 	t.Setenv("CONDUCTOR_AGENT", "a")
-	if err := run([]string{"a", "register", "dev"}); err != nil {
+	if err := run([]string{"a", "join", "dev"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := run([]string{"a", "subscribe", "--topic=messages/team"}); err != nil {

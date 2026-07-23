@@ -9,7 +9,7 @@ Exact, non-obvious mechanism facts only — anything already implied by `SKILL.m
 - Inside one transaction, later staged operations see earlier staged values.
 - A topic lease defaults to 3 minutes. Past that, `TIMEOUT` means the holding process is still alive; once it's confirmed dead, a later `begin` reclaims automatically and completes its buffered transaction.
 - `watch` never triggers recovery of a stale transaction — only `get`, `put`, `edit`, `strike`, or `begin` does.
-- A blocked `watch` rechecks its own agent's registration on every poll tick; if it's deregistered while the call is waiting, `watch` returns `NOT_FOUND` immediately rather than blocking forever.
+- A blocked `watch` rechecks its own agent's join status on every poll tick; if it leaves while the call is waiting, `watch` returns `NOT_FOUND` immediately rather than blocking forever.
 - Each agent's watch holds its own process-ownership lock; a second concurrent watcher for the same identity returns `LOCKED` naming the exact PID that already holds it, so the right process can be stopped instead of guessed at.
 
 | Code | Meaning |

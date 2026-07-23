@@ -170,7 +170,7 @@ func TestProtocolNewHelperProcess(t *testing.T) {
 func TestStatefulBoundariesDoNotRecreateMissingProtocol(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "agent")
-	if _, err := client.Register("agent", "coordination"); err != nil {
+	if _, err := client.Join("agent", "coordination"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(protocolPath(home)); err != nil {
@@ -178,8 +178,8 @@ func TestStatefulBoundariesDoNotRecreateMissingProtocol(t *testing.T) {
 	}
 	checks := map[string]func() error{
 		"resolve":      func() error { _, err := client.ResolveAgent(); return err },
-		"register":     func() error { _, err := client.Register("other", "review"); return err },
-		"deregister":   func() error { return client.Deregister("agent") },
+		"join":         func() error { _, err := client.Join("other", "review"); return err },
+		"leave":        func() error { return client.Leave("agent") },
 		"list":         func() error { _, err := client.ListAgents(); return err },
 		"snapshot":     func() error { _, err := client.FullSnapshot(); return err },
 		"ack-snapshot": func() error { return client.AcknowledgeSnapshot(Snapshot{}) },

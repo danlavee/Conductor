@@ -12,7 +12,7 @@ import (
 func TestStagedOperationsUseStableRecordIndexAndOverlay(t *testing.T) {
 	home := t.TempDir()
 	first := newTestClient(t, home, "")
-	if _, err := first.Register("writer", "records"); err != nil {
+	if _, err := first.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	if err := first.Begin("dev/tasks"); err != nil {
@@ -39,7 +39,7 @@ func TestStagedOperationsUseStableRecordIndexAndOverlay(t *testing.T) {
 
 func TestOneShotOperationsAndLiteralStrike(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	record, err := client.Put("messages/team", "")
@@ -62,7 +62,7 @@ func TestOneShotOperationsAndLiteralStrike(t *testing.T) {
 
 func TestTopicLocalIndexesAndAbortGap(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	a, err := client.Put("group/alpha", "a")
@@ -98,7 +98,7 @@ func TestTopicLocalIndexesAndAbortGap(t *testing.T) {
 
 func TestMissingOperationsDoNotLeakOneShotLease(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Edit("dev/tasks", 1, "missing"); err == nil {
@@ -122,7 +122,7 @@ func TestMissingOperationsDoNotLeakOneShotLease(t *testing.T) {
 
 func TestSameIndexInOtherTopicIsIndependent(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	alpha, err := client.Put("group/alpha", "alpha")
@@ -147,7 +147,7 @@ func TestSameIndexInOtherTopicIsIndependent(t *testing.T) {
 
 func TestTextIsPreservedExactly(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	for _, text := range []string{"   ", "first\nsecond", "שלום 🌍"} {
@@ -172,7 +172,7 @@ func TestRecordAllocatorRejectsMissingRegressedAndExhaustedState(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			client := newTestClient(t, home, "")
-			if _, err := client.Register("writer", "records"); err != nil {
+			if _, err := client.Join("writer", "records"); err != nil {
 				t.Fatal(err)
 			}
 			first, err := client.Put("dev/tasks", "first")
@@ -201,11 +201,11 @@ func TestRecordAllocatorRejectsMissingRegressedAndExhaustedState(t *testing.T) {
 func TestRecoveryPublishesDurableRecordOverlayOnce(t *testing.T) {
 	home := t.TempDir()
 	owner := newTestClient(t, home, "")
-	if _, err := owner.Register("owner", "records"); err != nil {
+	if _, err := owner.Join("owner", "records"); err != nil {
 		t.Fatal(err)
 	}
 	rescuer := newTestClient(t, home, "")
-	if _, err := rescuer.Register("rescuer", "records"); err != nil {
+	if _, err := rescuer.Join("rescuer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	base, err := owner.Put("dev/tasks", "base")
@@ -263,7 +263,7 @@ func int64Pointer(value int64) *int64 { return &value }
 
 func TestStagedFailureLeavesOwnedTransactionUnchanged(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.Begin("dev/tasks"); err != nil {
@@ -283,7 +283,7 @@ func TestStagedFailureLeavesOwnedTransactionUnchanged(t *testing.T) {
 func TestTransactionCannotChangeAfterCommitStarts(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.Begin("dev/tasks"); err != nil {
@@ -310,7 +310,7 @@ func TestTransactionCannotChangeAfterCommitStarts(t *testing.T) {
 func TestOneShotReturnsRecordWhenSettlementFailsAfterVisibility(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	// Registration itself already consumes global sequences 1 (the
@@ -340,7 +340,7 @@ func TestOneShotReturnsRecordWhenSettlementFailsAfterVisibility(t *testing.T) {
 func TestOneShotReturnsNoRecordWhenCommitFailsBeforeVisibility(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeJSONAtomic(filepath.Join(home, "state", "index.json"), map[string]int64{"index": math.MaxInt64}); err != nil {
@@ -358,7 +358,7 @@ func TestOneShotReturnsNoRecordWhenCommitFailsBeforeVisibility(t *testing.T) {
 
 func TestTextIdenticalEditStillPublishes(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	record, err := client.Put("dev/tasks", "same")

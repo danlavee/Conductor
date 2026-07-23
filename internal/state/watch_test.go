@@ -14,11 +14,11 @@ import (
 func TestWatchAcknowledgementReplaysBeforeCheckpoint(t *testing.T) {
 	home := t.TempDir()
 	a := newTestClient(t, home, "")
-	if _, err := a.Register("a", "dev"); err != nil {
+	if _, err := a.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	b := newTestClient(t, home, "")
-	if _, err := b.Register("b", "review"); err != nil {
+	if _, err := b.Join("b", "review"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -48,7 +48,7 @@ func TestWatchAcknowledgementReplaysBeforeCheckpoint(t *testing.T) {
 func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("a", "dev"); err != nil {
+	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	// Drain the collaboration/agents roster commit and the join signal
@@ -77,7 +77,7 @@ func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 func TestWatchSinceReturnsOnlyHigherIndexes(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("a", "development"); err != nil {
+	if _, err := client.Join("a", "development"); err != nil {
 		t.Fatal(err)
 	}
 	for index := int64(2); index <= 3; index++ {
@@ -115,7 +115,7 @@ func TestWatchSinceReturnsOnlyHigherIndexes(t *testing.T) {
 func TestAcknowledgeSummaryRejectsInvalidSDKInput(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("a", "development"); err != nil {
+	if _, err := client.Join("a", "development"); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.AcknowledgeSummary(Summary{}); err == nil {
@@ -129,7 +129,7 @@ func TestAcknowledgeSummaryRejectsInvalidSDKInput(t *testing.T) {
 func TestWatchReconcilesJournalWhenInboxAppendIsMissing(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("a", "dev"); err != nil {
+	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	// Drain the collaboration/agents roster commit and the join signal
@@ -152,7 +152,7 @@ func TestWatchReconcilesJournalWhenInboxAppendIsMissing(t *testing.T) {
 func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 	home := t.TempDir()
 	first := newTestClient(t, home, "")
-	if _, err := first.Register("a", "development"); err != nil {
+	if _, err := first.Join("a", "development"); err != nil {
 		t.Fatal(err)
 	}
 	second := newTestClient(t, home, "a")
@@ -192,7 +192,7 @@ func TestWatchDetectsDeregistrationInsteadOfHangingForever(t *testing.T) {
 	// other bus activity at all, must still notice its own agent is gone.
 	home := t.TempDir()
 	watcher := newTestClient(t, home, "")
-	if _, err := watcher.Register("a", "dev"); err != nil {
+	if _, err := watcher.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	drainSummaries(t, watcher, 2) // collaboration/agents roster commit, then join

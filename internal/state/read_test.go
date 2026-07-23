@@ -5,11 +5,11 @@ import "testing"
 func TestReadModesAndIndependentRecordCursors(t *testing.T) {
 	home := t.TempDir()
 	writer := newTestClient(t, home, "")
-	if _, err := writer.Register("writer", "dev"); err != nil {
+	if _, err := writer.Join("writer", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	reader := newTestClient(t, home, "")
-	if _, err := reader.Register("reader", "review"); err != nil {
+	if _, err := reader.Join("reader", "review"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reader.SubscribeTopic("dev/tasks"); err != nil {
@@ -45,7 +45,7 @@ func TestReadModesAndIndependentRecordCursors(t *testing.T) {
 
 func TestRangeAndLimitUseCurrentRecordIndexes(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	for _, text := range []string{"one", "two", "three"} {
@@ -66,7 +66,7 @@ func TestRangeAndLimitUseCurrentRecordIndexes(t *testing.T) {
 
 func TestStruckRecordRemainsInFullAndDelta(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.SubscribeTopic("collaboration/shared"); err != nil {

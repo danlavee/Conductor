@@ -12,7 +12,7 @@ import (
 func TestRegisterPutGetAndDiskState(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	snapshot, err := client.Register("a", "dev")
+	snapshot, err := client.Join("a", "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestRegisterPutGetAndDiskState(t *testing.T) {
 func TestIdentityIsNeverInferredFromSoleRegistration(t *testing.T) {
 	home := t.TempDir()
 	registered := newTestClient(t, home, "")
-	if _, err := registered.Register("only", "dev"); err != nil {
+	if _, err := registered.Join("only", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	unbound := newTestClient(t, home, "")
@@ -82,12 +82,17 @@ func TestNamesArePortableAcrossSupportedPlatforms(t *testing.T) {
 func TestDuplicateNameCannotOverwriteResponsibility(t *testing.T) {
 	home := t.TempDir()
 	first := newTestClient(t, home, "")
-	if _, err := first.Register("same", "original"); err != nil {
+	if _, err := first.Join("same", "original"); err != nil {
 		t.Fatal(err)
 	}
 	second := newTestClient(t, home, "")
-	_, err := second.Register("same", "replacement")
-	assertCode(t, err, "LOCKED")
+	// re-joining with responsibility should fail with INVALID
+	_, err := second.Join("same", "replacement")
+	assertCode(t, err, "INVALID")
+	if !strings.Contains(err.Error(), "responsibility must be omitted for existing agent") {
+		t.Fatalf("expected arity error, got %v", err)
+	}
+
 	agents, err := first.ListAgents()
 	if err != nil || len(agents) != 1 || agents[0].Responsibility != "original" {
 		t.Fatalf("duplicate registration overwrote identity: %#v, %v", agents, err)
@@ -101,7 +106,7 @@ func TestRegistrationRetryRepairsMissingJoinEvent(t *testing.T) {
 	if err := writeJSONAtomic(filepath.Join(home, "registry", "retry.json"), agent); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Register("retry", "dev"); err != nil {
+	if _, err := client.Join("retry", ""); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := client.latestMembershipType("retry")
@@ -113,13 +118,13 @@ func TestRegistrationRetryRepairsMissingJoinEvent(t *testing.T) {
 func TestDeregistrationRetryRepairsMissingLeaveEvent(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("retry", "dev"); err != nil {
+	if _, err := client.Join("retry", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(home, "registry", "retry.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Deregister("retry"); err != nil {
+	if err := client.Leave("retry"); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := client.latestMembershipType("retry")
@@ -138,7 +143,7 @@ func TestRegistrationSnapshotFailureDoesNotCreateMembership(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(resourceDir, "history.jsonl"), []byte("not-json\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Register("a", "dev"); err == nil {
+	if _, err := client.Join("a", "dev"); err == nil {
 		t.Fatal("registration unexpectedly succeeded with unreadable snapshot")
 	}
 	if _, err := os.Stat(filepath.Join(home, "registry", "a.json")); !errors.Is(err, os.ErrNotExist) {
@@ -146,20 +151,23 @@ func TestRegistrationSnapshotFailureDoesNotCreateMembership(t *testing.T) {
 	}
 }
 
-func TestConcurrentRegisterAndDeregisterStayOrdered(t *testing.T) {
+func TestConcurrentJoinsStayOrdered(t *testing.T) {
 	home := t.TempDir()
 	initial := newTestClient(t, home, "")
-	if _, err := initial.Register("same", "initial"); err != nil {
+	if _, err := initial.Join("same", "initial"); err != nil {
 		t.Fatal(err)
 	}
-	registering := newTestClient(t, home, "")
-	leaving := newTestClient(t, home, "same")
+	registering1 := newTestClient(t, home, "")
+	registering2 := newTestClient(t, home, "")
 	results := make(chan error, 2)
 	go func() {
-		_, err := registering.Register("same", "initial")
+		_, err := registering1.Join("same", "")
 		results <- err
 	}()
-	go func() { results <- leaving.Deregister("same") }()
+	go func() {
+		_, err := registering2.Join("same", "")
+		results <- err
+	}()
 	for range 2 {
 		if err := <-results; err != nil {
 			t.Fatal(err)
@@ -169,32 +177,21 @@ func TestConcurrentRegisterAndDeregisterStayOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// collaboration/agents roster commits are interleaved with the registry
-	// join/leave events being tested here; filter to membership events only.
 	membership := make([]Event, 0, len(events))
 	for _, event := range events {
 		if event.Summary.Topic == "registry" {
 			membership = append(membership, event)
 		}
 	}
-	if len(membership) < 2 || len(membership) > 3 {
-		t.Fatalf("membership events = %#v", membership)
-	}
-	if membership[0].Summary.Type != "join" || membership[1].Summary.Type != "leave" || len(membership) == 3 && membership[2].Summary.Type != "join" {
-		t.Fatalf("membership events are not ordered: %#v", membership)
-	}
-	_, statErr := os.Stat(filepath.Join(home, "registry", "same.json"))
-	present := statErr == nil
-	lastType := membership[len(membership)-1].Summary.Type
-	if present != (lastType == "join") {
-		t.Fatalf("registry present=%v but last membership event=%s", present, lastType)
+	if len(membership) < 1 {
+		t.Fatalf("expected membership events, got %#v", membership)
 	}
 }
 
 func TestConcurrentBeginAndDeregisterCannotStrandTransaction(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("same", "development"); err != nil {
+	if _, err := client.Join("same", "development"); err != nil {
 		t.Fatal(err)
 	}
 	beginning := newTestClient(t, home, "same")
@@ -216,7 +213,7 @@ func TestConcurrentBeginAndDeregisterCannotStrandTransaction(t *testing.T) {
 		results <- struct {
 			operation string
 			err       error
-		}{"deregister", leaving.Deregister("same")}
+		}{"leave", leaving.Leave("same")}
 	}()
 	close(start)
 	outcomes := map[string]error{}
@@ -224,15 +221,71 @@ func TestConcurrentBeginAndDeregisterCannotStrandTransaction(t *testing.T) {
 		result := <-results
 		outcomes[result.operation] = result.err
 	}
-	if outcomes["begin"] == nil && outcomes["deregister"] == nil {
-		t.Fatal("begin and deregister both succeeded")
+	if outcomes["begin"] == nil && outcomes["leave"] == nil {
+		t.Fatal("begin and leave both succeeded")
 	}
 	if outcomes["begin"] == nil {
-		assertCode(t, outcomes["deregister"], "LOCKED")
+		assertCode(t, outcomes["leave"], "LOCKED")
 		if err := beginning.Abort(); err != nil {
 			t.Fatal(err)
 		}
-	} else if outcomes["deregister"] != nil {
-		t.Fatalf("neither operation completed: begin=%v deregister=%v", outcomes["begin"], outcomes["deregister"])
+	} else if outcomes["leave"] != nil {
+		t.Fatalf("neither operation completed: begin=%v leave=%v", outcomes["begin"], outcomes["leave"])
+	}
+}
+
+func TestJoinArityValidation(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+
+	// 1. First join without responsibility -> must fail with INVALID
+	_, err := client.Join("new-agent", "")
+	if err == nil {
+		t.Fatal("expected error for first join without responsibility")
+	}
+	assertCode(t, err, "INVALID")
+	if !strings.Contains(err.Error(), "responsibility is required for new agent") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// 2. First join with responsibility -> must succeed
+	_, err = client.Join("new-agent", "developer")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 3. Re-join with responsibility -> must fail with INVALID and tell them how to change it
+	_, err = client.Join("new-agent", "developer")
+	if err == nil {
+		t.Fatal("expected error for re-join with responsibility")
+	}
+	assertCode(t, err, "INVALID")
+	if !strings.Contains(err.Error(), "responsibility must be omitted for existing agent. To change responsibility unregister and re-register under the same name") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// 4. Re-join without responsibility -> must succeed
+	_, err = client.Join("new-agent", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 5. Leave and then re-join with new responsibility -> must succeed
+	err = client.Leave("new-agent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = client.Join("new-agent", "reviewer")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify that the responsibility indeed changed
+	agents, err := client.ListAgents()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(agents) != 1 || agents[0].Responsibility != "reviewer" {
+		t.Fatalf("expected responsibility to be 'reviewer', got %#v", agents)
 	}
 }

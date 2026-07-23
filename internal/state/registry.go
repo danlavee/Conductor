@@ -9,17 +9,34 @@ import (
 	"time"
 )
 
-// Register adds an agent and returns the full current snapshot.
-func (c *Client) Register(name, responsibility string) (snapshot Snapshot, err error) {
+// Join adds or reconnects an agent and returns the full current snapshot.
+func (c *Client) Join(name, responsibility string) (snapshot Snapshot, err error) {
 	if err := c.validateProtocol(); err != nil {
 		return Snapshot{}, err
 	}
 	if err := validName(name); err != nil {
 		return Snapshot{}, err
 	}
-	if strings.TrimSpace(responsibility) == "" {
-		return Snapshot{}, errors.New("responsibility must not be empty")
+
+	registrationPath := filepath.Join(c.Home, "registry", name+".json")
+	var existing Agent
+	readErr := readJSON(registrationPath, &existing)
+	exists := readErr == nil
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return Snapshot{}, readErr
 	}
+
+	if !exists {
+		if strings.TrimSpace(responsibility) == "" {
+			return Snapshot{}, &ProtocolError{Code: "INVALID", Text: "responsibility is required for new agent"}
+		}
+	} else {
+		if responsibility != "" {
+			return Snapshot{}, &ProtocolError{Code: "INVALID", Text: "responsibility must be omitted for existing agent. To change responsibility unregister and re-register under the same name"}
+		}
+		responsibility = existing.Responsibility
+	}
+
 	if err := c.acquireMembership(name); err != nil {
 		return Snapshot{}, err
 	}
@@ -28,12 +45,8 @@ func (c *Client) Register(name, responsibility string) (snapshot Snapshot, err e
 			err = releaseErr
 		}
 	}()
-	registrationPath := filepath.Join(c.Home, "registry", name+".json")
-	var existing Agent
-	if readErr := readJSON(registrationPath, &existing); readErr == nil {
-		if existing.Responsibility != responsibility {
-			return Snapshot{}, &ProtocolError{Code: "LOCKED", Agent: name, Text: "agent name is already registered with another responsibility"}
-		}
+
+	if exists {
 		c.Agent = name
 		if err := c.ensureRosterRecord(name, responsibility); err != nil {
 			return Snapshot{}, err
@@ -48,9 +61,8 @@ func (c *Client) Register(name, responsibility string) (snapshot Snapshot, err e
 			}
 		}
 		return c.FullSnapshot()
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return Snapshot{}, readErr
 	}
+
 	c.Agent = name
 	agent := Agent{Name: name, Responsibility: responsibility, Timestamp: time.Now().UTC()}
 	if err := writeJSONAtomic(registrationPath, agent); err != nil {
@@ -70,13 +82,13 @@ func (c *Client) Register(name, responsibility string) (snapshot Snapshot, err e
 		return Snapshot{}, err
 	}
 	if _, err := c.publishEvent("join", "registry", name, nil); err != nil {
-		return Snapshot{}, err
+		return snapshot, err
 	}
 	return snapshot, nil
 }
 
-// Deregister removes an agent after any active transaction has been resolved.
-func (c *Client) Deregister(name string) (err error) {
+// Leave removes an agent after any active transaction has been resolved.
+func (c *Client) Leave(name string) (err error) {
 	if err := c.validateProtocol(); err != nil {
 		return err
 	}
@@ -108,7 +120,7 @@ func (c *Client) Deregister(name string) (err error) {
 		return &ProtocolError{Code: "NOT_FOUND", Text: "agent does not exist"}
 	}
 	if _, statErr := os.Stat(c.transactionPath(name)); statErr == nil {
-		return &ProtocolError{Code: "LOCKED", Agent: name, Text: "agent has an active transaction; commit or abort it before deregistering"}
+		return &ProtocolError{Code: "LOCKED", Agent: name, Text: "agent has an active transaction; commit or abort it before leaving"}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return statErr
 	}

@@ -11,7 +11,7 @@ func TestPublicFacadeCreatesEditsAndStrikesRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	record, err := client.Put("messages/team", "hello")

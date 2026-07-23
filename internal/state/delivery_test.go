@@ -17,7 +17,7 @@ func TestParseDeliveryMode(t *testing.T) {
 func TestSummaryAcknowledgesReferencedTopicChange(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Register("reader", "review"); err != nil {
+	if _, err := client.Join("reader", "review"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.SubscribeTopic("messages/team"); err != nil {
@@ -49,14 +49,14 @@ func TestSummaryAcknowledgesReferencedTopicChange(t *testing.T) {
 func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 	home := t.TempDir()
 	reader := newTestClient(t, home, "")
-	if _, err := reader.Register("reader", "review"); err != nil {
+	if _, err := reader.Join("reader", "review"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reader.SubscribeTopic("dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
 	writer := newTestClient(t, home, "")
-	if _, err := writer.Register("writer", "dev"); err != nil {
+	if _, err := writer.Join("writer", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	// Each registration (reader's own, then writer's, forced-broadcast to
@@ -95,7 +95,7 @@ func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 
 func TestContentJoinCarriesRoster(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("a", "dev"); err != nil {
+	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	// The first signal is the collaboration/agents roster commit itself

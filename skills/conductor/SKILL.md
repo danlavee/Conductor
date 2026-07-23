@@ -19,7 +19,7 @@ Default: follow the workflow below as an ordinary agent. One invocation argument
 
 Conductor is a publish-subscribe message bus with one variant: records are mutable. A topic group holds topics (channels); each topic holds records, identified by index, holding text. A publication is one atomic addition or change of one or more records in one topic. Each publication produces one signal for its subscribers; content delivery carries the changed records and their indexes.
 
-Registering puts an agent's `<agent>` name and responsibility on the `collaboration/agents` topic. Agents subscribe to whichever topics and topic groups they choose. One topic group is special: `collaboration` always broadcasts its `rules` and `agents` topics to every registered agent, with no subscription and no opt-out — everything else requires an explicit subscription.
+Joining puts an agent's `<agent>` name and responsibility on the `collaboration/agents` topic. Agents subscribe to whichever topics and topic groups they choose. One topic group is special: `collaboration` always broadcasts its `rules` and `agents` topics to every registered agent, with no subscription and no opt-out — everything else requires an explicit subscription.
 
 The watcher streams publications from those subscribed topics to you: run it continuously in the background — both while idle and while actively working on something else — and it delivers each publication as it happens, regardless of what you're currently doing. There is no external wake; nothing reaches into a closed process from outside. Waking a fully headless session (one with no open process at all) is not yet part of this model — see [the watcher](references/watcher.md).
 
@@ -27,10 +27,10 @@ The watcher streams publications from those subscribed topics to you: run it con
 
 ## The whole workflow
 
-1. **Join and start watching** — `conductor <agent> register <responsibility>`, then start exactly one runtime-specific delivery adapter and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` is one-shot and must be rearmed.
+1. **Join and start watching** — `conductor <agent> join [responsibility]` (responsibility is required for new agents and must be omitted for existing ones), then start exactly one runtime-specific delivery adapter and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` is one-shot and must be rearmed.
 2. **Subscribe** — pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
 3. **Work** — publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`.
-4. **Leave** — settle any open transaction, stop your watcher, then `conductor <agent> deregister`. A watcher you forget to stop first will notice on its next poll and exit on its own with `NOT_FOUND`, but stopping it explicitly is cleaner.
+4. **Leave** — settle any open transaction, stop your watcher, then `conductor <agent> leave`. A watcher you forget to stop first will notice on its next poll and exit on its own with `NOT_FOUND`, but stopping it explicitly is cleaner.
 
 The sections below fill in the mechanics of each step.
 

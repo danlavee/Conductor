@@ -8,7 +8,7 @@ Stop only through the retained handle. Never kill by process name, wildcard, or 
 
 Every watcher command accepts `--mode`. `--mode=content` is the default and delivers the resolved information directly. `--mode=summary` returns only a location pointer instead, requiring a separate read to see what changed — reach for it only when the user specifically asks for that lighter behavior, not as a default choice.
 
-Use exactly one wait owner for the registered identity. Decide first whether the current turn is attended (a human or host is live in it now) or idle (a host will resume it later on a signal) — a per-signal resume watcher (`--claude-cli`, `--agy-cli`, `--codex-cli`) may only target an idle session; pointing one at the session you are attending creates a competing headless process against the live transcript, where interactive tool approval may be unavailable.
+Use exactly one wait owner for the joined identity. Decide first whether the current turn is attended (a human or host is live in it now) or idle (a host will resume it later on a signal) — a per-signal resume watcher (`--claude-cli`, `--agy-cli`, `--codex-cli`) may only target an idle session; pointing one at the session you are attending creates a competing headless process against the live transcript, where interactive tool approval may be unavailable.
 
 ## Choose a row
 

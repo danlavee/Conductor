@@ -13,7 +13,7 @@ func TestConcurrentCreatesAreUniqueWithinTopic(t *testing.T) {
 	for i := range clients {
 		client := newTestClient(t, home, "")
 		name := fmt.Sprintf("agent-%02d", i)
-		if _, err := client.Register(name, "test"); err != nil {
+		if _, err := client.Join(name, "test"); err != nil {
 			t.Fatal(err)
 		}
 		clients[i] = client
@@ -56,7 +56,7 @@ func TestConcurrentCreatesAreUniqueWithinTopic(t *testing.T) {
 
 func TestCommitSequenceAndRecordIndexesAreIndependent(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Register("writer", "records"); err != nil {
+	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
 	first, err := client.Put("group/one", "first")
