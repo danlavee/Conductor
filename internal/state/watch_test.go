@@ -3,8 +3,10 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -163,6 +165,10 @@ func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 		t.Fatal("second watch owner acquired the same agent")
 	} else {
 		assertCode(t, err, "LOCKED")
+		wantHint := fmt.Sprintf("pid %d", os.Getpid())
+		if !strings.Contains(err.Error(), wantHint) {
+			t.Fatalf("error = %q, want it to name the holder: %q", err.Error(), wantHint)
+		}
 	}
 	if err := release(); err != nil {
 		t.Fatal(err)
