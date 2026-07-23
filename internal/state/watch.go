@@ -2,6 +2,7 @@ package state
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -173,12 +174,21 @@ func (c *Client) appendInbox(agent string, line []byte) error {
 		return err
 	}
 	path := filepath.Join(c.Home, "inbox", agent)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		_ = release()
 		return err
 	}
-	if _, err = file.Write(line); err == nil {
+	if err = trimUnterminatedInboxTail(file); err == nil {
+		if _, err = file.Seek(0, io.SeekEnd); err == nil {
+			var written int
+			written, err = file.Write(line)
+			if err == nil && written != len(line) {
+				err = io.ErrShortWrite
+			}
+		}
+	}
+	if err == nil {
 		err = file.Sync()
 	}
 	if closeErr := file.Close(); err == nil {
@@ -219,19 +229,19 @@ func (c *Client) nextInboxSummary(agent string, cursor Cursor, since int64) (Sum
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return Summary{}, offset, false, readErr
 		}
+		if line[len(line)-1] != '\n' {
+			return Summary{}, offset, false, nil
+		}
 		offset += int64(len(line))
 		var summary Summary
 		if err := json.Unmarshal(line, &summary); err != nil {
-			return Summary{}, offset, false, fmt.Errorf("malformed inbox line for %s: %w", agent, err)
+			continue
 		}
 		if err := validateSummary(&summary); err != nil {
-			return Summary{}, offset, false, fmt.Errorf("invalid inbox line for %s: %w", agent, err)
+			continue
 		}
 		if summary.Sequence > since && !indexAcknowledged(cursor.SummaryRanges, summary.Sequence) {
 			return summary, offset, true, nil
-		}
-		if errors.Is(readErr, io.EOF) {
-			return Summary{}, offset, false, nil
 		}
 	}
 }
@@ -249,31 +259,82 @@ func (c *Client) inboxOffsetThrough(agent string, index int64) (int64, error) {
 		return 0, err
 	}
 	defer file.Close()
-	if _, err := file.Seek(cursor.InboxOffset, io.SeekStart); err != nil {
+	info, err := file.Stat()
+	if err != nil {
 		return 0, err
 	}
 	offset := cursor.InboxOffset
+	if offset > info.Size() {
+		offset = 0
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return 0, err
+	}
 	reader := bufio.NewReader(file)
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) == 0 && errors.Is(readErr, io.EOF) {
-			return cursor.InboxOffset, nil
+			return offset, nil
 		}
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return 0, readErr
 		}
+		if line[len(line)-1] != '\n' {
+			return offset, nil
+		}
 		offset += int64(len(line))
 		var candidate Summary
 		if err := json.Unmarshal(line, &candidate); err != nil {
-			return 0, fmt.Errorf("malformed inbox line for %s: %w", agent, err)
+			continue
 		}
 		if candidate.Sequence == index {
 			return offset, nil
 		}
-		if errors.Is(readErr, io.EOF) {
-			return cursor.InboxOffset, nil
+	}
+}
+
+func trimUnterminatedInboxTail(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil || info.Size() == 0 {
+		return err
+	}
+	last := []byte{0}
+	if _, err := file.ReadAt(last, info.Size()-1); err != nil {
+		return err
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+
+	// High-Performance backward search in 4KB chunks
+	var size int64 = 0
+	buf := make([]byte, 4096)
+	fileSize := info.Size()
+	offset := fileSize
+
+	for offset > 0 {
+		chunkSize := int64(len(buf))
+		if offset < chunkSize {
+			chunkSize = offset
+		}
+		offset -= chunkSize
+
+		if _, err := file.ReadAt(buf[:chunkSize], offset); err != nil {
+			return err
+		}
+
+		idx := bytes.LastIndexByte(buf[:chunkSize], '\n')
+		if idx != -1 {
+			size = offset + int64(idx) + 1
+			break
 		}
 	}
+
+	if err := file.Truncate(size); err != nil {
+		return err
+	}
+	_, err = file.Seek(0, io.SeekEnd)
+	return err
 }
 
 func (c *Client) unreadEvents(acknowledged []IndexRange) ([]Event, error) {

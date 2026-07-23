@@ -1,7 +1,9 @@
 package state
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -146,6 +148,106 @@ func TestWatchReconcilesJournalWhenInboxAppendIsMissing(t *testing.T) {
 	summary, err := client.Watch()
 	if err != nil || summary.Sequence != index {
 		t.Fatalf("journal-only event not reconciled: %#v, %v", summary, err)
+	}
+}
+
+func TestWatchSkipsCorruptInboxLine(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		line string
+	}{
+		{name: "malformed", line: "not-json\n"},
+		{name: "invalid", line: "{}\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			client := newTestClient(t, home, "")
+			if _, err := client.Join("a", "dev"); err != nil {
+				t.Fatal(err)
+			}
+			drainSummaries(t, client, 2)
+			inboxPath := filepath.Join(home, "inbox", "a")
+			file, err := os.OpenFile(inboxPath, os.O_WRONLY|os.O_APPEND, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := file.WriteString(test.line); err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			summary, err := client.publishEvent("update", "dev/tasks", "a", []string{"a"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			watched, err := client.Watch()
+			if err != nil || watched.Sequence != summary.Sequence {
+				t.Fatalf("watch = %#v, %v", watched, err)
+			}
+			if err := client.AcknowledgeSummary(watched); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestWatchReconcilesJournalWhenInboxEndsWithTruncatedLine(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+	if _, err := client.Join("a", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	drainSummaries(t, client, 2)
+	inboxPath := filepath.Join(home, "inbox", "a")
+	file, err := os.OpenFile(inboxPath, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"type":"update"`); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	index, err := client.nextIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: index, Agent: "a"}, Recipients: []string{"a"}}
+	if err := writeJSONAtomic(filepath.Join(home, "events", indexName(index)), event); err != nil {
+		t.Fatal(err)
+	}
+	watched, err := client.Watch()
+	if err != nil || watched.Sequence != index {
+		t.Fatalf("watch = %#v, %v", watched, err)
+	}
+	if err := client.AcknowledgeSummary(watched); err != nil {
+		t.Fatal(err)
+	}
+	next, err := client.publishEvent("update", "dev/tasks", "a", []string{"a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbox, err := os.ReadFile(inboxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(inbox), `{"type":"update"{"type":"update"`) {
+		t.Fatalf("truncated tail remained in inbox: %q", inbox)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(inbox)))
+	for scanner.Scan() {
+		if !json.Valid(scanner.Bytes()) {
+			t.Fatalf("invalid inbox line after repair: %q", scanner.Bytes())
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	afterRepair, err := client.Watch()
+	if err != nil || afterRepair.Sequence != next.Sequence {
+		t.Fatalf("watch after repair = %#v, %v", afterRepair, err)
 	}
 }
 
