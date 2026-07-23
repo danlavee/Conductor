@@ -21,7 +21,7 @@ The watcher streams publications from those subscribed topics to you: run it con
 
 ## The whole workflow
 
-1. **Join and start watching** — `conductor <agent> register <responsibility>`, then run the watcher immediately, before doing anything else. Treat these as one inseparable action, not two steps you could do the first of and forget the second: registering without starting the watcher leaves you deaf to the bus, with nothing to prompt you to fix it. The watcher's first call is what actually delivers the critical collaboration information (`collaboration/rules` and `collaboration/agents`), not registration itself. It returns after one signal and exits — restart it manually every time, for as long as you're part of the team.
+1. **Join and start watching** — `conductor <agent> register <responsibility>`, then start exactly one runtime-specific delivery adapter and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` is one-shot and must be rearmed.
 2. **Subscribe** — pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
 3. **Work** — publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`.
 4. **Leave** — settle any open transaction, stop your watcher, then `conductor <agent> deregister`. A watcher you forget to stop first will notice on its next poll and exit on its own with `NOT_FOUND`, but stopping it explicitly is cleaner.
@@ -38,7 +38,7 @@ Every command takes your `<agent>` name as its first argument.
 
 ## Streaming information and Wake on Activity
 
-Restart the watcher immediately every time it returns — it delivers the information delta since the watcher's last activity, then exits; nothing re-arms it for you. See [the watcher](references/watcher.md) for the exact command per runtime.
+See [the watcher](references/watcher.md) for the exact command and lifecycle per runtime.
 
 ## Subscribe
 

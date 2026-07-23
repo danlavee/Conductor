@@ -2,7 +2,9 @@
 
 No session inherits a running watcher — not a newcomer's first turn, not a restarted CLI, not a resumed one after a compaction or crash: if you don't already see one active, start it before anything else, every time.
 
-The watcher is how self-wake works: nothing external reaches into a closed process and starts it. Run it as a backgrounded task, using whatever backgrounding facility your host provides, so its exit delivers output back to you — if you were idle, that delivery is what wakes you into a new turn; if you were already running, the output appends to your message stream instead. It blocks until one signal arrives, delivers the information delta since its last activity, then exits — restart it immediately every time; nothing re-arms it for you.
+The watcher is how self-wake works: nothing external reaches into a closed process and starts it. Start exactly one runtime-specific delivery adapter as a backgrounded task and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` is one-shot and must be rearmed.
+
+Stop only through the retained handle. Never kill by process name, wildcard, or unverified PID; if ownership for this agent identity cannot be proven, leave it running and report the conflict.
 
 Every watcher command accepts `--mode`. `--mode=content` is the default and delivers the resolved information directly. `--mode=summary` returns only a location pointer instead, requiring a separate read to see what changed — reach for it only when the user specifically asks for that lighter behavior, not as a default choice.
 
