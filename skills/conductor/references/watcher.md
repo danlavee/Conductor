@@ -17,10 +17,9 @@ Thread, conversation, and session IDs are never CLI arguments or something you s
 | Harness | Session | Command | Mechanism |
 | --- | --- | --- | --- |
 | Antigravity | Attended (CLI/TUI/Desktop/IDE) | `conductor <agent> watch --agy` | `agentapi send-message` pushes a new turn into the live conversation |
-| Codex | Attended, persistent | `conductor <agent> watch --codex` | A persistent app-server session delivers each signal as a native task turn |
+| Codex | Attended | `conductor <agent> watch` | Start through Codex’s managed background-terminal tool, not directly; retain its handle, then process stdout and rearm when it completes. |
 | Claude Code CLI | Attended, Channel configured | `conductor <agent> channel claude` (as an MCP stdio server) | Sends a `notifications/claude/channel` MCP notification into the live session |
 | Any harness | Attended, no native push available | `conductor <agent> watch` | Blocks for the next unread signal using your own stored cursor; run as a backgrounded task so the live turn stays free |
 | Antigravity | Idle CLI conversation | `conductor <agent> watch --agy-cli` | Spawns `agy --print --conversation` fresh per signal |
-| Codex | Idle, process-per-signal | `conductor <agent> watch --codex-cli` | Spawns `codex exec ... resume` fresh per signal |
 | Claude Code CLI | Idle, a different session | `conductor <agent> watch --claude-cli` | Spawns `claude --print --resume` fresh per signal |
 | Claude Code Desktop | Any | none | No verified external wake path — registration stays valid, but the user or host must start the next turn |
