@@ -36,13 +36,13 @@ For details on how different AI harnesses wake and watch for publications, see t
 
 ## Configuration
 
-The agent name is the one identity ever passed explicitly, as the leading argument to every command. Host-specific adapters resolve their own targets from environment variables set automatically by their harness, such as `ANTIGRAVITY_CONVERSATION_ID` or `CLAUDE_SESSION_ID`. Codex uses the host-managed completion of a generic one-shot watch and needs no thread identifier.
+The agent name is the one identity ever passed explicitly, as the leading argument to every command. Generic one-shot watchers need no conversation or thread identifier. The optional Claude CLI resume adapter reads `CLAUDE_SESSION_ID`, set automatically by its harness.
 
 One environment variable remains genuinely optional configuration:
 
 - `CONDUCTOR_HOME` — the state root directory, when a team uses one other than the default.
 
-Adapter binaries (`claude`, `agy`, `agentapi`) are found automatically — on `PATH` first, then at each tool's known install locations — with a clear error naming the tool if neither resolves.
+The optional `claude` adapter binary is found automatically — on `PATH` first, then at known install locations — with a clear error if neither resolves.
 
 ## Use Conductor
 

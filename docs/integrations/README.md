@@ -3,8 +3,7 @@
 | Target | Topology | Lifecycle | Activation | Command |
 | --- | --- | --- | --- | --- |
 | Codex attended chat | Host-managed terminal | One-shot, rearmed by the agent | Background-terminal completion | `conductor <agent> watch` |
-| Antigravity Desktop conversation | External bridge | Persistent | `agentapi send-message` | `conductor <agent> watch --agy` |
-| AGY CLI conversation | External launcher | Process-per-signal | `agy --print` resume | `conductor <agent> watch --agy-cli` |
+| Antigravity attended conversation | Host-managed terminal | One-shot, rearmed by the agent | Background-terminal completion | `conductor <agent> watch` |
 | Claude Code CLI session | External launcher | Process-per-signal | `claude -p --resume` | `conductor <agent> watch --claude-cli` |
 | Open Claude Code CLI session | Host-connected channel | Persistent | Channel notification | `conductor <agent> channel claude` |
 | Claude Code Desktop task | No supported bridge | — | No verified external turn activation | None |

@@ -9,7 +9,7 @@ See the [integration support matrix](integrations/README.md) before selecting a 
 Implemented integrations:
 
 - [Codex](integrations/codex.md)
-- [Antigravity](integrations/agy.md), with native Desktop sidecar and process-per-signal CLI transports
+- [Antigravity](integrations/agy.md), through its host-managed background terminal
 - [Claude Code CLI](integrations/claude-cli.md)
 - [Claude Code Channel](integrations/claude-channel.md)
 

@@ -434,15 +434,6 @@ func TestGetDeltaAcknowledgesSuccessfulDelivery(t *testing.T) {
 	}
 }
 
-func TestUsageExposesTwoAntigravityTransports(t *testing.T) {
-	message := usageError().Error()
-	for _, flag := range []string{"--agy", "--agy-cli"} {
-		if !strings.Contains(message, flag) {
-			t.Fatalf("usage omits %s: %s", flag, message)
-		}
-	}
-}
-
 func TestClaudeCLIWatchRejectsTrailingArguments(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
 	t.Setenv("CONDUCTOR_HOME", state)

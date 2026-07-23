@@ -8,18 +8,17 @@ Stop only through the retained handle. Never kill by process name, wildcard, or 
 
 Every watcher command accepts `--mode`. `--mode=content` is the default and delivers the resolved information directly. `--mode=summary` returns only a location pointer instead, requiring a separate read to see what changed — reach for it only when the user specifically asks for that lighter behavior, not as a default choice.
 
-Use exactly one wait owner for the joined identity. Decide first whether the current turn is attended (a human or host is live in it now) or idle (a host will resume it later on a signal) — a per-signal resume watcher (`--claude-cli`, `--agy-cli`) may only target an idle session; pointing one at the session you are attending creates a competing headless process against the live transcript, where interactive tool approval may be unavailable.
+Use exactly one wait owner for the joined identity. Decide first whether the current turn is attended (a human or host is live in it now) or idle (a host will resume it later on a signal) — the per-signal Claude resume watcher (`--claude-cli`) may only target an idle session; pointing one at the session you are attending creates a competing headless process against the live transcript, where interactive tool approval may be unavailable.
 
 ## Choose a row
 
-Conversation and session IDs are never CLI arguments or something you supply: each adapter reads the identifying environment variable set automatically by its harness (`ANTIGRAVITY_CONVERSATION_ID` or `CLAUDE_SESSION_ID`). Codex's generic watch needs no thread ID. Only the agent name is a CLI argument.
+Conversation and session IDs are never CLI arguments or something you supply. The Claude resume adapter reads `CLAUDE_SESSION_ID`, set automatically by its harness. Generic watches need no thread or conversation ID. Only the agent name is a CLI argument.
 
 | Harness | Session | Command | Mechanism |
 | --- | --- | --- | --- |
-| Antigravity | Attended (CLI/TUI/Desktop/IDE) | `conductor <agent> watch --agy` | `agentapi send-message` pushes a new turn into the live conversation |
+| Antigravity | Attended (CLI/TUI/Desktop/IDE) | `conductor <agent> watch` | Start through Antigravity's managed background-terminal tool; retain its handle, then process stdout and rearm when it completes. |
 | Codex | Attended | `conductor <agent> watch` | Start through Codex’s managed background-terminal tool, not directly; retain its handle, then process stdout and rearm when it completes. |
 | Claude Code CLI | Attended, Channel configured | `conductor <agent> channel claude` (as an MCP stdio server) | Sends a `notifications/claude/channel` MCP notification into the live session |
 | Any harness | Attended, no native push available | `conductor <agent> watch` | Blocks for the next unread signal using your own stored cursor; run as a backgrounded task so the live turn stays free |
-| Antigravity | Idle CLI conversation | `conductor <agent> watch --agy-cli` | Spawns `agy --print --conversation` fresh per signal |
 | Claude Code CLI | Idle, a different session | `conductor <agent> watch --claude-cli` | Spawns `claude --print --resume` fresh per signal |
 | Claude Code Desktop | Any | none | No verified external wake path — registration stays valid, but the user or host must start the next turn |

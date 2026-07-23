@@ -29,7 +29,7 @@ The watcher streams publications from those subscribed topics to you: run it con
 
 ## The whole workflow
 
-1. **Join and start watching** — `conductor <agent> join [responsibility]` (responsibility is required for new agents and must be omitted for existing ones), then start exactly one runtime-specific delivery adapter and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` is one-shot and must be rearmed.
+1. **Join and start watching** — `conductor <agent> join [responsibility]` (responsibility is required for new agents and must be omitted for existing ones), then start exactly one watcher through the host method in [watcher.md](references/watcher.md) and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` is one-shot and must be rearmed.
 2. **Subscribe** — pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
 3. **Work** — publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`.
 4. **Leave** — settle any open transaction, stop your watcher, then `conductor <agent> leave`. A watcher you forget to stop first will notice on its next poll and exit on its own with `NOT_FOUND`, but stopping it explicitly is cleaner.

@@ -1,7 +1,6 @@
-// Package cliresume is the shared engine behind every process-per-signal CLI
-// adapter: an agent loop with no external wake path, so each Conductor signal
-// must launch a fresh, non-interactive resume of it. Claude Code CLI and
-// Antigravity CLI both use it; they differ only in the Transport they supply.
+// Package cliresume is the engine behind process-per-signal CLI adapters:
+// an agent loop with no external wake path, so each Conductor signal must
+// launch a fresh, non-interactive resume of it.
 package cliresume
 
 import (

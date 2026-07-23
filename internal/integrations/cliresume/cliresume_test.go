@@ -14,8 +14,8 @@ import (
 	conductor "github.com/danlavee/Conductor"
 )
 
-// testTransport is a minimal Transport standing in for claudecli/agycli's
-// real ones, so cliresume's own logic can be tested without a real CLI.
+// testTransport is a minimal Transport standing in for a real CLI transport,
+// so cliresume's own logic can be tested without a real CLI.
 var testTransport = Transport{
 	RuntimeLabel:        "Test Runtime",
 	TargetNoun:          "target",

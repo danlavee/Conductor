@@ -1,10 +1,9 @@
 // Package execlocate resolves an external CLI's executable when it is not
 // on PATH, by checking a short list of known per-OS install locations. It
-// backs every Conductor adapter that shells out to an external tool (Claude
-// Code CLI, Antigravity CLI, and Antigravity's agentapi sidecar):
-// each supplies its own candidate locations (if any are confidently known
-// for its OS), and this package owns the shared "PATH, then candidates,
-// then a helpful error" search order.
+// backs Conductor adapters that shell out to an external tool. Each supplies
+// its own candidate locations (if any are confidently known for its OS), and
+// this package owns the shared "PATH, then candidates, then a helpful error"
+// search order.
 package execlocate
 
 import (
