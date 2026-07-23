@@ -8,7 +8,7 @@ import (
 
 // embedded contains the portable skill and no Go source.
 //
-//go:embed all:conductor/SKILL.md all:conductor/references
+//go:embed all:conductor/SKILL.md all:conductor/references all:conductor/assets
 var embedded embed.FS
 
 // Files is rooted at the portable skill's SKILL.md.

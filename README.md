@@ -19,23 +19,24 @@ Three separate chats: Architecture, Development, and Skills. The user tells Arch
 ## How it works
 
 1. Each agent registers an identity and responsibility.
-2. The user establishes collaboration rules.
-3. Every registered agent wakes and reads them.
-4. An agent publishes a decision, question, finding, handoff, or result.
-5. Every registered agent wakes and decides whether to act.
-
-For a local Codex task, `conductor <agent> watch --codex` keeps a Codex app-server session open, delivers each signal as a native task turn, and acknowledges it only after that turn completes. See [harness integration](docs/integration.md).
-
-For Antigravity 2.0, run `conductor <agent> watch --agy` as an enabled sidecar. For an idle AGY CLI conversation, use `--agy-cli`. These are separate runtime loops; see [Antigravity integration](docs/integrations/agy.md).
+2. Each agent starts a background watcher to listen for publications.
+3. The user establishes collaboration rules.
+4. Every registered agent wakes and reads them.
+5. An agent publishes a decision, question, finding, handoff, or result.
+6. Every registered agent wakes and decides whether to act.
 
 Only the result travels. Conversations and working context stay with the agent.
 
+For details on how different AI harnesses wake and watch for publications, see the [watcher documentation](skills/conductor/references/watcher.md).
+
+## Easy Onboarding
+
+- **Install the skill:** Follow the [installation instructions](docs/installation.md) to load the Conductor skill.
+- **Load base rules:** Run the `onboarding` mode of the [Conductor skill](skills/conductor/references/onboarding.md) to register your identity and load the recommended base collaboration rules.
+
 ## Configuration
 
-The agent name is the one identity ever passed explicitly, as the leading argument to every command. A watcher's target — which session, conversation, or thread to resume — is never an argument either: each harness sets its own identifying environment variable automatically, and Conductor reads it, so nobody configures or reveals it:
-
-- `CODEX_THREAD_ID`, `ANTIGRAVITY_CONVERSATION_ID`, `CLAUDE_SESSION_ID` — the task/conversation/session a `--codex`, `--codex-cli`, `--agy`, `--agy-cli`, or `--claude-cli` watcher resumes, set by that harness's own host.
-- `CLAUDE_CODE_SESSION_ID` — the live, attended Claude Code session a process is itself running in, set by the Claude Code host; used only so `--claude-cli` can refuse to target itself.
+The agent name is the one identity ever passed explicitly, as the leading argument to every command. A watcher's target — which session, conversation, or thread to resume — is resolved by the Conductor watcher using environment variables set automatically by the host harness (such as `ANTIGRAVITY_CONVERSATION_ID`, `CODEX_THREAD_ID`, or `CLAUDE_SESSION_ID`).
 
 Two environment variables remain genuinely optional configuration:
 
@@ -43,11 +44,6 @@ Two environment variables remain genuinely optional configuration:
 - `CONDUCTOR_CODEX_SANDBOX` (or its legacy alias `CODEX_PERMISSION_PROFILE`) — an optional Codex sandbox policy: `read-only`, `workspace-write`, or `danger-full-access`.
 
 Adapter binaries (`claude`, `agy`, `agentapi`, `codex`) are found automatically — on `PATH` first, then at each tool's known install locations — with a clear error naming the tool if neither resolves.
-
-## Prepare Conductor
-
-- **Install the skill:** Agents read and follow the [installation instructions](docs/installation.md).
-- **Optional harness wake:** Developers and development agents can connect Conductor to an environment's activation input through the [suggested integration](docs/integration.md).
 
 ## Use Conductor
 

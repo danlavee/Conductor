@@ -1,0 +1,3 @@
+"Keep signal acks and confirmations brief unless they directly inform the user or are actionable"
+"All agents sub to a private channel private/<name> and public broadcast collaboration/broadcast"
+"The collaboration model is cooperative"
