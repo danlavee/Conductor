@@ -94,6 +94,11 @@ func (c *Client) WatchSinceContext(ctx context.Context, since int64) (Summary, e
 			return Summary{}, ctx.Err()
 		case <-timer.C:
 		}
+		if _, err := os.Stat(filepath.Join(c.Home, "registry", agent+".json")); errors.Is(err, os.ErrNotExist) {
+			return Summary{}, &ProtocolError{Code: "NOT_FOUND", Text: "registered agent does not exist"}
+		} else if err != nil {
+			return Summary{}, err
+		}
 		cursor, err = c.loadCursor(agent)
 		if err != nil {
 			return Summary{}, err

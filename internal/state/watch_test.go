@@ -175,3 +175,37 @@ func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWatchDetectsDeregistrationInsteadOfHangingForever(t *testing.T) {
+	// Deregistering "a" the normal way also force-broadcasts a
+	// collaboration/agents strike commit to every still-registered agent,
+	// including "a" itself (its registry file isn't removed until after that
+	// commit) — which would let this watch resolve via an ordinary signal and
+	// mask the bug this test targets. Removing the registry file directly
+	// isolates the actual mechanism: a watch already blocked mid-poll, with no
+	// other bus activity at all, must still notice its own agent is gone.
+	home := t.TempDir()
+	watcher := newTestClient(t, home, "")
+	if _, err := watcher.Register("a", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	drainSummaries(t, watcher, 2) // collaboration/agents roster commit, then join
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := watcher.WatchContext(context.Background())
+		result <- err
+	}()
+
+	time.Sleep(20 * time.Millisecond) // let the watch enter its poll loop
+	if err := os.Remove(filepath.Join(home, "registry", "a.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-result:
+		assertCode(t, err, "NOT_FOUND")
+	case <-time.After(2 * time.Second):
+		t.Fatal("watch did not detect deregistration and kept blocking")
+	}
+}
