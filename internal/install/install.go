@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/danlavee/Conductor/internal/skillcheck"
 )
@@ -354,12 +356,37 @@ func inspectExisting(destination string, expected manifest) (Result, bool, error
 	}
 	existing, manifestData, err := verifyInstallation(destination)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			empty, emptyErr := isDirEmpty(destination)
+			if emptyErr == nil && !empty {
+				backupPath := destination + ".pre-upgrade-" + time.Now().Format("20060102150405")
+				log.Printf("Warning: Destination %s has no install manifest. Creating a safety-net backup at %s and overwriting...", destination, backupPath)
+				if renameErr := os.Rename(destination, backupPath); renameErr != nil {
+					return Result{}, true, fmt.Errorf("install preflight: failed to backup conflicting destination: %w", renameErr)
+				}
+				return Result{}, false, nil
+			}
+		}
 		return Result{}, true, fmt.Errorf("install conflict: %w", err)
 	}
 	if existing.DistributionID != expected.DistributionID {
 		return Result{}, true, errors.New("install conflict: destination contains a different Conductor installation")
 	}
 	return resultFor("already-installed", destination, existing, manifestData), true, nil
+}
+
+func isDirEmpty(name string) (bool, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	_, err = f.Readdirnames(1)
+	if err == io.EOF {
+		return true, nil
+	}
+	return false, err
 }
 
 func verifyInstallation(root string) (manifest, []byte, error) {
