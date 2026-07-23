@@ -356,3 +356,81 @@ func TestDetectSourceVersion(t *testing.T) {
 		t.Fatalf("version = %d, want 2", version)
 	}
 }
+
+func TestRunV3ToV4Migration(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "v3-source")
+	writeFile(t, filepath.Join(root, "protocol.json"), `{"version": 3}`)
+	writeFile(t, filepath.Join(root, "registry", "agent-a.json"), `{
+  "name": "agent-a",
+  "responsibility": "dev",
+  "timestamp": "2026-01-01T00:00:00Z"
+}`)
+	writeFile(t, filepath.Join(root, "topics", "dev", "tasks", "head.json"), `{"sequence": 2}`)
+	writeFile(t, filepath.Join(root, "topics", "dev", "tasks", "record-index.json"), `{"index": 2}`)
+	writeFile(t, filepath.Join(root, "topics", "dev", "tasks", "history", "00000000000000000001.json"), `{
+  "sequence": 1,
+  "topic": "dev/tasks",
+  "agent": "agent-a",
+  "timestamp": "2026-01-01T00:00:00Z",
+  "records": [{"index": 1, "text": "hello"}]
+}`)
+	writeFile(t, filepath.Join(root, "topics", "dev", "tasks", "history", "00000000000000000002.json"), `{
+  "sequence": 2,
+  "topic": "dev/tasks",
+  "agent": "agent-a",
+  "timestamp": "2026-01-02T00:00:00Z",
+  "records": [{"index": 2, "text": "world"}]
+}`)
+
+	destination := filepath.Join(t.TempDir(), "v4-destination")
+	report, err := RunV3ToV4(root, destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if report.Topics != 1 || report.Records != 2 {
+		t.Fatalf("report = %+v", report)
+	}
+
+	// Verify protocol.json is v4
+	protocolData, err := os.ReadFile(filepath.Join(destination, "protocol.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(protocolData), `"version": 4`) {
+		t.Fatalf("unexpected protocol version: %s", protocolData)
+	}
+
+	// Verify history.jsonl is populated
+	jsonlData, err := os.ReadFile(filepath.Join(destination, "topics", "dev", "tasks", "history.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(jsonlData)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines in history.jsonl, got %d:\n%s", len(lines), jsonlData)
+	}
+
+	var pub1, pub2 protocol.Publication
+	if err := json.Unmarshal([]byte(lines[0]), &pub1); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &pub2); err != nil {
+		t.Fatal(err)
+	}
+
+	if pub1.Sequence != 1 || pub1.Records[0].Text != "hello" {
+		t.Fatalf("pub1 = %+v", pub1)
+	}
+	if pub2.Sequence != 2 || pub2.Records[0].Text != "world" {
+		t.Fatalf("pub2 = %+v", pub2)
+	}
+
+	// Verify old structures do NOT exist
+	if _, err := os.Stat(filepath.Join(destination, "topics", "dev", "tasks", "head.json")); !os.IsNotExist(err) {
+		t.Fatal("head.json should not exist in v4")
+	}
+	if _, err := os.Stat(filepath.Join(destination, "topics", "dev", "tasks", "history")); !os.IsNotExist(err) {
+		t.Fatal("history/ directory should not exist in v4")
+	}
+}

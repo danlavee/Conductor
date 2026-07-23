@@ -37,12 +37,11 @@ func TestRegisterPutGetAndDiskState(t *testing.T) {
 	}
 
 	assertJSONFile(t, filepath.Join(home, "registry", "a.json"))
-	history, err := client.readHistory("messages/team")
+	_, err = client.readHistory("messages/team")
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertJSONFile(t, filepath.Join(home, "topics", "messages", "team", "history", indexName(history[0].Sequence)))
-	assertJSONFile(t, filepath.Join(home, "topics", "messages", "team", "head.json"))
+	assertJSONFile(t, filepath.Join(home, "topics", "messages", "team", "history.jsonl"))
 	assertJSONFile(t, filepath.Join(home, "state", "index.json"))
 	assertJSONFile(t, filepath.Join(home, "events", indexName(1)))
 	assertJSONFile(t, filepath.Join(home, "events", indexName(2)))
@@ -136,7 +135,7 @@ func TestRegistrationSnapshotFailureDoesNotCreateMembership(t *testing.T) {
 	if err := os.MkdirAll(resourceDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(resourceDir, "head.json"), []byte("not-json\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(resourceDir, "history.jsonl"), []byte("not-json\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Register("a", "dev"); err == nil {

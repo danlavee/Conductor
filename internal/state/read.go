@@ -1,11 +1,12 @@
 package state
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -138,61 +139,36 @@ func (c *Client) readHistory(topic string) ([]Publication, error) {
 	if err != nil {
 		return nil, err
 	}
-	var head struct {
-		Sequence int64 `json:"sequence"`
-	}
-	if err := readJSON(filepath.Join(dir, "head.json"), &head); errors.Is(err, os.ErrNotExist) {
-		entries, readErr := os.ReadDir(filepath.Join(dir, "history"))
-		if errors.Is(readErr, os.ErrNotExist) {
-			return nil, nil
-		}
-		if readErr != nil {
-			return nil, readErr
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
-				return nil, errors.New("topic history exists without a head")
-			}
-		}
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-	if head.Sequence <= 0 {
-		return nil, errors.New("invalid topic head state")
-	}
-	entries, err := os.ReadDir(filepath.Join(dir, "history"))
+	path := filepath.Join(dir, "history.jsonl")
+	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, errors.New("topic head exists without history")
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	result := make([]Publication, 0, len(entries))
-	seen := make(map[int64]bool, len(entries))
-	seenHead := false
-	for _, file := range entries {
-		if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
+	defer file.Close()
+
+	var result []Publication
+	scanner := bufio.NewScanner(file)
+	const maxTokenSize = 10 * 1024 * 1024
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, maxTokenSize)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
 			continue
 		}
 		var entry Publication
-		if err := readJSON(filepath.Join(dir, "history", file.Name()), &entry); err != nil {
-			return nil, err
+		if err := json.Unmarshal(line, &entry); err != nil {
+			return nil, fmt.Errorf("corrupt history entry: %w", err)
 		}
-		if entry.Sequence <= 0 || file.Name() != indexName(entry.Sequence) {
-			return nil, fmt.Errorf("invalid history identity in %s", file.Name())
-		}
-		if entry.Topic != topic || seen[entry.Sequence] || entry.Sequence > head.Sequence {
-			return nil, fmt.Errorf("invalid history entry %s", file.Name())
-		}
-		seen[entry.Sequence] = true
-		seenHead = seenHead || entry.Sequence == head.Sequence
 		result = append(result, entry)
 	}
-	if !seenHead {
-		return nil, fmt.Errorf("topic head %d has no history entry", head.Sequence)
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Sequence < result[j].Sequence })
 	return result, nil
 }
 

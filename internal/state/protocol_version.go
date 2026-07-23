@@ -11,7 +11,7 @@ import (
 )
 
 // CurrentProtocolVersion is the one on-disk state protocol this binary supports.
-const CurrentProtocolVersion = 3
+const CurrentProtocolVersion = 4
 
 const (
 	protocolFileName = "protocol.json"

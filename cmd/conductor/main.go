@@ -81,8 +81,10 @@ func run(args []string) error {
 			report, err = migrate.Run(args[1], args[2])
 		case 2:
 			report, err = migrate.RunV2ToV3(args[1], args[2])
+		case 3:
+			report, err = migrate.RunV3ToV4(args[1], args[2])
 		default:
-			err = fmt.Errorf("migrate supports v1 or v2 source roots, found protocol %d", version)
+			err = fmt.Errorf("migrate supports v1, v2 or v3 source roots, found protocol %d", version)
 		}
 		if err != nil {
 			return err

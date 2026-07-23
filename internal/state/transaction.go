@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -270,13 +271,7 @@ func (c *Client) commitTransaction(txn Transaction) (result Publication, err err
 	if err != nil {
 		return Publication{}, err
 	}
-	if err := os.MkdirAll(filepath.Join(topicDir, "history"), 0o700); err != nil {
-		return Publication{}, err
-	}
-	if err := writeJSONAtomic(filepath.Join(topicDir, "history", indexName(txn.Sequence)), result); err != nil {
-		return Publication{}, err
-	}
-	if err := writeJSONAtomic(filepath.Join(topicDir, "head.json"), map[string]int64{"sequence": txn.Sequence}); err != nil {
+	if err := appendJSONL(filepath.Join(topicDir, "history.jsonl"), result); err != nil {
 		return Publication{}, err
 	}
 	var recipients []string
@@ -394,4 +389,27 @@ func recordSlot(topic string, index int64) string {
 		return topic
 	}
 	return topic + "#" + strconv.FormatInt(index, 10)
+}
+
+func appendJSONL(path string, value interface{}) error {
+	bytes, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	bytes = append(bytes, '\n')
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write(bytes); err != nil {
+		return err
+	}
+	return f.Sync()
 }

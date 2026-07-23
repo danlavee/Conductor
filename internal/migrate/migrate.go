@@ -357,6 +357,199 @@ func RunV2ToV3(source, destination string) (Report, error) {
 	return report, nil
 }
 
+func RunV3ToV4(source, destination string) (Report, error) {
+	report := Report{FromVersion: 3, ToVersion: 4}
+	if !filepath.IsAbs(source) || !filepath.IsAbs(destination) {
+		return report, errors.New("migration source and destination must be absolute paths")
+	}
+	source, destination = filepath.Clean(source), filepath.Clean(destination)
+	report.Source, report.Destination = source, destination
+	if strings.EqualFold(source, destination) {
+		return report, errors.New("migration destination must differ from source")
+	}
+	if err := requireProtocol(source, 3); err != nil {
+		return report, err
+	}
+	if err := rejectTransactions(source); err != nil {
+		return report, err
+	}
+	destinationExists, err := requireEmptyDestination(destination)
+	if err != nil {
+		return report, err
+	}
+	parent := filepath.Dir(destination)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return report, err
+	}
+	stage, err := os.MkdirTemp(parent, ".conductor-migrate-*")
+	if err != nil {
+		return report, err
+	}
+	defer os.RemoveAll(stage)
+
+	// Initialize the target state root (Version 4)
+	if _, err := state.New(stage, ""); err != nil {
+		return report, err
+	}
+
+	// Copy everything except topics/ which we will migrate specially
+	err = filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		// Skip protocol.json (initialized automatically) and topics/
+		if rel == "protocol.json" || strings.HasPrefix(rel, "topics") {
+			if info.IsDir() && rel == "topics" {
+				// We still need the topics base folder in stage
+				return os.MkdirAll(filepath.Join(stage, "topics"), 0o700)
+			}
+			return nil
+		}
+
+		destPath := filepath.Join(stage, rel)
+		if info.IsDir() {
+			return os.MkdirAll(destPath, 0o700)
+		}
+
+		return copyFile(path, destPath)
+	})
+	if err != nil {
+		return report, err
+	}
+
+	// Migrate topics from source to stage
+	topicsDir := filepath.Join(source, "topics")
+	groups, err := os.ReadDir(topicsDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return report, err
+	}
+
+	topicCount := 0
+	recordCount := 0
+
+	for _, group := range groups {
+		if !group.IsDir() {
+			continue
+		}
+		groupPath := filepath.Join(topicsDir, group.Name())
+		topics, err := os.ReadDir(groupPath)
+		if err != nil {
+			return report, err
+		}
+
+		for _, topic := range topics {
+			if !topic.IsDir() {
+				continue
+			}
+			srcTopicDir := filepath.Join(groupPath, topic.Name())
+			destTopicDir := filepath.Join(stage, "topics", group.Name(), topic.Name())
+
+			if err := os.MkdirAll(destTopicDir, 0o700); err != nil {
+				return report, err
+			}
+
+			// Copy record-index.json if exists
+			srcRecordIndex := filepath.Join(srcTopicDir, "record-index.json")
+			if _, err := os.Stat(srcRecordIndex); err == nil {
+				if err := copyFile(srcRecordIndex, filepath.Join(destTopicDir, "record-index.json")); err != nil {
+					return report, err
+				}
+			}
+
+			// Read and migrate history to history.jsonl
+			srcHistoryDir := filepath.Join(srcTopicDir, "history")
+			entries, err := os.ReadDir(srcHistoryDir)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return report, err
+			}
+
+			var historyFiles []string
+			for _, entry := range entries {
+				if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+					historyFiles = append(historyFiles, entry.Name())
+				}
+			}
+			sort.Strings(historyFiles)
+
+			if len(historyFiles) > 0 {
+				destJSONLPath := filepath.Join(destTopicDir, "history.jsonl")
+				destJSONL, err := os.OpenFile(destJSONLPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+				if err != nil {
+					return report, err
+				}
+
+				for _, hFile := range historyFiles {
+					content, err := os.ReadFile(filepath.Join(srcHistoryDir, hFile))
+					if err != nil {
+						destJSONL.Close()
+						return report, err
+					}
+
+					var pub struct {
+						Sequence  int64             `json:"sequence"`
+						Topic     string            `json:"topic"`
+						Agent     string            `json:"agent"`
+						Timestamp time.Time         `json:"timestamp"`
+						Records   []protocol.Record `json:"records"`
+					}
+					if err := json.Unmarshal(content, &pub); err != nil {
+						destJSONL.Close()
+						return report, err
+					}
+
+					pubBytes, err := json.Marshal(pub)
+					if err != nil {
+						destJSONL.Close()
+						return report, err
+					}
+
+					pubBytes = append(pubBytes, '\n')
+					if _, err := destJSONL.Write(pubBytes); err != nil {
+						destJSONL.Close()
+						return report, err
+					}
+					recordCount += len(pub.Records)
+				}
+				destJSONL.Close()
+			}
+			topicCount++
+		}
+	}
+
+	report.Topics = topicCount
+	report.Records = recordCount
+
+	if destinationExists {
+		if err := os.Remove(destination); err != nil {
+			return report, err
+		}
+	}
+	if err := os.Rename(stage, destination); err != nil {
+		return report, err
+	}
+
+	return report, nil
+}
+
+func copyFile(src, dest string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(dest, data, 0o600)
+}
+
 type v2TranslationCounts struct {
 	cursors      int
 	events       int
