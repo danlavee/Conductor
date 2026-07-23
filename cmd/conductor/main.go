@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
 	"runtime/debug"
@@ -66,9 +67,21 @@ func run(args []string) error {
 		}{Version: currentVersion(), Protocol: conductor.CurrentProtocolVersion})
 	case "migrate":
 		if len(args) != 3 {
-			return errors.New("usage: conductor migrate <absolute-v1-root> <absolute-v2-root>")
+			return errors.New("usage: conductor migrate <absolute-source-root> <absolute-destination-root>")
 		}
-		report, err := migrate.Run(args[1], args[2])
+		version, err := migrate.DetectSourceVersion(args[1])
+		if err != nil {
+			return err
+		}
+		var report migrate.Report
+		switch version {
+		case 1:
+			report, err = migrate.Run(args[1], args[2])
+		case 2:
+			report, err = migrate.RunV2ToV3(args[1], args[2])
+		default:
+			err = fmt.Errorf("migrate supports v1 or v2 source roots, found protocol %d", version)
+		}
 		if err != nil {
 			return err
 		}
@@ -412,7 +425,7 @@ func parseGet(args []string) (conductor.ReadRequest, error) {
 }
 
 func usageError() error {
-	return errors.New("usage: conductor install <absolute-skill-directory> | conductor migrate <absolute-v1-root> <absolute-v2-root> | conductor version | conductor <agent> register <responsibility> | conductor <agent> deregister | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--codex | --codex-cli | --agy | --agy-cli | --claude-cli] [--mode=summary|content] | conductor <agent> channel claude")
+	return errors.New("usage: conductor install <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> register <responsibility> | conductor <agent> deregister | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--codex | --codex-cli | --agy | --agy-cli | --claude-cli] [--mode=summary|content] | conductor <agent> channel claude")
 }
 
 func installUsageError() error {

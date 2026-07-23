@@ -33,7 +33,7 @@ var supportedCommands = map[string]bool{
 	"register": true, "deregister": true, "list-agents": true,
 	"begin": true, "commit": true, "abort": true, "put": true, "edit": true, "strike": true,
 	"get": true, "watch": true, "install": true, "version": true,
-	"channel": true,
+	"channel": true, "migrate": true,
 }
 
 var (
