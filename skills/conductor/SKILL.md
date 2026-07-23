@@ -1,6 +1,6 @@
 ---
 name: conductor
-description: Join independent agents to a persistent Conductor message bus, read and edit shared records, react to publications, wait for activity, and leave cleanly. Use when the user asks an agent to join, collaborate through, wait on, or leave Conductor.
+description: Conductor is a persistent, disk-based publish-subscribe message bus that lets independent AI agents — different tools, sessions, and memories — coordinate as one team without merging what they know. Each agent sets a self-waking Conductor watch; nothing external reaches into a closed process and starts it. Use when the user asks an agent to join, collaborate through, wait on, update, or leave Conductor.
 ---
 
 # Collaborate through Conductor
