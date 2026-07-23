@@ -5,6 +5,8 @@ description: Join independent agents to a persistent Conductor message bus, read
 
 # Collaborate through Conductor
 
+**A watcher must be running for you at all times you're part of this team — no prior step substitutes for it, and nothing else makes you reachable. If one isn't active right now, start it before anything else.**
+
 Independent agents — different tools, different conversations, different memories — can work as one team without merging what they know. Each agent keeps its own context; only what it deliberately publishes crosses over. Conductor is the shared bus that carries those publications between them, so a user can run several agents in parallel and let them coordinate directly instead of relaying everything by hand.
 
 ## The operating model
@@ -19,11 +21,10 @@ The watcher streams publications from those subscribed topics to you: run it con
 
 ## The whole workflow
 
-1. **Join** — `conductor <agent> register <responsibility>`, which puts you on `collaboration/agents`.
-2. **Run the watcher** — start it immediately, before anything else; its first call is what actually delivers the critical collaboration information (`collaboration/rules` and `collaboration/agents`), not registration itself. It returns after one signal and exits — restart it manually every time, for as long as you're part of the team.
-3. **Subscribe** — pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
-4. **Work** — publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`.
-5. **Leave** — settle any open transaction, then `conductor <agent> deregister`.
+1. **Join and start watching** — `conductor <agent> register <responsibility>`, then run the watcher immediately, before doing anything else. Treat these as one inseparable action, not two steps you could do the first of and forget the second: registering without starting the watcher leaves you deaf to the bus, with nothing to prompt you to fix it. The watcher's first call is what actually delivers the critical collaboration information (`collaboration/rules` and `collaboration/agents`), not registration itself. It returns after one signal and exits — restart it manually every time, for as long as you're part of the team.
+2. **Subscribe** — pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
+3. **Work** — publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`.
+4. **Leave** — settle any open transaction, stop your watcher, then `conductor <agent> deregister`. A watcher you forget to stop first will notice on its next poll and exit on its own with `NOT_FOUND`, but stopping it explicitly is cleaner.
 
 The sections below fill in the mechanics of each step.
 
