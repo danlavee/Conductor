@@ -19,6 +19,10 @@ const (
 	SandboxEnvironment     = "CONDUCTOR_CODEX_SANDBOX"
 	CLIDeliveryEnvironment = "CONDUCTOR_CODEX_DELIVERY"
 	PermissionEnvironment  = "CODEX_PERMISSION_PROFILE"
+	// ThreadIDEnvironment is set by the Codex host itself, identifying the
+	// thread that watch --codex and --codex-cli should resume and deliver
+	// signals into.
+	ThreadIDEnvironment = "CODEX_THREAD_ID"
 )
 
 type WatchClient interface {
@@ -31,7 +35,7 @@ type Activator interface {
 	Activate(context.Context, string, string, conductor.Delivery) error
 }
 
-// Validate checks the explicit thread ID and agent name given on the command line.
+// Validate checks the thread ID (sourced from ThreadIDEnvironment) and agent name.
 func Validate(threadID, agent string) error {
 	if strings.TrimSpace(threadID) == "" {
 		return errors.New("Codex watch requires a thread ID")

@@ -13,9 +13,13 @@ import (
 
 const (
 	DeliveryEnvironment = "CONDUCTOR_CLAUDE_DELIVERY"
-	// LiveSessionEnvironment is set by the Claude Code host process itself,
-	// identifying the session the current, attended turn is running in.
+	// LiveSessionEnvironment is set by the Claude Code host itself, identifying
+	// the session the current, attended turn is running in.
 	LiveSessionEnvironment = "CLAUDE_CODE_SESSION_ID"
+	// TargetSessionEnvironment is set by the Claude Code host itself,
+	// identifying the session watch --claude-cli should resume and deliver
+	// signals into. Distinct from LiveSessionEnvironment.
+	TargetSessionEnvironment = "CLAUDE_SESSION_ID"
 )
 
 var transport = cliresume.Transport{
@@ -28,8 +32,8 @@ var transport = cliresume.Transport{
 	ValidateOutput:       cliresume.JSONOutputValidator(),
 }
 
-// Validate checks the explicit session ID and agent name given on the command
-// line, and refuses to target the live session this process is itself
+// Validate checks the session ID (sourced from TargetSessionEnvironment) and
+// agent name, and refuses to target the live session this process is itself
 // running in (see LiveSessionEnvironment, sourced by the caller).
 func Validate(sessionID, agent, liveSessionID string) error {
 	if err := transport.Validate(sessionID, agent); err != nil {

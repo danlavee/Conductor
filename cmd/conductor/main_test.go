@@ -260,7 +260,7 @@ func TestVersionDoesNotInitializeRuntime(t *testing.T) {
 
 func TestUsageExposesOnlyTwoCodexTransports(t *testing.T) {
 	message := usageError().Error()
-	for _, flag := range []string{"--codex <thread-id>", "--codex-cli <thread-id>"} {
+	for _, flag := range []string{"--codex", "--codex-cli"} {
 		if !strings.Contains(message, flag) {
 			t.Fatalf("usage omits %s: %s", flag, message)
 		}
@@ -358,7 +358,7 @@ func TestCodexWatchRequiresThreadID(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
 	t.Setenv("CONDUCTOR_HOME", state)
 	t.Setenv("CODEX_THREAD_ID", "")
-	err := run([]string{"a", "watch", "--codex", ""})
+	err := run([]string{"a", "watch", "--codex"})
 	if err == nil || !strings.Contains(err.Error(), "thread ID") {
 		t.Fatalf("error = %v, want missing thread ID", err)
 	}
@@ -366,10 +366,40 @@ func TestCodexWatchRequiresThreadID(t *testing.T) {
 
 func TestUsageExposesTwoAntigravityTransports(t *testing.T) {
 	message := usageError().Error()
-	for _, flag := range []string{"--agy <conversation-id>", "--agy-cli <conversation-id>"} {
+	for _, flag := range []string{"--agy", "--agy-cli"} {
 		if !strings.Contains(message, flag) {
 			t.Fatalf("usage omits %s: %s", flag, message)
 		}
+	}
+}
+
+func TestClaudeCLIWatchRejectsTrailingArguments(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	t.Setenv("CONDUCTOR_HOME", state)
+	t.Setenv("CLAUDE_SESSION_ID", "session-1")
+	if err := run([]string{"a", "watch", "--claude-cli", "extra"}); err == nil || err.Error() != usageError().Error() {
+		t.Fatalf("error = %v, want usage error", err)
+	}
+}
+
+func TestClaudeCLIWatchRequiresSessionIDEnvironment(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	t.Setenv("CONDUCTOR_HOME", state)
+	t.Setenv("CLAUDE_SESSION_ID", "")
+	err := run([]string{"a", "watch", "--claude-cli"})
+	if err == nil || !strings.Contains(err.Error(), "session ID") {
+		t.Fatalf("error = %v, want missing session ID", err)
+	}
+}
+
+func TestClaudeCLIWatchRefusesSelfTargetingTheLiveSession(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	t.Setenv("CONDUCTOR_HOME", state)
+	t.Setenv("CLAUDE_SESSION_ID", "session-1")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "session-1")
+	err := run([]string{"a", "watch", "--claude-cli"})
+	if err == nil || !strings.Contains(err.Error(), "live session") {
+		t.Fatalf("error = %v, want a live-session refusal", err)
 	}
 }
 

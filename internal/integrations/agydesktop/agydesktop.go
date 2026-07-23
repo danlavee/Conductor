@@ -14,13 +14,18 @@ import (
 	"github.com/danlavee/Conductor/internal/integrations/execlocate"
 )
 
+// ConversationIDEnvironment is set by the Antigravity host itself, identifying
+// the conversation that watch --agy and --agy-cli should resume and deliver
+// signals into.
+const ConversationIDEnvironment = "ANTIGRAVITY_CONVERSATION_ID"
+
 type WatchClient interface {
 	WatchContext(context.Context) (conductor.Summary, error)
 	ResolveDelivery(conductor.Summary, conductor.DeliveryMode) (conductor.Delivery, error)
 	AcknowledgeDelivery(conductor.Delivery) error
 }
 
-// Validate checks the explicit conversation ID and agent name given on the command line.
+// Validate checks the conversation ID (sourced from ConversationIDEnvironment) and agent name.
 func Validate(conversationID, agent string) error {
 	if strings.TrimSpace(conversationID) == "" {
 		return errors.New("Antigravity watch requires a conversation ID")

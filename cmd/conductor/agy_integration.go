@@ -9,7 +9,8 @@ import (
 	"github.com/danlavee/Conductor/internal/integrations/agydesktop"
 )
 
-func runAgyWatchCommand(ctx context.Context, client *conductor.Client, agent, conversationID string, mode conductor.DeliveryMode) error {
+func runAgyWatchCommand(ctx context.Context, client *conductor.Client, agent string, mode conductor.DeliveryMode) error {
+	conversationID := os.Getenv(agydesktop.ConversationIDEnvironment)
 	if err := agydesktop.Validate(conversationID, agent); err != nil {
 		return err
 	}
@@ -29,7 +30,8 @@ func runAgyWatchCommand(ctx context.Context, client *conductor.Client, agent, co
 	return agydesktop.Run(ctx, client, activator, conversationID, agent, mode)
 }
 
-func runAgyCLIWatchCommand(ctx context.Context, client *conductor.Client, agent, conversationID string, mode conductor.DeliveryMode) error {
+func runAgyCLIWatchCommand(ctx context.Context, client *conductor.Client, agent string, mode conductor.DeliveryMode) error {
+	conversationID := os.Getenv(agydesktop.ConversationIDEnvironment)
 	if err := agycli.Validate(conversationID, agent); err != nil {
 		return err
 	}

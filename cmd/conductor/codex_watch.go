@@ -8,7 +8,8 @@ import (
 	"github.com/danlavee/Conductor/internal/integrations/codex"
 )
 
-func runCodexWatchCommand(ctx context.Context, client *conductor.Client, agent, threadID string, mode conductor.DeliveryMode) error {
+func runCodexWatchCommand(ctx context.Context, client *conductor.Client, agent string, mode conductor.DeliveryMode) error {
+	threadID := os.Getenv(codex.ThreadIDEnvironment)
 	if err := codex.Validate(threadID, agent); err != nil {
 		return err
 	}
@@ -29,7 +30,8 @@ func runCodexWatchCommand(ctx context.Context, client *conductor.Client, agent, 
 	return codex.Run(ctx, client, session, threadID, agent, mode)
 }
 
-func runCodexCLIWatchCommand(ctx context.Context, client *conductor.Client, agent, threadID string, mode conductor.DeliveryMode) error {
+func runCodexCLIWatchCommand(ctx context.Context, client *conductor.Client, agent string, mode conductor.DeliveryMode) error {
+	threadID := os.Getenv(codex.ThreadIDEnvironment)
 	if err := codex.Validate(threadID, agent); err != nil {
 		return err
 	}

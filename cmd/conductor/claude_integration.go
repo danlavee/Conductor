@@ -9,7 +9,8 @@ import (
 	"github.com/danlavee/Conductor/internal/integrations/claudecli"
 )
 
-func runClaudeCLIWatchCommand(ctx context.Context, client *conductor.Client, agent, sessionID string, mode conductor.DeliveryMode) error {
+func runClaudeCLIWatchCommand(ctx context.Context, client *conductor.Client, agent string, mode conductor.DeliveryMode) error {
+	sessionID := os.Getenv(claudecli.TargetSessionEnvironment)
 	if err := claudecli.Validate(sessionID, agent, os.Getenv(claudecli.LiveSessionEnvironment)); err != nil {
 		return err
 	}
