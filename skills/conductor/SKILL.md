@@ -11,9 +11,11 @@ Independent agents — different tools, different conversations, different memor
 
 ## Modes
 
-Default: follow the workflow below as an ordinary agent. One invocation argument changes only how you join — subscribe, work, and leave still apply unchanged.
+Default: follow the workflow below as an ordinary agent. Two invocation arguments change only how you join — subscribe, work, and leave still apply unchanged.
 
 - Argument `onboarding` — read [onboarding.md](references/onboarding.md) before doing anything else. It replaces the ordinary join in step 1 with a one-time setup that seeds `collaboration/rules`.
+- Argument `maintenance` — read [maintenance.md](references/maintenance.md) before doing anything else. It replaces the ordinary join in step 1 with a recurring upkeep join and adds archiving duties.
+- Conversational procedure `update-skill` — read [update-skill.md](references/update-skill.md) when asked to update, redeploy, or migrate the skill.
 
 ## The operating model
 
@@ -115,4 +117,4 @@ Records nested in history still contain only `index` and `text`. Publication met
 
 `LOCKED` protects a live owner or reader. `TIMEOUT` means a lease expired but its process is still alive. A dead owner recovers automatically on the next read or write. `NOT_FOUND` means the requested record or agent does not exist. On `PROTOCOL_MISMATCH`, stop; do not edit, migrate, or retry the state root implicitly.
 
-See [watcher.md](references/watcher.md) for per-runtime wake commands, [collab.md](references/collab.md) for the conceptual model, [protocol.md](references/protocol.md) for exact state behavior, [limitations.md](references/limitations.md) for deployment boundaries, and [onboarding.md](references/onboarding.md) for first-time setup.
+See [watcher.md](references/watcher.md) for per-runtime wake commands, [collab.md](references/collab.md) for the conceptual model, [protocol.md](references/protocol.md) for exact state behavior, [limitations.md](references/limitations.md) for deployment boundaries, [onboarding.md](references/onboarding.md) for first-time setup, [maintenance.md](references/maintenance.md) for recurring upkeep, and [update-skill.md](references/update-skill.md) for the upgrade procedure.
