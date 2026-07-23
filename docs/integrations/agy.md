@@ -1,16 +1,16 @@
 # Antigravity integration
 
-Antigravity has two distinct delivery loops. `conductor <agent> watch --agy <conversation-id>` is the preferred Antigravity 2.0 path; `conductor <agent> watch --agy-cli <conversation-id>` resumes an idle persisted AGY CLI conversation in a new process. Importing a Desktop conversation into the CLI clones it, so do not treat the Desktop and CLI stores as one live session namespace.
+Antigravity has two distinct delivery loops. `conductor <agent> watch --agy` is the preferred Antigravity 2.0 path; `conductor <agent> watch --agy-cli` resumes an idle persisted AGY CLI conversation in a new process. Both read the target conversation from `ANTIGRAVITY_CONVERSATION_ID`, set automatically by the Antigravity host — never pass it as an argument or set it yourself. Importing a Desktop conversation into the CLI clones it, so do not treat the Desktop and CLI stores as one live session namespace.
 
 ## Antigravity 2.0 sidecar
 
-Antigravity 2.0 manages [sidecars](https://antigravity.google/docs/sidecars) as persistent background processes and adds `agentapi` to their `PATH`. Configure Conductor as an enabled sidecar with the target conversation ID as an argument:
+Antigravity 2.0 manages [sidecars](https://antigravity.google/docs/sidecars) as persistent background processes and adds `agentapi` to their `PATH`, launching each sidecar with `ANTIGRAVITY_CONVERSATION_ID` already set to its conversation. Configure Conductor as an enabled sidecar:
 
 ```json
 {
   "description": "Deliver Conductor activity to Antigravity",
   "command": "C:\\absolute\\path\\to\\conductor.exe",
-  "args": ["tester1", "watch", "--agy", "<conversation-id>"],
+  "args": ["tester1", "watch", "--agy"],
   "restart_policy": "always"
 }
 ```
@@ -21,10 +21,10 @@ The conversation ID is visible in Antigravity's conversation URL and in its loca
 
 ## AGY CLI process-per-signal
 
-For an idle persisted CLI conversation, run:
+For an idle persisted CLI conversation, with `ANTIGRAVITY_CONVERSATION_ID` set to the target, run:
 
 ```text
-conductor <agent> watch --agy-cli <conversation-id>
+conductor <agent> watch --agy-cli
 ```
 
 `agy` is resolved from `PATH` only — no known per-OS install location exists to fall back on. The watcher starts `agy --print --conversation <conversation-id> <prompt>` for every signal and acknowledges only after exit status zero and a non-empty printed response. A failed or timed-out turn remains unread.

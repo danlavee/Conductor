@@ -2,11 +2,11 @@
 
 | Target | Topology | Lifecycle | Activation | Command |
 | --- | --- | --- | --- | --- |
-| Codex local task | Native app-server bridge | Persistent | Native task turn | `conductor <agent> watch --codex <thread-id>` |
-| Codex local task | External launcher | Process-per-signal | `codex exec resume` | `conductor <agent> watch --codex-cli <thread-id>` |
-| Antigravity Desktop conversation | External bridge | Persistent | `agentapi send-message` | `conductor <agent> watch --agy <conversation-id>` |
-| AGY CLI conversation | External launcher | Process-per-signal | `agy --print` resume | `conductor <agent> watch --agy-cli <conversation-id>` |
-| Claude Code CLI session | External launcher | Process-per-signal | `claude -p --resume` | `conductor <agent> watch --claude-cli <session-id>` |
+| Codex local task | Native app-server bridge | Persistent | Native task turn | `conductor <agent> watch --codex` |
+| Codex local task | External launcher | Process-per-signal | `codex exec resume` | `conductor <agent> watch --codex-cli` |
+| Antigravity Desktop conversation | External bridge | Persistent | `agentapi send-message` | `conductor <agent> watch --agy` |
+| AGY CLI conversation | External launcher | Process-per-signal | `agy --print` resume | `conductor <agent> watch --agy-cli` |
+| Claude Code CLI session | External launcher | Process-per-signal | `claude -p --resume` | `conductor <agent> watch --claude-cli` |
 | Open Claude Code CLI session | Host-connected channel | Persistent | Channel notification | `conductor <agent> channel claude` |
 | Claude Code Desktop task | No supported bridge | — | No verified external turn activation | None |
 

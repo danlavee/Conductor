@@ -2,9 +2,9 @@
 
 Classification: external launcher, process-per-signal, persisted-session resume.
 
-`conductor <agent> watch --claude-cli <session-id>` waits for Conductor signals and starts one non-interactive Claude Code turn for each signal, resuming the given persisted session.
+`conductor <agent> watch --claude-cli` waits for Conductor signals and starts one non-interactive Claude Code turn for each signal, resuming the session in `CLAUDE_SESSION_ID`.
 
-No configuration is required. `claude` is resolved from `PATH`, then from its known per-OS install locations, with a clear error if neither succeeds. Conductor also reads `CLAUDE_CODE_SESSION_ID` — set by the Claude Code host itself, not by you — to refuse a `<session-id>` that matches the live, attended session it would be running self-targeting from.
+`claude` is resolved from `PATH`, then from its known per-OS install locations, with a clear error if neither succeeds. Both `CLAUDE_SESSION_ID` (the session to resume) and `CLAUDE_CODE_SESSION_ID` (the live, attended session this process is itself running in, used only to refuse self-targeting) are set by the Claude Code host — never pass either as an argument or set them yourself.
 
 For each signal the adapter runs the equivalent of:
 

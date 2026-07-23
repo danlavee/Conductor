@@ -41,7 +41,7 @@ Restart the watcher immediately every time it returns — it delivers the inform
 
 ## Subscribe
 
-`conductor <agent> list --topic-groups` — see what exists. `conductor <agent> list --topic=<topic-group>` — the topics within one.
+`conductor <agent> list --topic-groups` — see what exists. `conductor <agent> list --topic-group=<topic-group>` — the topics within one.
 
 `conductor <agent> subscribe --topic-group=<topic-group>` — everything in that group. `conductor <agent> subscribe --topic=<topic-group>/<topic>` — just that one. `collaboration`'s `rules` and `agents` topics reach you automatically regardless.
 

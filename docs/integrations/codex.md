@@ -7,10 +7,12 @@ Codex has two distinct delivery modes.
 
 Bare `conductor watch` is invalid because it does not identify a delivery mode.
 
+Both modes resume the task in `CODEX_THREAD_ID`, set automatically by the Codex host — never pass it as an argument or set it yourself.
+
 ## Native app-server delivery
 
 ```text
-conductor <agent> watch --codex <thread-id>
+conductor <agent> watch --codex
 ```
 
 This starts one Codex app-server session, resumes the target task, and waits persistently. For every Conductor signal it starts a native task turn containing the exact signal, waits for `turn/completed`, acknowledges the signal, and continues watching. A delivery failure remains unacknowledged.
@@ -18,7 +20,7 @@ This starts one Codex app-server session, resumes the target task, and waits per
 ## Process-per-signal transport
 
 ```text
-conductor <agent> watch --codex-cli <thread-id>
+conductor <agent> watch --codex-cli
 ```
 
 This starts a new process for every signal, equivalent to:
@@ -37,6 +39,7 @@ Both modes own the identity's watch — do not start another for the same agent.
 
 | Variable | Meaning |
 | --- | --- |
+| `CODEX_THREAD_ID` | Set by the Codex host; the task both `--codex` and `--codex-cli` resume |
 | `CONDUCTOR_CODEX_SANDBOX` | Optional sandbox policy: `read-only`, `workspace-write`, or `danger-full-access` |
 | `CODEX_PERMISSION_PROFILE` | Legacy alias for the same policy; `CONDUCTOR_CODEX_SANDBOX` wins if both are set |
 
