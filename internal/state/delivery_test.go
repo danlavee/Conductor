@@ -23,13 +23,9 @@ func TestSummaryAcknowledgesReferencedTopicChange(t *testing.T) {
 	if _, err := client.SubscribeTopic("messages/team"); err != nil {
 		t.Fatal(err)
 	}
-	join, err := client.Watch()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.AcknowledgeSummary(join); err != nil {
-		t.Fatal(err)
-	}
+	// Drain the collaboration/agents roster commit and the join signal
+	// registration itself produces before exercising the messages/team delta.
+	drainSummaries(t, client, 2)
 	if _, err := client.Put("messages/team", "hello"); err != nil {
 		t.Fatal(err)
 	}
@@ -63,15 +59,11 @@ func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 	if _, err := writer.Register("writer", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		summary, err := reader.Watch()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := reader.AcknowledgeSummary(summary); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// Each registration (reader's own, then writer's, forced-broadcast to
+	// every registered agent including reader) produces a collaboration/agents
+	// roster commit and a join signal: drain all four before exercising the
+	// dev/tasks delta below.
+	drainSummaries(t, reader, 4)
 	if err := writer.Begin("dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +98,10 @@ func TestContentJoinCarriesRoster(t *testing.T) {
 	if _, err := client.Register("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
+	// The first signal is the collaboration/agents roster commit itself
+	// (an "update", which resolves to a Delta); the join signal that
+	// carries the roster follows it.
+	drainSummaries(t, client, 1)
 	summary, err := client.Watch()
 	if err != nil {
 		t.Fatal(err)

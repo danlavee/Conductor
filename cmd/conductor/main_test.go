@@ -128,7 +128,10 @@ func TestRecordOperationProcessVisibilityBoundary(t *testing.T) {
 		if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development"); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Mkdir(filepath.Join(state, "events", fmt.Sprintf("%020d.json", 2)), 0o700); err != nil {
+		// Registration itself already consumes global sequences 1 (the
+		// collaboration/agents roster commit) and 2 (join); the put below
+		// lands its own event at 3.
+		if err := os.Mkdir(filepath.Join(state, "events", fmt.Sprintf("%020d.json", 3)), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "visible")

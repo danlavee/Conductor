@@ -35,6 +35,9 @@ func (c *Client) Register(name, responsibility string) (snapshot Snapshot, err e
 			return Snapshot{}, &ProtocolError{Code: "LOCKED", Agent: name, Text: "agent name is already registered with another responsibility"}
 		}
 		c.Agent = name
+		if err := c.ensureRosterRecord(name, responsibility); err != nil {
+			return Snapshot{}, err
+		}
 		latest, err := c.latestMembershipType(name)
 		if err != nil {
 			return Snapshot{}, err
@@ -54,6 +57,10 @@ func (c *Client) Register(name, responsibility string) (snapshot Snapshot, err e
 		return Snapshot{}, err
 	}
 	if err := writeJSONAtomic(c.subscriptionPath(name), Subscription{TopicGroups: []string{}, Topics: []string{}}); err != nil {
+		_ = removeEventually(registrationPath)
+		return Snapshot{}, err
+	}
+	if err := c.ensureRosterRecord(name, responsibility); err != nil {
 		_ = removeEventually(registrationPath)
 		return Snapshot{}, err
 	}
@@ -104,6 +111,12 @@ func (c *Client) Deregister(name string) (err error) {
 		return &ProtocolError{Code: "LOCKED", Agent: name, Text: "agent has an active transaction; commit or abort it before deregistering"}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return statErr
+	}
+	// Strike the roster record before removing anything else, so a crash
+	// partway through deregistration never leaves the collaboration/agents
+	// index mapping unreachable.
+	if err := c.strikeRosterRecord(name); err != nil {
+		return err
 	}
 	if err := removeEventually(path); err != nil {
 		return err
@@ -249,4 +262,109 @@ func (c *Client) acquireMembership(agent string) error {
 			time.Sleep(5 * time.Millisecond)
 		}
 	}
+}
+
+// rosterIndexRecord is the durable mapping from a registered agent's name to
+// its record index on the collaboration/agents topic. It lives outside
+// registry/ (which ListAgents enumerates as agent identity files) and
+// outside the topic history itself (record indexes are Conductor-assigned
+// and carry no agent identity of their own), so recovering "which index is
+// mine" after a crash needs this small side-index rather than a scan of
+// topic text.
+type rosterIndexRecord struct {
+	Index int64 `json:"index"`
+}
+
+func (r *rosterIndexRecord) validate() error {
+	if r.Index <= 0 {
+		return errors.New("invalid collaboration/agents index state")
+	}
+	return nil
+}
+
+func (c *Client) rosterIndexPath(agent string) string {
+	return filepath.Join(c.Home, "state", "collaboration-agents-index", agent+".json")
+}
+
+func (c *Client) loadRosterIndex(agent string) (int64, error) {
+	var record rosterIndexRecord
+	err := readJSON(c.rosterIndexPath(agent), &record)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return record.Index, nil
+}
+
+func (c *Client) saveRosterIndex(agent string, index int64) error {
+	return writeJSONAtomic(c.rosterIndexPath(agent), rosterIndexRecord{Index: index})
+}
+
+func (c *Client) removeRosterIndex(agent string) error {
+	return removeEventually(c.rosterIndexPath(agent))
+}
+
+func rosterText(name, responsibility string) string {
+	return name + ": " + responsibility
+}
+
+// ensureRosterRecord makes sure name has a current record on
+// collaboration/agents, publishing one if (and only if) the durable index
+// mapping shows none exists yet. It is idempotent so Register can call it
+// both for a brand-new agent and when repairing a partially completed
+// registration. The caller must already hold the agent's membership lock and
+// have c.Agent set to name.
+func (c *Client) ensureRosterRecord(name, responsibility string) error {
+	index, err := c.loadRosterIndex(name)
+	if err != nil {
+		return err
+	}
+	if index > 0 {
+		return nil
+	}
+	if err := c.beginLocked(name, collaborationAgentsTopic); err != nil {
+		return err
+	}
+	record, err := c.StagePut(rosterText(name, responsibility))
+	if err != nil {
+		if abortErr := c.Abort(); abortErr != nil {
+			return errors.Join(err, abortErr)
+		}
+		return err
+	}
+	if _, err := c.commit(); err != nil {
+		return err
+	}
+	return c.saveRosterIndex(name, record.Index)
+}
+
+// strikeRosterRecord strikes name's current collaboration/agents record, if
+// the durable index mapping still shows one exists, and then clears the
+// mapping. It is a no-op when no record is known (nothing was ever
+// published, or a previous call already struck and cleared it). The caller
+// must already hold the agent's membership lock and have c.Agent set to
+// name.
+func (c *Client) strikeRosterRecord(name string) error {
+	index, err := c.loadRosterIndex(name)
+	if err != nil {
+		return err
+	}
+	if index == 0 {
+		return nil
+	}
+	if err := c.beginLocked(name, collaborationAgentsTopic); err != nil {
+		return err
+	}
+	if _, err := c.StageStrike(index); err != nil {
+		if abortErr := c.Abort(); abortErr != nil {
+			return errors.Join(err, abortErr)
+		}
+		return err
+	}
+	if _, err := c.commit(); err != nil {
+		return err
+	}
+	return c.removeRosterIndex(name)
 }

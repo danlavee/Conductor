@@ -313,7 +313,10 @@ func TestOneShotReturnsRecordWhenSettlementFailsAfterVisibility(t *testing.T) {
 	if _, err := client.Register("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
-	eventPath := filepath.Join(home, "events", indexName(2))
+	// Registration itself already consumes global sequences 1 (the
+	// collaboration/agents roster commit) and 2 (join); this Put's own event
+	// lands at 3.
+	eventPath := filepath.Join(home, "events", indexName(3))
 	if err := os.Mkdir(eventPath, 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -56,3 +56,20 @@ func assertCode(t *testing.T, err error, code string) {
 		t.Fatalf("error = %v, want protocol code %s", err, code)
 	}
 }
+
+// drainSummaries watches and immediately acknowledges count pending
+// summaries. Tests use it to skip past the collaboration/agents and join
+// signals a fresh Register produces, when what they actually want to
+// exercise starts afterward.
+func drainSummaries(t *testing.T, client *Client, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		summary, err := client.Watch()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := client.AcknowledgeSummary(summary); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

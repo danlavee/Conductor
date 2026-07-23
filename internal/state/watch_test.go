@@ -49,29 +49,25 @@ func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 	if _, err := client.Register("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	join, err := client.Watch()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.AcknowledgeSummary(join); err != nil {
-		t.Fatal(err)
-	}
+	// Drain the collaboration/agents roster commit and the join signal
+	// registration itself produces before exercising late-delivery ordering.
+	drainSummaries(t, client, 2)
 	recipients := []string{"a"}
-	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 3, Agent: "a"}, Recipients: recipients}); err != nil {
+	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 103, Agent: "a"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
 	higher, err := client.Watch()
-	if err != nil || higher.Sequence != 3 {
+	if err != nil || higher.Sequence != 103 {
 		t.Fatalf("higher signal = %#v, %v", higher, err)
 	}
 	if err := client.AcknowledgeSummary(higher); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 2, Agent: "a"}, Recipients: recipients}); err != nil {
+	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 102, Agent: "a"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
 	late, err := client.Watch()
-	if err != nil || late.Sequence != 2 {
+	if err != nil || late.Sequence != 102 {
 		t.Fatalf("late lower signal was skipped: %#v, %v", late, err)
 	}
 }
@@ -134,13 +130,9 @@ func TestWatchReconcilesJournalWhenInboxAppendIsMissing(t *testing.T) {
 	if _, err := client.Register("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	join, err := client.Watch()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.AcknowledgeSummary(join); err != nil {
-		t.Fatal(err)
-	}
+	// Drain the collaboration/agents roster commit and the join signal
+	// registration itself produces before exercising journal reconciliation.
+	drainSummaries(t, client, 2)
 	index, err := client.nextIndex()
 	if err != nil {
 		t.Fatal(err)

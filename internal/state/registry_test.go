@@ -167,15 +167,26 @@ func TestConcurrentRegisterAndDeregisterStayOrdered(t *testing.T) {
 		}
 	}
 	events, err := initial.unreadEvents(nil)
-	if err != nil || len(events) < 2 || len(events) > 3 {
-		t.Fatalf("events = %#v, %v", events, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if events[0].Summary.Type != "join" || events[1].Summary.Type != "leave" || len(events) == 3 && events[2].Summary.Type != "join" {
-		t.Fatalf("membership events are not ordered: %#v", events)
+	// collaboration/agents roster commits are interleaved with the registry
+	// join/leave events being tested here; filter to membership events only.
+	membership := make([]Event, 0, len(events))
+	for _, event := range events {
+		if event.Summary.Topic == "registry" {
+			membership = append(membership, event)
+		}
+	}
+	if len(membership) < 2 || len(membership) > 3 {
+		t.Fatalf("membership events = %#v", membership)
+	}
+	if membership[0].Summary.Type != "join" || membership[1].Summary.Type != "leave" || len(membership) == 3 && membership[2].Summary.Type != "join" {
+		t.Fatalf("membership events are not ordered: %#v", membership)
 	}
 	_, statErr := os.Stat(filepath.Join(home, "registry", "same.json"))
 	present := statErr == nil
-	lastType := events[len(events)-1].Summary.Type
+	lastType := membership[len(membership)-1].Summary.Type
 	if present != (lastType == "join") {
 		t.Fatalf("registry present=%v but last membership event=%s", present, lastType)
 	}

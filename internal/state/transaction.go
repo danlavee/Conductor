@@ -10,6 +10,22 @@ import (
 	"time"
 )
 
+// collaborationRulesTopic and collaborationAgentsTopic are the two topics the
+// collaboration group always broadcasts to every registered agent, with no
+// subscription and no opt-out (see forcedBroadcastTopic).
+const (
+	collaborationRulesTopic  = "collaboration/rules"
+	collaborationAgentsTopic = "collaboration/agents"
+)
+
+// forcedBroadcastTopic reports whether a topic bypasses subscription-based
+// recipient selection and reaches every registered agent unconditionally.
+// Only these two exact topics are special; the rest of the collaboration
+// group (and everything else) stays subscription-gated as normal.
+func forcedBroadcastTopic(topic string) bool {
+	return topic == collaborationRulesTopic || topic == collaborationAgentsTopic
+}
+
 // Begin acquires one topic lease and creates a durable empty transaction.
 func (c *Client) Begin(topic string) (err error) {
 	if err := c.validateProtocol(); err != nil {
@@ -27,6 +43,15 @@ func (c *Client) Begin(topic string) (err error) {
 			err = releaseErr
 		}
 	}()
+	return c.beginLocked(agent, topic)
+}
+
+// beginLocked performs Begin's work for a caller that already holds the
+// agent's membership lock (Register and Deregister, while durably publishing
+// the collaboration/agents roster record for that same agent). Calling Begin
+// itself from there would deadlock re-acquiring a lock the caller already
+// holds.
+func (c *Client) beginLocked(agent, topic string) error {
 	if _, err := c.requireAgent(); err != nil {
 		return err
 	}
@@ -254,7 +279,12 @@ func (c *Client) commitTransaction(txn Transaction) (result Publication, err err
 	if err := writeJSONAtomic(filepath.Join(topicDir, "head.json"), map[string]int64{"sequence": txn.Sequence}); err != nil {
 		return Publication{}, err
 	}
-	recipients, err := c.subscribedRecipientNames(txn.Topic)
+	var recipients []string
+	if forcedBroadcastTopic(txn.Topic) {
+		recipients, err = c.recipientNames()
+	} else {
+		recipients, err = c.subscribedRecipientNames(txn.Topic)
+	}
 	if err != nil {
 		return result, err
 	}
