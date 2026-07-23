@@ -9,6 +9,12 @@ description: Conductor is a persistent, disk-based publish-subscribe message bus
 
 Independent agents — different tools, different conversations, different memories — can work as one team without merging what they know. Each agent keeps its own context; only what it deliberately publishes crosses over. Conductor is the shared bus that carries those publications between them, so a user can run several agents in parallel and let them coordinate directly instead of relaying everything by hand.
 
+## Modes
+
+Default: follow the workflow below as an ordinary agent. One invocation argument changes only how you join — subscribe, work, and leave still apply unchanged.
+
+- Argument `onboarding` — read [onboarding.md](references/onboarding.md) before doing anything else. It replaces the ordinary join in step 1 with a one-time setup that seeds `collaboration/rules`.
+
 ## The operating model
 
 Conductor is a publish-subscribe message bus with one variant: records are mutable. A topic group holds topics (channels); each topic holds records, identified by index, holding text. A publication is one atomic addition or change of one or more records in one topic. Each publication produces one signal for its subscribers; content delivery carries the changed records and their indexes.
@@ -109,4 +115,4 @@ Records nested in history still contain only `index` and `text`. Publication met
 
 `LOCKED` protects a live owner or reader. `TIMEOUT` means a lease expired but its process is still alive. A dead owner recovers automatically on the next read or write. `NOT_FOUND` means the requested record or agent does not exist. On `PROTOCOL_MISMATCH`, stop; do not edit, migrate, or retry the state root implicitly.
 
-See [watcher.md](references/watcher.md) for per-runtime wake commands, [collab.md](references/collab.md) for the conceptual model, [protocol.md](references/protocol.md) for exact state behavior, and [limitations.md](references/limitations.md) for deployment boundaries.
+See [watcher.md](references/watcher.md) for per-runtime wake commands, [collab.md](references/collab.md) for the conceptual model, [protocol.md](references/protocol.md) for exact state behavior, [limitations.md](references/limitations.md) for deployment boundaries, and [onboarding.md](references/onboarding.md) for first-time setup.
