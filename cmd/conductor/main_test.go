@@ -107,6 +107,84 @@ func TestRecordOperationProcessContract(t *testing.T) {
 	}
 }
 
+func TestPutFileBulkLoadsAsOneTransaction(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development"); err != nil {
+		t.Fatal(err)
+	}
+	jsonlPath := filepath.Join(t.TempDir(), "rules.jsonl")
+	content := "\"first\"\n\n\"second\"\n\"third\"\n"
+	if err := os.WriteFile(jsonlPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "--file="+jsonlPath)
+	if err != nil || len(stderr) != 0 || len(stdout) == 0 {
+		t.Fatalf("bulk put error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
+	}
+	var publication conductor.Publication
+	if err := json.Unmarshal(stdout, &publication); err != nil {
+		t.Fatalf("stdout is not a publication: %q: %v", stdout, err)
+	}
+	if publication.Topic != "messages/team" || len(publication.Records) != 3 {
+		t.Fatalf("publication = %#v", publication)
+	}
+	for want, record := range map[int]string{0: "first", 1: "second", 2: "third"} {
+		if publication.Records[want].Index != int64(want+1) || publication.Records[want].Text != record {
+			t.Fatalf("record %d = %#v, want index %d text %q", want, publication.Records[want], want+1, record)
+		}
+	}
+
+	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "get", "messages/team", "--full")
+	if err != nil || len(stderr) != 0 {
+		t.Fatalf("get error = %v, stderr = %q", err, stderr)
+	}
+	var full conductor.ReadResult
+	if err := json.Unmarshal(stdout, &full); err != nil {
+		t.Fatalf("stdout is not a read result: %q: %v", stdout, err)
+	}
+	if len(full.Records) != 3 {
+		t.Fatalf("full records = %#v, want exactly the 3 bulk-loaded records (one publish signal)", full.Records)
+	}
+}
+
+func TestPutFileMalformedLineAbortsWithoutPartialRecords(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "register", "development"); err != nil {
+		t.Fatal(err)
+	}
+	jsonlPath := filepath.Join(t.TempDir(), "bad.jsonl")
+	content := "\"first\"\n42\n\"third\"\n"
+	if err := os.WriteFile(jsonlPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "--file="+jsonlPath)
+	if err == nil || len(stdout) != 0 || len(stderr) == 0 {
+		t.Fatalf("malformed bulk put error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
+	}
+
+	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "get", "messages/team", "--full")
+	if err != nil || len(stderr) != 0 {
+		t.Fatalf("get error = %v, stderr = %q", err, stderr)
+	}
+	var full conductor.ReadResult
+	if err := json.Unmarshal(stdout, &full); err != nil {
+		t.Fatalf("stdout is not a read result: %q: %v", stdout, err)
+	}
+	if len(full.Records) != 0 {
+		t.Fatalf("full records = %#v, want none after aborted bulk load", full.Records)
+	}
+
+	// The failed bulk load must not leave a dangling transaction/lock behind:
+	// a fresh begin on the same topic must succeed immediately.
+	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "begin", "messages/team")
+	if err != nil || len(stderr) != 0 || len(stdout) == 0 {
+		t.Fatalf("begin after aborted bulk load error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
+	}
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "abort"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRecordOperationProcessVisibilityBoundary(t *testing.T) {
 	t.Run("before-head", func(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "runtime-state")

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -191,6 +193,18 @@ func run(args []string) error {
 		}
 		return conductor.WriteJSON(os.Stdout, map[string]bool{"aborted": true})
 	case "put":
+		if len(rest) == 2 {
+			if path, ok := strings.CutPrefix(rest[1], "--file="); ok {
+				if path == "" {
+					return usageError()
+				}
+				publication, err := putFile(client, rest[0], path)
+				if err != nil {
+					return err
+				}
+				return conductor.WriteJSON(os.Stdout, publication)
+			}
+		}
 		var result conductor.Record
 		var err error
 		if len(rest) == 1 {
@@ -291,6 +305,57 @@ func run(args []string) error {
 	default:
 		return usageError()
 	}
+}
+
+// putFile bulk-loads a JSONL file (one JSON-encoded string per line, blank
+// lines skipped) into topic as a single atomic transaction: one Begin, one
+// StagePut per decoded line, one Commit — so subscribers see exactly one
+// publish signal covering every line, the same as a manual begin/put×N/commit
+// sequence. A decode failure or a staging failure aborts the open
+// transaction before returning, so a partial file never leaves partial
+// records or a dangling lock behind.
+func putFile(client *conductor.Client, topic, path string) (conductor.Publication, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return conductor.Publication{}, err
+	}
+	defer file.Close()
+	if err := client.Begin(topic); err != nil {
+		return conductor.Publication{}, err
+	}
+	staged := 0
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var text string
+		if err := json.Unmarshal([]byte(line), &text); err != nil {
+			return conductor.Publication{}, abortWith(client, fmt.Errorf("%s: line is not a JSON string: %w", path, err))
+		}
+		if _, err := client.StagePut(text); err != nil {
+			return conductor.Publication{}, abortWith(client, err)
+		}
+		staged++
+	}
+	if err := scanner.Err(); err != nil {
+		return conductor.Publication{}, abortWith(client, err)
+	}
+	if staged == 0 {
+		return conductor.Publication{}, abortWith(client, fmt.Errorf("%s: no non-blank lines to load", path))
+	}
+	return client.Commit()
+}
+
+// abortWith aborts the open transaction and folds any abort failure into the
+// original cause, so a bulk-load failure never leaves a stuck transaction or
+// topic lock behind.
+func abortWith(client *conductor.Client, cause error) error {
+	if abortErr := client.Abort(); abortErr != nil {
+		return errors.Join(cause, fmt.Errorf("abort failed: %w", abortErr))
+	}
+	return cause
 }
 
 func writeRecordResult(record conductor.Record, operationErr error) error {
@@ -425,7 +490,7 @@ func parseGet(args []string) (conductor.ReadRequest, error) {
 }
 
 func usageError() error {
-	return errors.New("usage: conductor install <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> register <responsibility> | conductor <agent> deregister | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--codex | --codex-cli | --agy | --agy-cli | --claude-cli] [--mode=summary|content] | conductor <agent> channel claude")
+	return errors.New("usage: conductor install <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> register <responsibility> | conductor <agent> deregister | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--codex | --codex-cli | --agy | --agy-cli | --claude-cli] [--mode=summary|content] | conductor <agent> channel claude")
 }
 
 func installUsageError() error {
