@@ -336,15 +336,12 @@ func TestVersionDoesNotInitializeRuntime(t *testing.T) {
 	}
 }
 
-func TestUsageExposesOnlyTwoCodexTransports(t *testing.T) {
+func TestUsageDoesNotExposeCodexTransports(t *testing.T) {
 	message := usageError().Error()
 	for _, flag := range []string{"--codex", "--codex-cli"} {
-		if !strings.Contains(message, flag) {
-			t.Fatalf("usage omits %s: %s", flag, message)
+		if strings.Contains(message, flag) {
+			t.Fatalf("usage retains removed Codex transport %s: %s", flag, message)
 		}
-	}
-	if strings.Contains(message, "--codex-app-server") {
-		t.Fatalf("usage retains removed Codex mode: %s", message)
 	}
 }
 
@@ -362,7 +359,12 @@ func TestWatchDefaultsToContent(t *testing.T) {
 
 func TestRemovedWatchModesReturnUsage(t *testing.T) {
 	t.Setenv("CONDUCTOR_HOME", filepath.Join(t.TempDir(), "runtime-state"))
-	for _, args := range [][]string{{"a", "watch", "--wait"}, {"a", "watch", "--since", "1"}} {
+	for _, args := range [][]string{
+		{"a", "watch", "--wait"},
+		{"a", "watch", "--since", "1"},
+		{"a", "watch", "--codex"},
+		{"a", "watch", "--codex-cli"},
+	} {
 		if err := run(args); err == nil || err.Error() != usageError().Error() {
 			t.Fatalf("%v: error = %v, want usage error", args, err)
 		}
@@ -429,16 +431,6 @@ func TestGetDeltaAcknowledgesSuccessfulDelivery(t *testing.T) {
 	}
 	if len(delta.Publications) != 0 {
 		t.Fatalf("CLI delta was not acknowledged: %#v", delta)
-	}
-}
-
-func TestCodexWatchRequiresThreadID(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "runtime-state")
-	t.Setenv("CONDUCTOR_HOME", state)
-	t.Setenv("CODEX_THREAD_ID", "")
-	err := run([]string{"a", "watch", "--codex"})
-	if err == nil || !strings.Contains(err.Error(), "thread ID") {
-		t.Fatalf("error = %v, want missing thread ID", err)
 	}
 }
 

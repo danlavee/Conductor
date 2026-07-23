@@ -2,8 +2,7 @@
 
 | Target | Topology | Lifecycle | Activation | Command |
 | --- | --- | --- | --- | --- |
-| Codex local task | Native app-server bridge | Persistent | Native task turn | `conductor <agent> watch --codex` |
-| Codex local task | External launcher | Process-per-signal | `codex exec resume` | `conductor <agent> watch --codex-cli` |
+| Codex attended chat | Host-managed terminal | One-shot, rearmed by the agent | Background-terminal completion | `conductor <agent> watch` |
 | Antigravity Desktop conversation | External bridge | Persistent | `agentapi send-message` | `conductor <agent> watch --agy` |
 | AGY CLI conversation | External launcher | Process-per-signal | `agy --print` resume | `conductor <agent> watch --agy-cli` |
 | Claude Code CLI session | External launcher | Process-per-signal | `claude -p --resume` | `conductor <agent> watch --claude-cli` |

@@ -36,14 +36,13 @@ For details on how different AI harnesses wake and watch for publications, see t
 
 ## Configuration
 
-The agent name is the one identity ever passed explicitly, as the leading argument to every command. A watcher's target — which session, conversation, or thread to resume — is resolved by the Conductor watcher using environment variables set automatically by the host harness (such as `ANTIGRAVITY_CONVERSATION_ID`, `CODEX_THREAD_ID`, or `CLAUDE_SESSION_ID`).
+The agent name is the one identity ever passed explicitly, as the leading argument to every command. Host-specific adapters resolve their own targets from environment variables set automatically by their harness, such as `ANTIGRAVITY_CONVERSATION_ID` or `CLAUDE_SESSION_ID`. Codex uses the host-managed completion of a generic one-shot watch and needs no thread identifier.
 
-Two environment variables remain genuinely optional configuration:
+One environment variable remains genuinely optional configuration:
 
 - `CONDUCTOR_HOME` — the state root directory, when a team uses one other than the default.
-- `CONDUCTOR_CODEX_SANDBOX` (or its legacy alias `CODEX_PERMISSION_PROFILE`) — an optional Codex sandbox policy: `read-only`, `workspace-write`, or `danger-full-access`.
 
-Adapter binaries (`claude`, `agy`, `agentapi`, `codex`) are found automatically — on `PATH` first, then at each tool's known install locations — with a clear error naming the tool if neither resolves.
+Adapter binaries (`claude`, `agy`, `agentapi`) are found automatically — on `PATH` first, then at each tool's known install locations — with a clear error naming the tool if neither resolves.
 
 ## Use Conductor
 

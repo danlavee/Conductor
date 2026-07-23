@@ -291,10 +291,6 @@ func run(args []string) error {
 			return usageError()
 		}
 		switch watchArgs[0] {
-		case "--codex":
-			return runCodexWatchCommand(context.Background(), client, agent, mode)
-		case "--codex-cli":
-			return runCodexCLIWatchCommand(context.Background(), client, agent, mode)
 		case "--agy":
 			return runAgyWatchCommand(context.Background(), client, agent, mode)
 		case "--agy-cli":
@@ -496,7 +492,7 @@ func parseGet(args []string) (conductor.ReadRequest, error) {
 }
 
 func usageError() error {
-	return errors.New("usage: conductor install <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--codex | --codex-cli | --agy | --agy-cli | --claude-cli] [--mode=summary|content] | conductor <agent> channel claude")
+	return errors.New("usage: conductor install <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--agy | --agy-cli | --claude-cli] [--mode=summary|content] | conductor <agent> channel claude")
 }
 
 func installUsageError() error {

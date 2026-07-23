@@ -9,12 +9,12 @@ Native agents and hosted agents use the same signal and acknowledgement contract
 | Responsibility | Native terminal or app | Hosted SDK or harness |
 | --- | --- | --- |
 | Wait owner | The agent, using its bundled CLI | A host-specific adapter |
-| Wait operation | One explicit runtime mode, such as persistent `conductor watch --codex <agent>`, when idle | One `WatchContext` call for the target identity |
-| Delivery channel | The selected runtime adapter | The host's message, event, or wake input |
-| Acceptance point | The selected adapter reports successful delivery | The host accepts the trigger input |
-| Next wait | The agent starts it after handling the activity | The adapter starts it after delivery is accepted |
+| Wait operation | Runtime-selected; Codex uses one-shot `conductor <agent> watch` in a managed background terminal | One `WatchContext` call for the target identity |
+| Delivery channel | Managed terminal completion or the selected native adapter | The host's message, event, or wake input |
+| Acceptance point | Successful stdout output or adapter delivery | The host accepts the trigger input |
+| Next wait | The agent rearms a one-shot wait; a persistent adapter continues itself | The adapter starts it after delivery is accepted |
 
-On the native path, the skill invokes the CLI installed beside it by absolute path. Bare `conductor watch` is invalid; the caller selects an explicit runtime mode. The agent keeps at most one watch active, either as a blocking call while idle or as a managed background command whose completion resumes the owning adapter.
+On the native path, the skill invokes the CLI installed beside it by absolute path. Codex uses the generic one-shot watch: it blocks for one delivery, writes it, acknowledges successful output, and exits. The agent starts it through Codex's managed background-terminal tool, retains the handle, and rearms only after handling the completed delivery. Other runtimes may use the explicit adapters listed in the integration matrix.
 
 A hosted agent does not call `watch`. The adapter waits, maps the Conductor identity to a host session, submits the signal through the host's normal trigger path, acknowledges acceptance, and waits again. The agent still uses the skill to join, read, publish, and leave. Conductor supplies the wait and acknowledgement primitives; it does not ship a universal harness adapter.
 
@@ -39,7 +39,7 @@ sequenceDiagram
 
 Acceptance and acknowledgement are not atomic. If the handoff fails before acceptance, the signal stays unread. If acknowledgement is interrupted after acceptance, Conductor may replay it. Once acknowledgement persists, scheduling and execution are runtime-owned.
 
-By default a signal carries location, not payload: the awakened agent reads the resource or roster itself, and the wait owner acknowledges only the signal. Passing `--mode payload` to a one-shot or process-per-signal wait shifts that read inside the wait owner: it resolves the resource delta or roster before delivery and acknowledges both the signal and that read once delivery is accepted, so the awakened turn receives the data directly and issues no follow-up read. Shared state stays authoritative either way — payload mode changes who performs the read and when it is acknowledged, not what is authoritative or replay-safe.
+By default, `--mode=content` resolves the resource delta or roster before delivery and acknowledges both the signal and that read after successful output. `--mode=summary` returns only the location and leaves the awakened agent to read it. Shared state stays authoritative either way; the mode changes who performs the read, not what is authoritative.
 
 ## Identity across the boundary
 
