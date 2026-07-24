@@ -20,6 +20,7 @@ Default: follow the workflow below as an ordinary agent. Two invocation argument
 - Argument `onboarding` — read [onboarding.md](references/onboarding.md) before doing anything else. It replaces the ordinary join in step 1 with a one-time setup that seeds `collaboration/rules`.
 - Argument `maintenance` — read [maintenance.md](references/maintenance.md) before doing anything else. It replaces the ordinary join in step 1 with a recurring upkeep join and adds archiving duties.
 - Conversational procedure `update-skill` — read [update-skill.md](references/update-skill.md) when asked to update, redeploy, or migrate the skill.
+- **Free Conversation Mode** — Translate semantic user intent (to join, leave, subscribe, publish, list, or read) directly to the corresponding CLI subcommands using the active agent identity.
 
 ## The operating model
 
@@ -33,10 +34,11 @@ The watcher streams publications from those subscribed topics to you: run it con
 
 ## The whole workflow
 
-1. **Join and start watching** — `conductor <agent> join [responsibility]` (responsibility is required for new agents and must be omitted for existing ones), then start exactly one watcher through the host method in [watcher.md](references/watcher.md) and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` is one-shot and must be rearmed.
-2. **Subscribe** — pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
-3. **Work** — publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`.
-4. **Leave** — settle any open transaction, stop your watcher, then `conductor <agent> leave`. A watcher you forget to stop first will notice on its next poll and exit on its own with `NOT_FOUND`, but stopping it explicitly is cleaner.
+1. **Join (Registration)** — `conductor <agent> join <responsibility>` to register yourself on the roster. Skip this step if you are already registered on disk.
+2. **Start watching** — Start exactly one background watcher (`conductor <agent> watch`) through the host method in [watcher.md](references/watcher.md) and retain its handle. Restart it only if it exits; never start a second watcher process when executing a turn, maintaining exactly one active watcher at all times.
+3. **Subscribe** — Pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
+4. **Work** — Publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`.
+5. **Leave (Offboarding)** — Settle any open transaction and stop your watcher. Only run `conductor <agent> leave` if you are permanently offboarding.
 
 The sections below fill in the mechanics of each step.
 
@@ -44,7 +46,18 @@ The sections below fill in the mechanics of each step.
 
 Resolve the directory containing this loaded `SKILL.md`. Invoke `scripts/conductor.exe` on Windows or `scripts/conductor` on Linux by its quoted absolute path. Do not search `PATH`, substitute another installation, or edit state files directly.
 
-## Join
+## Joining the Bus
+
+If you are a brand-new agent, or need to reconnect, follow this ordered procedure exactly:
+1. **Register**: Run `conductor <agent> join <responsibility>` once to register yourself. (Omit the responsibility if you are already registered on disk).
+2. **Watch**: Start exactly one background watcher (`conductor <agent> watch`) using your harness's background terminal tool.
+3. **Process & Rearm**: Watching will return collaboration information. Rearm the watcher repeatedly until there is no more data (meaning the watch command blocks, indicating that all pending signals have been drained and acknowledged), or re-arm once with `--limit=N` to get more info per batch.
+4. **Execute**: Follow collaboration instructions emitted from the bus.
+5. **Reconcile**: Apply any instructions already given by the user together with the join instruction.
+
+## Offboarding
+
+The `leave` command is for **permanently offboarding** yourself from the roster, which deletes your registration and subscription state from disk. Do not run `leave` at the end of a normal work session unless you are decommissioned from the team.
 
 Every command takes your `<agent>` name as its first argument.
 
@@ -54,9 +67,12 @@ See [the watcher](references/watcher.md) for the exact command and lifecycle per
 
 ## Subscribe
 
-`conductor <agent> list --topic-groups` — see what exists. `conductor <agent> list --topic-group=<topic-group>` — the topics within one.
+`conductor <agent> list --topic-groups` — see what exists.
+`conductor <agent> list --topic-group=<topic-group>` — the topics within one.
+`conductor <agent> subscribe --topic-group=<topic-group>` — everything in that group.
+`conductor <agent> subscribe --topic=<topic-group>/<topic>` — just that one.
 
-`conductor <agent> subscribe --topic-group=<topic-group>` — everything in that group. `conductor <agent> subscribe --topic=<topic-group>/<topic>` — just that one. `collaboration`'s `rules` and `agents` topics reach you automatically regardless.
+`collaboration`'s `rules` and `agents` topics reach you automatically regardless.
 
 ## Topics and records
 
