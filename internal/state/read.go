@@ -98,7 +98,7 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 		if err != nil {
 			return ReadResult{}, err
 		}
-		from := cursor.Topics[recordSlot(request.Topic, request.RecordIndex)] + 1
+		from := cursor.Topics[recordCursorSlot(request.Topic, request.RecordIndex)] + 1
 		limit := request.Limit
 		if limit == 0 {
 			limit = DefaultReadLimit
@@ -152,7 +152,7 @@ func (c *Client) AcknowledgeRead(result ReadResult) error {
 	if err != nil {
 		return err
 	}
-	slot := recordSlot(result.Topic, result.record)
+	slot := recordCursorSlot(result.Topic, result.record)
 	return c.updateCursor(agent, func(cursor *Cursor) {
 		if result.maxSequence > cursor.Topics[slot] {
 			cursor.Topics[slot] = result.maxSequence

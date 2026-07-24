@@ -15,6 +15,7 @@ type Client struct {
 	LockTimeout  time.Duration
 	PollInterval time.Duration
 	ownerPID     int
+	saveCursorFn func(string, Cursor) error
 }
 
 // New opens a Conductor state root. An empty home uses ~/.conductor.

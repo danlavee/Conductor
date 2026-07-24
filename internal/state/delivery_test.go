@@ -1,6 +1,10 @@
 package state
 
-import "testing"
+import (
+	"errors"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseDeliveryMode(t *testing.T) {
 	if mode, err := ParseDeliveryMode(""); err != nil || mode != DeliveryContent {
@@ -34,8 +38,23 @@ func TestSummaryAcknowledgesReferencedTopicChange(t *testing.T) {
 	if err != nil || delivery.Delta != nil {
 		t.Fatalf("delivery = %#v, error = %v", delivery, err)
 	}
+	cursorWrites := 0
+	client.saveCursorFn = func(agent string, cursor Cursor) error {
+		cursorWrites++
+		return writeJSONAtomic(filepath.Join(client.Home, "cursors", agent+".json"), cursor)
+	}
 	if err := client.AcknowledgeDelivery(delivery); err != nil {
 		t.Fatal(err)
+	}
+	if cursorWrites != 1 {
+		t.Fatalf("delivery cursor writes = %d, want 1", cursorWrites)
+	}
+	cursor, err := client.loadCursor("reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !indexAcknowledged(cursor.SummaryRanges, summary.Sequence) || cursor.Topics["messages/team"] != summary.Sequence {
+		t.Fatalf("delivery was not settled in one cursor state: %#v", cursor)
 	}
 	delta, err := client.Get(ReadRequest{Topic: "messages/team", Mode: ReadDelta})
 	if err != nil || len(delta.Publications) != 0 {
@@ -78,12 +97,71 @@ func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 	if err != nil || delivery.Delta == nil || len(delivery.Delta.Publications) != 1 || len(delivery.Delta.Publications[0].Records) != 2 {
 		t.Fatalf("delivery = %#v, error = %v", delivery, err)
 	}
+	cursorWrites := 0
+	reader.saveCursorFn = func(agent string, cursor Cursor) error {
+		cursorWrites++
+		return writeJSONAtomic(filepath.Join(reader.Home, "cursors", agent+".json"), cursor)
+	}
 	if err := reader.AcknowledgeDelivery(delivery); err != nil {
 		t.Fatal(err)
+	}
+	if cursorWrites != 1 {
+		t.Fatalf("delivery cursor writes = %d, want 1", cursorWrites)
+	}
+	cursor, err := reader.loadCursor("reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !indexAcknowledged(cursor.SummaryRanges, summary.Sequence) || cursor.Topics["dev/tasks"] != summary.Sequence {
+		t.Fatalf("delivery was not settled in one cursor state: %#v", cursor)
 	}
 	delta, err := reader.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadDelta})
 	if err != nil || len(delta.Publications) != 0 {
 		t.Fatalf("delta replayed: %#v, error = %v", delta, err)
+	}
+}
+
+func TestFailedSummaryDeliveryCursorWriteLeavesSummaryAndDeltaReplayable(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SubscribeTopic("messages/team"); err != nil {
+		t.Fatal(err)
+	}
+	drainSummaries(t, client, 2)
+	if _, err := client.Put("messages/team", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := client.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("summaries = %#v, want one", summaries)
+	}
+	delivery, err := client.ResolveDelivery(summaries[0], DeliverySummary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveFailure := errors.New("save failed")
+	client.saveCursorFn = func(string, Cursor) error {
+		return saveFailure
+	}
+	if err := client.AcknowledgeDelivery(delivery); !errors.Is(err, saveFailure) {
+		t.Fatalf("error = %v, want save failure", err)
+	}
+	client.saveCursorFn = nil
+	replayed, err := client.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replayed) != 1 || replayed[0] != summaries[0] {
+		t.Fatalf("failed delivery did not replay: got %#v, want %#v", replayed, summaries)
+	}
+	delta, err := client.Get(ReadRequest{Topic: "messages/team", Mode: ReadDelta})
+	if err != nil || len(delta.Publications) != 1 {
+		t.Fatalf("failed delivery consumed delta: %#v, error = %v", delta, err)
 	}
 }
 
