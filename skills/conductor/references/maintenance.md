@@ -2,7 +2,7 @@
 
 Throughout this document, `<agent>` is always literally `conductor-maintenance` — never any other name.
 
-Join as `conductor-maintenance`, with exactly this responsibility string every time: `conductor <agent> register "repo upkeep: archive stale Conductor history, keep collaboration/rules seeded, never delete data"`. Any other wording under this name is rejected by the registry.
+Join as `conductor-maintenance`, with exactly this responsibility string every time: `conductor <agent> join "repo upkeep: archive stale Conductor history, keep collaboration/rules seeded, never delete data"`. Any other wording under this name is rejected by the registry.
 
 Start the watcher like any other agent.
 
