@@ -17,9 +17,26 @@ import (
 
 const smokeHelperEnvironment = "CONDUCTOR_INSTALL_SMOKE_HELPER"
 const smokeProtocolEnvironment = "CONDUCTOR_INSTALL_SMOKE_PROTOCOL"
+const smokeReadyEnvironment = "CONDUCTOR_INSTALL_SMOKE_READY"
+const smokeReleaseEnvironment = "CONDUCTOR_INSTALL_SMOKE_RELEASE"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(smokeHelperEnvironment) == "1" && len(os.Args) == 2 && os.Args[1] == "version" {
+		readyPath := os.Getenv(smokeReadyEnvironment)
+		releasePath := os.Getenv(smokeReleaseEnvironment)
+		if readyPath != "" && releasePath != "" {
+			if err := os.WriteFile(readyPath, nil, 0o600); err != nil {
+				os.Exit(2)
+			}
+			for {
+				if _, err := os.Stat(releasePath); err == nil {
+					break
+				} else if !os.IsNotExist(err) {
+					os.Exit(2)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
 		protocol := os.Getenv(smokeProtocolEnvironment)
 		if protocol == "" {
 			protocol = "1"
@@ -128,6 +145,34 @@ func TestInstallPublishesCompleteIdempotentSkill(t *testing.T) {
 	}
 	if !afterInfo.ModTime().Equal(manifestInfo.ModTime()) {
 		t.Fatal("idempotent install rewrote the destination")
+	}
+}
+
+func TestPrepareDestinationResultContract(t *testing.T) {
+	destination := testDestination(t)
+	source := testSource(t)
+	_, _, expected, _, err := preflight(destination, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := prepareDestination(destination, expected)
+	if err != nil || result != nil {
+		t.Fatalf("missing destination result = %+v, error = %v", result, err)
+	}
+	if _, err := Install(destination, source); err != nil {
+		t.Fatal(err)
+	}
+	result, err = prepareDestination(destination, expected)
+	if err != nil || result == nil || result.Status != "already-installed" {
+		t.Fatalf("matching destination result = %+v, error = %v", result, err)
+	}
+
+	conflicting := expected
+	conflicting.DistributionID = "different-distribution"
+	result, err = prepareDestination(destination, conflicting)
+	if err == nil || result != nil || !strings.Contains(err.Error(), "different Conductor installation") {
+		t.Fatalf("conflicting destination result = %+v, error = %v", result, err)
 	}
 }
 
@@ -269,6 +314,73 @@ func TestConcurrentInstallPublishesOnce(t *testing.T) {
 	}
 }
 
+func TestInstallReinspectsMatchingDestinationAfterPublishRace(t *testing.T) {
+	t.Setenv(smokeHelperEnvironment, "1")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := testSource(t)
+	source.ExecutablePath = executable
+	source.SmokeCheck = true
+
+	parent := t.TempDir()
+	readyPath := filepath.Join(parent, "smoke-ready")
+	releasePath := filepath.Join(parent, "smoke-release")
+	t.Setenv(smokeReadyEnvironment, readyPath)
+	t.Setenv(smokeReleaseEnvironment, releasePath)
+
+	destination := testDestination(t)
+	type installResult struct {
+		result Result
+		err    error
+	}
+	firstInstall := make(chan installResult, 1)
+	go func() {
+		result, err := Install(destination, source)
+		firstInstall <- installResult{result: result, err: err}
+	}()
+	defer os.WriteFile(releasePath, nil, 0o600)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for staged smoke check")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	secondSource := source
+	secondSource.SmokeCheck = false
+	secondResult, err := Install(destination, secondSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondResult.Status != "installed" {
+		t.Fatalf("second install result = %+v", secondResult)
+	}
+	if err := os.WriteFile(releasePath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case firstResult := <-firstInstall:
+		if firstResult.err != nil {
+			t.Fatal(firstResult.err)
+		}
+		if firstResult.result.Status != "already-installed" || firstResult.result.ManifestHash != secondResult.ManifestHash {
+			t.Fatalf("reconciled result = %+v", firstResult.result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for publish-race reconciliation")
+	}
+}
+
 func stagingMatches(t *testing.T, destination string) []string {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(destination)), ".conductor-install-*"))
@@ -341,6 +453,69 @@ func TestInstallRejectsExistingDirectoryAndSymlink(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInstallBacksUpUnmanifestedDestination(t *testing.T) {
+	backupDirectory := testBackupDirectory(t)
+	destination := testDestination(t)
+	if err := os.MkdirAll(destination, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(destination, "legacy.txt")
+	if err := os.WriteFile(legacyPath, []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Install(destination, testSource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "installed" {
+		t.Fatalf("result = %+v", result)
+	}
+	backups, err := filepath.Glob(filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-*"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups = %v, error = %v", backups, err)
+	}
+	data, err := os.ReadFile(filepath.Join(backups[0], "legacy.txt"))
+	if err != nil || string(data) != "legacy" {
+		t.Fatalf("backup content = %q, error = %v", data, err)
+	}
+}
+
+func TestInstallKeepsBackupWhenVerificationFails(t *testing.T) {
+	backupDirectory := testBackupDirectory(t)
+	destination := testDestination(t)
+	if err := os.MkdirAll(destination, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "legacy.txt"), []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := testSource(t)
+	source.SmokeCheck = true
+
+	if _, err := Install(destination, source); err == nil || !strings.Contains(err.Error(), "install verify") {
+		t.Fatalf("error = %v, want verification failure", err)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("destination was republished after failed verification: %v", err)
+	}
+	backups, err := filepath.Glob(filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-*"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups = %v, error = %v", backups, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(backups[0], "legacy.txt")); err != nil || string(data) != "legacy" {
+		t.Fatalf("backup content = %q, error = %v", data, err)
+	}
+}
+
+func testBackupDirectory(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return filepath.Join(home, ".conductor", "backups", "skills")
 }
 
 func TestReleasedDistributionIdentityIgnoresCompilerBytes(t *testing.T) {
@@ -473,7 +648,7 @@ func TestCheckCurrencyReportsUnknownForMissingManifest(t *testing.T) {
 func testBundle() fs.FS {
 	return fstest.MapFS{
 		"SKILL.md":                                  &fstest.MapFile{Data: []byte("---\nname: conductor\ndescription: Test Conductor.\n---\n\n[Guide](references/guide.md)\n")},
-		"references/limitations.md":                      &fstest.MapFile{Data: []byte("# Limits\n")},
+		"references/limitations.md":                 &fstest.MapFile{Data: []byte("# Limits\n")},
 		"references/protocol.md":                    &fstest.MapFile{Data: []byte("# Protocol\n\n[Skill](../SKILL.md)\n")},
 		"references/guide.md":                       &fstest.MapFile{Data: []byte("# Guide\n")},
 		"references/integrations/README.md":         &fstest.MapFile{Data: []byte("# Integrations\n")},
