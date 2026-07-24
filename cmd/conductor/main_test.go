@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -345,15 +346,96 @@ func TestUsageDoesNotExposeCodexTransports(t *testing.T) {
 	}
 }
 
-func TestWatchDefaultsToContent(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "runtime-state")
-	t.Setenv("CONDUCTOR_HOME", state)
-	t.Setenv("CONDUCTOR_AGENT", "a")
-	if err := run([]string{"a", "join", "dev"}); err != nil {
+func TestUsageContract(t *testing.T) {
+	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--claude-cli] [--mode=summary|content]"
+	if got := usageError().Error(); got != want {
+		t.Fatalf("usage = %q, want %q", got, want)
+	}
+}
+
+func TestMigrateRemainsGlobalAndDoesNotInitializeRuntime(t *testing.T) {
+	source := t.TempDir()
+	destination := filepath.Join(t.TempDir(), "destination")
+	if err := os.WriteFile(filepath.Join(source, "protocol.json"), []byte("{\"version\":4}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"a", "watch"}); err != nil {
-		t.Fatalf("bare watch failed: %v", err)
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	t.Setenv("CONDUCTOR_HOME", state)
+
+	err := run([]string{"migrate", source, destination})
+	if err == nil || err.Error() != "migrate supports v1, v2 or v3 source roots, found protocol 4" {
+		t.Fatalf("error = %v", err)
+	}
+	if _, statErr := os.Stat(state); !os.IsNotExist(statErr) {
+		t.Fatalf("runtime state was initialized: %v", statErr)
+	}
+}
+
+func TestInvalidAgentCommandPreservesClientInitializationOrder(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	t.Setenv("CONDUCTOR_HOME", state)
+
+	err := run([]string{"a", "unknown"})
+	if err == nil || err.Error() != usageError().Error() {
+		t.Fatalf("error = %v, want usage error", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(state, "protocol.json")); statErr != nil {
+		t.Fatalf("client was not initialized before command validation: %v", statErr)
+	}
+}
+
+func TestWatchDefaultsToContent(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "a", "join", "dev"); err != nil {
+		t.Fatalf("join failed: %v", err)
+	}
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "a", "watch")
+	if err != nil || len(stderr) != 0 {
+		t.Fatalf("bare watch failed: %v, stderr = %q", err, stderr)
+	}
+	var batch conductor.BatchDelivery
+	if err := json.Unmarshal(stdout, &batch); err != nil {
+		t.Fatalf("stdout is not a delivery batch: %q: %v", stdout, err)
+	}
+	if len(batch.Deliveries) == 0 {
+		t.Fatalf("batch = %#v", batch)
+	}
+	foundContent := false
+	for _, delivery := range batch.Deliveries {
+		if delivery.Mode != conductor.DeliveryContent {
+			t.Fatalf("delivery = %#v", delivery)
+		}
+		if delivery.Delta != nil {
+			foundContent = true
+		}
+	}
+	if !foundContent {
+		t.Fatalf("batch has no resolved content: %#v", batch)
+	}
+}
+
+func TestOneShotWatchReleasesOwnership(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	client, err := conductor.New(state, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Join("a", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runOneShotWatch(context.Background(), client, conductor.DeliverySummary); err != nil {
+		t.Fatal(err)
+	}
+	second, err := conductor.New(state, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := second.AcquireWatchOwnership()
+	if err != nil {
+		t.Fatalf("one-shot watch did not release ownership: %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -472,5 +554,46 @@ func TestParseRecordIndex(t *testing.T) {
 		if _, err := parseRecordIndex(value); err == nil {
 			t.Fatalf("invalid index %q succeeded", value)
 		}
+	}
+}
+
+func TestParseRedact(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantTopic string
+		wantStart int64
+		wantEnd   int64
+		wantError string
+	}{
+		{name: "single record", args: []string{"dev/tasks", "7"}, wantTopic: "dev/tasks", wantStart: 7, wantEnd: 7},
+		{name: "range", args: []string{"dev/tasks", "--end=9", "--start=2"}, wantTopic: "dev/tasks", wantStart: 2, wantEnd: 9},
+		{name: "missing arguments", args: []string{"dev/tasks"}, wantError: usageError().Error()},
+		{name: "too many arguments", args: []string{"dev/tasks", "1", "2", "3"}, wantError: usageError().Error()},
+		{name: "invalid record", args: []string{"dev/tasks", "zero"}, wantError: "record index must be a positive integer"},
+		{name: "invalid start", args: []string{"dev/tasks", "--start=zero", "--end=2"}, wantError: `invalid --start: strconv.ParseInt: parsing "zero": invalid syntax`},
+		{name: "invalid end", args: []string{"dev/tasks", "--start=1", "--end=zero"}, wantError: `invalid --end: strconv.ParseInt: parsing "zero": invalid syntax`},
+		{name: "unknown option", args: []string{"dev/tasks", "--start=1", "--last=2"}, wantError: usageError().Error()},
+		{name: "missing bound", args: []string{"dev/tasks", "--start=1", "--start=2"}, wantError: "invalid redact range"},
+		{name: "zero bound", args: []string{"dev/tasks", "--start=0", "--end=2"}, wantError: "invalid redact range"},
+		{name: "reversed range", args: []string{"dev/tasks", "--start=3", "--end=2"}, wantError: "invalid redact range"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			topic, start, end, err := parseRedact(test.args)
+			if test.wantError != "" {
+				if err == nil || err.Error() != test.wantError {
+					t.Fatalf("error = %v, want %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if topic != test.wantTopic || start != test.wantStart || end != test.wantEnd {
+				t.Fatalf("parseRedact() = %q, %d, %d; want %q, %d, %d", topic, start, end, test.wantTopic, test.wantStart, test.wantEnd)
+			}
+		})
 	}
 }

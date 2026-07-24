@@ -21,7 +21,7 @@ func TestEmbeddedSkillMatchesCanonicalTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	if problems := skillcheck.CheckCommandFreshness(root); len(problems) > 0 {
-		t.Fatalf("ValidateSkill's command list has drifted from main.go's real dispatch: %v", problems)
+		t.Fatalf("ValidateSkill's command list has drifted from the CLI's real dispatch: %v", problems)
 	}
 	if _, err := fs.Stat(skillbundle.Files, "embed.go"); !os.IsNotExist(err) {
 		t.Fatal("embedding source appears in the portable skill")
