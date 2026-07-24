@@ -21,3 +21,5 @@ This is a conversation you carry out, not a CLI command. When asked to update or
 **Conflicts.** When a local edit and an incoming change touch the same content, there's no merge algorithm here — the installed copy isn't a git checkout. Present both versions plainly and let the decision be made explicitly; never silently prefer one side because it seems more likely to be "right."
 
 **Conversational flexibility.** This procedure has no rigid syntax to enforce — skip a step if told to, accept "just use this folder" without demanding a formal parameter, answer questions mid-flow. The one place that doesn't flex is step 5: get approval before the destructive step even if asked to move fast. Skipping exactly that is what caused a real outage once already.
+
+**Environment variances.** Avoid shell auto-formatters that truncate outputs, prefer native platform-neutral scripting properties, and verify exact CLI subcommand syntax before guessing flags.
