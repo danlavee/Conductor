@@ -29,10 +29,7 @@ func TestSummaryAcknowledgesReferencedTopicChange(t *testing.T) {
 	if _, err := client.Put("messages/team", "hello"); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := client.Watch()
-	if err != nil {
-		t.Fatal(err)
-	}
+	summary := watchOne(t, client)
 	delivery, err := client.ResolveDelivery(summary, DeliverySummary)
 	if err != nil || delivery.Delta != nil {
 		t.Fatalf("delivery = %#v, error = %v", delivery, err)
@@ -76,10 +73,7 @@ func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 	if _, err := writer.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := reader.Watch()
-	if err != nil {
-		t.Fatal(err)
-	}
+	summary := watchOne(t, reader)
 	delivery, err := reader.ResolveDelivery(summary, DeliveryContent)
 	if err != nil || delivery.Delta == nil || len(delivery.Delta.Publications) != 1 || len(delivery.Delta.Publications[0].Records) != 2 {
 		t.Fatalf("delivery = %#v, error = %v", delivery, err)
@@ -102,12 +96,171 @@ func TestContentJoinCarriesRoster(t *testing.T) {
 	// (an "update", which resolves to a Delta); the join signal that
 	// carries the roster follows it.
 	drainSummaries(t, client, 1)
-	summary, err := client.Watch()
-	if err != nil {
-		t.Fatal(err)
-	}
+	summary := watchOne(t, client)
 	delivery, err := client.ResolveDelivery(summary, DeliveryContent)
 	if err != nil || len(delivery.Roster) != 1 || delivery.Roster[0].Name != "a" {
 		t.Fatalf("delivery = %#v, error = %v", delivery, err)
+	}
+}
+
+func TestResolveBatchGroupsSameTopicSignalsAndCapsAtDefaultReadLimit(t *testing.T) {
+	home := t.TempDir()
+	writer := newTestClient(t, home, "")
+	if _, err := writer.Join("writer", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	reader := newTestClient(t, home, "")
+	if _, err := reader.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.SubscribeTopic("dev/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, reader)
+
+	// One Put per publication, so this backlog spans more atomic publications
+	// than the default cap -- all on the same topic, so they group into one
+	// resolved delivery instead of one Get call apiece (which would each
+	// redundantly re-fetch the same still-unacknowledged window).
+	for i := 0; i < DefaultReadLimit+3; i++ {
+		if _, err := writer.Put("dev/tasks", "x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summaries, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != DefaultReadLimit+3 {
+		t.Fatalf("pending signals = %d, want %d", len(summaries), DefaultReadLimit+3)
+	}
+
+	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Deliveries) != 1 || batch.Deliveries[0].Delta == nil || len(batch.Deliveries[0].Delta.Publications) != DefaultReadLimit {
+		t.Fatalf("batch = %#v", batch)
+	}
+	if batch.Remaining != 3 || batch.DefaultLimit != DefaultReadLimit {
+		t.Fatalf("batch remaining/default_read_limit = %d/%d, want 3/%d", batch.Remaining, batch.DefaultLimit, DefaultReadLimit)
+	}
+
+	if err := reader.AcknowledgeBatch(batch); err != nil {
+		t.Fatal(err)
+	}
+	leftover, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leftover) != 3 {
+		t.Fatalf("leftover signals after acknowledging the batch = %d, want 3", len(leftover))
+	}
+}
+
+func TestResolveBatchSpendsSharedBudgetAcrossDifferentTopics(t *testing.T) {
+	home := t.TempDir()
+	writer := newTestClient(t, home, "")
+	if _, err := writer.Join("writer", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	reader := newTestClient(t, home, "")
+	if _, err := reader.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	for _, topic := range []string{"dev/tasks", "dev/notes"} {
+		if _, err := reader.SubscribeTopic(topic); err != nil {
+			t.Fatal(err)
+		}
+	}
+	drainAllPending(t, reader)
+
+	// A first topic just under the cap, then a second topic that only
+	// partially fits in what's left of the shared budget.
+	for i := 0; i < DefaultReadLimit-5; i++ {
+		if _, err := writer.Put("dev/tasks", "x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 10; i++ {
+		if _, err := writer.Put("dev/notes", "y"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summaries, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != DefaultReadLimit-5+10 {
+		t.Fatalf("pending signals = %d, want %d", len(summaries), DefaultReadLimit-5+10)
+	}
+
+	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Deliveries) != 2 {
+		t.Fatalf("batch deliveries = %#v, want one per topic", batch.Deliveries)
+	}
+	first, second := batch.Deliveries[0], batch.Deliveries[1]
+	if first.Summary.Topic != "dev/tasks" || len(first.Delta.Publications) != DefaultReadLimit-5 {
+		t.Fatalf("first delivery = %#v", first)
+	}
+	if second.Summary.Topic != "dev/notes" || len(second.Delta.Publications) != 5 {
+		t.Fatalf("second delivery = %#v, want exactly enough to spend the remaining budget of 5", second)
+	}
+	if batch.Remaining != 5 || batch.DefaultLimit != DefaultReadLimit {
+		t.Fatalf("batch remaining/default_read_limit = %d/%d, want 5/%d", batch.Remaining, batch.DefaultLimit, DefaultReadLimit)
+	}
+}
+
+func TestResolveBatchAlwaysIncludesFirstDeliveryWhole(t *testing.T) {
+	home := t.TempDir()
+	writer := newTestClient(t, home, "")
+	if _, err := writer.Join("writer", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	reader := newTestClient(t, home, "")
+	if _, err := reader.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.SubscribeTopic("dev/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, reader)
+
+	// One oversized publication (more records than the cap on its own),
+	// followed by one ordinary one.
+	if err := writer.Begin("dev/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < DefaultReadLimit+2; i++ {
+		if _, err := writer.StagePut("x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := writer.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Put("dev/tasks", "y"); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("pending signals = %d, want 2", len(summaries))
+	}
+	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Deliveries) != 1 || len(batch.Deliveries[0].Delta.Publications[0].Records) != DefaultReadLimit+2 {
+		t.Fatalf("batch = %#v", batch)
+	}
+	if batch.Remaining != 1 || batch.DefaultLimit != DefaultReadLimit {
+		t.Fatalf("batch remaining/default_read_limit = %d/%d, want 1/%d", batch.Remaining, batch.DefaultLimit, DefaultReadLimit)
 	}
 }

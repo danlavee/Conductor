@@ -17,12 +17,12 @@ type channelClient struct {
 	acks      chan conductor.Summary
 }
 
-func (c *channelClient) WatchContext(ctx context.Context) (conductor.Summary, error) {
+func (c *channelClient) WatchContext(ctx context.Context) ([]conductor.Summary, error) {
 	select {
 	case summary := <-c.summaries:
-		return summary, nil
+		return []conductor.Summary{summary}, nil
 	case <-ctx.Done():
-		return conductor.Summary{}, ctx.Err()
+		return nil, ctx.Err()
 	}
 }
 

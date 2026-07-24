@@ -422,22 +422,18 @@ func runOneShotWatch(ctx context.Context, client *conductor.Client, mode conduct
 		return err
 	}
 	defer func() { _ = release() }()
-	summary, err := client.WatchContext(ctx)
+	summaries, err := client.WatchContext(ctx)
 	if err != nil {
 		return err
 	}
-	delivery, err := client.ResolveDelivery(summary, mode)
+	batch, err := client.ResolveBatch(summaries, mode)
 	if err != nil {
 		return err
 	}
-	if mode != conductor.DeliveryContent {
-		if err := conductor.WriteJSON(os.Stdout, summary); err != nil {
-			return err
-		}
-	} else if err := conductor.WriteJSON(os.Stdout, delivery); err != nil {
+	if err := conductor.WriteJSON(os.Stdout, batch); err != nil {
 		return err
 	}
-	return client.AcknowledgeDelivery(delivery)
+	return client.AcknowledgeBatch(batch)
 }
 
 // extractMode pulls an optional "--mode=<value>" argument out of watch.

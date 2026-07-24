@@ -16,28 +16,34 @@ import (
 	"time"
 )
 
-// Watch blocks until one unread summary is available, then returns it.
-func (c *Client) Watch() (Summary, error) {
+// Watch blocks until at least one unread signal is available, then returns
+// every currently pending unread signal, in the order they were discovered.
+func (c *Client) Watch() ([]Summary, error) {
 	return c.WatchContext(context.Background())
 }
 
-// WatchContext returns one unread signal and then exits. An SDK trigger wrapper
-// can use the context for cancellation and submit the signal through its agent runtime.
-func (c *Client) WatchContext(ctx context.Context) (Summary, error) {
+// WatchContext returns every currently pending unread signal and then exits.
+// An SDK trigger wrapper can use the context for cancellation and submit each
+// signal through its agent runtime.
+func (c *Client) WatchContext(ctx context.Context) ([]Summary, error) {
 	return c.WatchSinceContext(ctx, 0)
 }
 
-// WatchSinceContext persists since as a discard floor, then returns one higher unread summary.
-func (c *Client) WatchSinceContext(ctx context.Context, since int64) (Summary, error) {
+// WatchSinceContext persists since as a discard floor, then returns every
+// currently pending unread signal above it, in the order they were
+// discovered -- a real backlog drains in one call instead of one rearm per
+// publication. More may still arrive after this call returns, so the caller
+// must still rearm.
+func (c *Client) WatchSinceContext(ctx context.Context, since int64) ([]Summary, error) {
 	if err := c.validateProtocol(); err != nil {
-		return Summary{}, err
+		return nil, err
 	}
 	if since < 0 {
-		return Summary{}, errors.New("watch sequence must not be negative")
+		return nil, errors.New("watch sequence must not be negative")
 	}
 	agent, err := c.requireAgent()
 	if err != nil {
-		return Summary{}, err
+		return nil, err
 	}
 	if since > 0 {
 		if err := c.updateCursor(agent, func(cursor *Cursor) {
@@ -46,21 +52,18 @@ func (c *Client) WatchSinceContext(ctx context.Context, since int64) (Summary, e
 			}
 			cursor.SummaryRanges = acknowledgeThrough(cursor.SummaryRanges, since)
 		}); err != nil {
-			return Summary{}, err
+			return nil, err
 		}
 	}
 	cursor, err := c.loadCursor(agent)
 	if err != nil {
-		return Summary{}, err
+		return nil, err
 	}
 	journalToken := ""
 	for {
-		summary, scannedTo, found, err := c.nextInboxSummary(agent, cursor, since)
+		pending, scannedTo, err := c.pendingInboxSummaries(agent, cursor, since)
 		if err != nil {
-			return Summary{}, err
-		}
-		if found {
-			return summary, nil
+			return nil, err
 		}
 		if scannedTo > cursor.InboxOffset {
 			if err := c.updateCursor(agent, func(current *Cursor) {
@@ -68,41 +71,49 @@ func (c *Client) WatchSinceContext(ctx context.Context, since int64) (Summary, e
 					current.InboxOffset = scannedTo
 				}
 			}); err != nil {
-				return Summary{}, err
+				return nil, err
 			}
 			cursor.InboxOffset = scannedTo
 		}
 		currentToken, err := c.eventChangeToken()
 		if err != nil {
-			return Summary{}, err
+			return nil, err
 		}
 		if currentToken != journalToken {
 			events, err := c.unreadEventsAfter(cursor.SummaryRanges, since)
 			if err != nil {
-				return Summary{}, err
+				return nil, err
+			}
+			seen := make(map[int64]bool, len(pending))
+			for _, summary := range pending {
+				seen[summary.Sequence] = true
 			}
 			for _, event := range events {
-				if contains(event.Recipients, agent) {
-					return event.Summary, nil
+				if contains(event.Recipients, agent) && !seen[event.Summary.Sequence] {
+					pending = append(pending, event.Summary)
+					seen[event.Summary.Sequence] = true
 				}
 			}
 			journalToken = currentToken
+		}
+		if len(pending) > 0 {
+			return pending, nil
 		}
 		timer := time.NewTimer(c.PollInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return Summary{}, ctx.Err()
+			return nil, ctx.Err()
 		case <-timer.C:
 		}
 		if _, err := os.Stat(filepath.Join(c.Home, "registry", agent+".json")); errors.Is(err, os.ErrNotExist) {
-			return Summary{}, &ProtocolError{Code: "NOT_FOUND", Text: "registered agent does not exist"}
+			return nil, &ProtocolError{Code: "NOT_FOUND", Text: "registered agent does not exist"}
 		} else if err != nil {
-			return Summary{}, err
+			return nil, err
 		}
 		cursor, err = c.loadCursor(agent)
 		if err != nil {
-			return Summary{}, err
+			return nil, err
 		}
 	}
 }
@@ -200,37 +211,42 @@ func (c *Client) appendInbox(agent string, line []byte) error {
 	return err
 }
 
-func (c *Client) nextInboxSummary(agent string, cursor Cursor, since int64) (Summary, int64, bool, error) {
+// pendingInboxSummaries: a malformed or unrecognized line is skipped,
+// matching appendInbox's best-effort delivery guarantee; an unterminated
+// trailing line (a write caught mid-flight) halts the scan without consuming
+// it, so a later appendInbox can self-heal it via trimUnterminatedInboxTail.
+func (c *Client) pendingInboxSummaries(agent string, cursor Cursor, since int64) ([]Summary, int64, error) {
 	file, err := os.Open(filepath.Join(c.Home, "inbox", agent))
 	if errors.Is(err, os.ErrNotExist) {
-		return Summary{}, cursor.InboxOffset, false, nil
+		return nil, cursor.InboxOffset, nil
 	}
 	if err != nil {
-		return Summary{}, cursor.InboxOffset, false, err
+		return nil, cursor.InboxOffset, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Summary{}, cursor.InboxOffset, false, err
+		return nil, cursor.InboxOffset, err
 	}
 	offset := cursor.InboxOffset
 	if offset > info.Size() {
 		offset = 0
 	}
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
-		return Summary{}, offset, false, err
+		return nil, offset, err
 	}
 	reader := bufio.NewReader(file)
+	var pending []Summary
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) == 0 && errors.Is(readErr, io.EOF) {
-			return Summary{}, offset, false, nil
+			return pending, offset, nil
 		}
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return Summary{}, offset, false, readErr
+			return pending, offset, readErr
 		}
 		if line[len(line)-1] != '\n' {
-			return Summary{}, offset, false, nil
+			return pending, offset, nil
 		}
 		offset += int64(len(line))
 		var summary Summary
@@ -241,7 +257,7 @@ func (c *Client) nextInboxSummary(agent string, cursor Cursor, since int64) (Sum
 			continue
 		}
 		if summary.Sequence > since && !indexAcknowledged(cursor.SummaryRanges, summary.Sequence) {
-			return summary, offset, true, nil
+			pending = append(pending, summary)
 		}
 	}
 }

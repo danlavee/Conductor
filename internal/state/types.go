@@ -80,6 +80,8 @@ type ReadResult struct {
 	Topic        string        `json:"topic"`
 	Records      []Record      `json:"records,omitempty"`
 	Publications []Publication `json:"publications,omitempty"`
+	Remaining    int           `json:"remaining,omitempty"`
+	DefaultLimit int           `json:"default_read_limit,omitempty"`
 	maxSequence  int64
 	record       int64
 }

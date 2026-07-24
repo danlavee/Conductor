@@ -16,12 +16,17 @@ type ReadRequest = state.ReadRequest
 type ReadResult = state.ReadResult
 type DeliveryMode = state.DeliveryMode
 type Delivery = state.Delivery
+type BatchDelivery = state.BatchDelivery
 
 const (
 	ReadRange = state.ReadRange
 	ReadDelta = state.ReadDelta
 	ReadFull  = state.ReadFull
 )
+
+// DefaultReadLimit is the record cap get and watch apply per response when
+// the caller doesn't request more explicitly.
+const DefaultReadLimit = state.DefaultReadLimit
 
 const (
 	DeliverySummary = state.DeliverySummary

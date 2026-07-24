@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -28,22 +29,64 @@ func TestWatchAcknowledgementReplaysBeforeCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(first) == 0 {
+		t.Fatal("expected at least one pending summary")
+	}
 	replayed, err := a.Watch()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed != first {
-		t.Fatalf("unacknowledged summary was not replayed: first=%#v replay=%#v", first, replayed)
+	if !reflect.DeepEqual(replayed, first) {
+		t.Fatalf("unacknowledged batch was not replayed identically: first=%#v replay=%#v", first, replayed)
 	}
-	if err := a.AcknowledgeSummary(first); err != nil {
+	for _, summary := range first {
+		if err := a.AcknowledgeSummary(summary); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 500, Agent: "a"}, Recipients: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
-	next, err := a.Watch()
+	next := watchOne(t, a)
+	if next.Sequence != 500 {
+		t.Fatalf("acknowledged batch replayed instead of advancing to new signal: next=%#v", next)
+	}
+}
+
+func TestWatchReturnsAllPendingSignalsInOneBatch(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+	if _, err := client.Join("a", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	drainSummaries(t, client, 2) // collaboration/agents roster commit, then join
+	recipients := []string{"a"}
+	for _, sequence := range []int64{201, 202, 203} {
+		if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: sequence, Agent: "a"}, Recipients: recipients}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summaries, err := client.Watch()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.Sequence <= first.Sequence {
-		t.Fatalf("acknowledged summary replayed: first=%d next=%d", first.Sequence, next.Sequence)
+	if len(summaries) != 3 {
+		t.Fatalf("watch = %#v, want all 3 pending signals drained in one call", summaries)
+	}
+	for index, want := range []int64{201, 202, 203} {
+		if summaries[index].Sequence != want {
+			t.Fatalf("summaries[%d].Sequence = %d, want %d (discovery order preserved)", index, summaries[index].Sequence, want)
+		}
+	}
+	for _, summary := range summaries {
+		if err := client.AcknowledgeSummary(summary); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := client.WatchContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("acknowledged batch replayed: %v", err)
 	}
 }
 
@@ -60,9 +103,9 @@ func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 103, Agent: "a"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
-	higher, err := client.Watch()
-	if err != nil || higher.Sequence != 103 {
-		t.Fatalf("higher signal = %#v, %v", higher, err)
+	higher := watchOne(t, client)
+	if higher.Sequence != 103 {
+		t.Fatalf("higher signal = %#v", higher)
 	}
 	if err := client.AcknowledgeSummary(higher); err != nil {
 		t.Fatal(err)
@@ -70,9 +113,9 @@ func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 102, Agent: "a"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
-	late, err := client.Watch()
-	if err != nil || late.Sequence != 102 {
-		t.Fatalf("late lower signal was skipped: %#v, %v", late, err)
+	late := watchOne(t, client)
+	if late.Sequence != 102 {
+		t.Fatalf("late lower signal was skipped: %#v", late)
 	}
 }
 
@@ -90,14 +133,14 @@ func TestWatchSinceReturnsOnlyHigherIndexes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	summary, err := client.WatchSinceContext(context.Background(), 2)
+	summaries, err := client.WatchSinceContext(context.Background(), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Sequence != 3 {
-		t.Fatalf("watch since 2 returned sequence %d", summary.Sequence)
+	if len(summaries) != 1 || summaries[0].Sequence != 3 {
+		t.Fatalf("watch since 2 returned %#v", summaries)
 	}
-	if err := client.AcknowledgeSummary(summary); err != nil {
+	if err := client.AcknowledgeSummary(summaries[0]); err != nil {
 		t.Fatal(err)
 	}
 	cursor, err := client.loadCursor("a")
@@ -145,9 +188,9 @@ func TestWatchReconcilesJournalWhenInboxAppendIsMissing(t *testing.T) {
 	if err := writeJSONAtomic(filepath.Join(home, "events", indexName(index)), event); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := client.Watch()
-	if err != nil || summary.Sequence != index {
-		t.Fatalf("journal-only event not reconciled: %#v, %v", summary, err)
+	summary := watchOne(t, client)
+	if summary.Sequence != index {
+		t.Fatalf("journal-only event not reconciled: %#v", summary)
 	}
 }
 
@@ -181,9 +224,9 @@ func TestWatchSkipsCorruptInboxLine(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			watched, err := client.Watch()
-			if err != nil || watched.Sequence != summary.Sequence {
-				t.Fatalf("watch = %#v, %v", watched, err)
+			watched := watchOne(t, client)
+			if watched.Sequence != summary.Sequence {
+				t.Fatalf("watch = %#v", watched)
 			}
 			if err := client.AcknowledgeSummary(watched); err != nil {
 				t.Fatal(err)
@@ -218,9 +261,9 @@ func TestWatchReconcilesJournalWhenInboxEndsWithTruncatedLine(t *testing.T) {
 	if err := writeJSONAtomic(filepath.Join(home, "events", indexName(index)), event); err != nil {
 		t.Fatal(err)
 	}
-	watched, err := client.Watch()
-	if err != nil || watched.Sequence != index {
-		t.Fatalf("watch = %#v, %v", watched, err)
+	watched := watchOne(t, client)
+	if watched.Sequence != index {
+		t.Fatalf("watch = %#v", watched)
 	}
 	if err := client.AcknowledgeSummary(watched); err != nil {
 		t.Fatal(err)
@@ -245,9 +288,9 @@ func TestWatchReconcilesJournalWhenInboxEndsWithTruncatedLine(t *testing.T) {
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	afterRepair, err := client.Watch()
-	if err != nil || afterRepair.Sequence != next.Sequence {
-		t.Fatalf("watch after repair = %#v, %v", afterRepair, err)
+	afterRepair := watchOne(t, client)
+	if afterRepair.Sequence != next.Sequence {
+		t.Fatalf("watch after repair = %#v", afterRepair)
 	}
 }
 

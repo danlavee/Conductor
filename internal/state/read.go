@@ -10,6 +10,12 @@ import (
 	"strings"
 )
 
+// DefaultReadLimit caps how many records get/watch return when the caller
+// doesn't pass an explicit --limit, so an unbounded backlog or topic can't
+// flood a caller's context in one response. An explicit --limit is always
+// honored as given, never re-capped by this default.
+const DefaultReadLimit = 20
+
 // Get reads a current record range, the full current topic, or unread
 // subscribed content.
 func (c *Client) Get(request ReadRequest) (ReadResult, error) {
@@ -52,21 +58,33 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 		if request.RecordIndex > 0 {
 			start, end = request.RecordIndex, request.RecordIndex
 		}
+		limit := request.Limit
+		if limit == 0 {
+			limit = DefaultReadLimit
+		}
+		matched := 0
 		for _, record := range materialize(history) {
 			if record.Index < start || (end > 0 && record.Index > end) {
 				continue
 			}
-			result.Records = append(result.Records, record)
-			if request.Limit > 0 && len(result.Records) == request.Limit {
-				break
+			matched++
+			if len(result.Records) < limit {
+				result.Records = append(result.Records, record)
 			}
 		}
+		result.Remaining = matched - len(result.Records)
 		if request.RecordIndex > 0 && len(result.Records) == 0 {
 			return ReadResult{}, &ProtocolError{Code: "NOT_FOUND", Text: "record does not exist"}
 		}
 	case ReadFull:
 		result.Mode = "full"
-		result.Records = materialize(history)
+		all := materialize(history)
+		if len(all) > DefaultReadLimit {
+			result.Records = all[:DefaultReadLimit]
+			result.Remaining = len(all) - DefaultReadLimit
+		} else {
+			result.Records = all
+		}
 	case ReadDelta:
 		result.Mode = "delta"
 		subscribed, err := c.isSubscribed(agent, request.Topic)
@@ -81,6 +99,12 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 			return ReadResult{}, err
 		}
 		from := cursor.Topics[recordSlot(request.Topic, request.RecordIndex)] + 1
+		limit := request.Limit
+		if limit == 0 {
+			limit = DefaultReadLimit
+		}
+		var candidates []Publication
+		total := 0
 		for _, publication := range history {
 			if publication.Sequence < from || (request.throughSequence > 0 && publication.Sequence > request.throughSequence) {
 				continue
@@ -89,18 +113,28 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 			if len(changed) == 0 {
 				continue
 			}
-			if request.Limit > 0 && publicationRecordCount(result.Publications)+len(changed) > request.Limit {
-				if len(result.Publications) == 0 {
-					return ReadResult{}, errors.New("--limit is smaller than the next atomic record change")
-				}
+			publication.Records = changed
+			candidates = append(candidates, publication)
+			total += len(changed)
+		}
+		included := 0
+		for _, publication := range candidates {
+			// The first qualifying publication is always included whole, even
+			// if it alone exceeds limit -- a publication is delivered atomically
+			// and can't be split across two delta reads.
+			if included > 0 && included+len(publication.Records) > limit {
 				break
 			}
-			publication.Records = changed
 			result.Publications = append(result.Publications, publication)
 			result.maxSequence = publication.Sequence
+			included += len(publication.Records)
 		}
+		result.Remaining = total - included
 	default:
 		return ReadResult{}, errors.New("unknown read mode")
+	}
+	if result.Remaining > 0 {
+		result.DefaultLimit = DefaultReadLimit
 	}
 	return result, nil
 }
@@ -196,12 +230,4 @@ func materializeMap(history []Publication) map[int64]Record {
 
 func materialize(history []Publication) []Record {
 	return sortedRecords(materializeMap(history))
-}
-
-func publicationRecordCount(publications []Publication) int {
-	count := 0
-	for _, publication := range publications {
-		count += len(publication.Records)
-	}
-	return count
 }

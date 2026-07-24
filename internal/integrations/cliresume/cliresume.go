@@ -51,7 +51,7 @@ func (t Transport) Validate(targetID, agent string) error {
 }
 
 type WatchClient interface {
-	WatchContext(context.Context) (conductor.Summary, error)
+	WatchContext(context.Context) ([]conductor.Summary, error)
 	ResolveDelivery(conductor.Summary, conductor.DeliveryMode) (conductor.Delivery, error)
 	AcknowledgeDelivery(conductor.Delivery) error
 }
@@ -126,19 +126,21 @@ func Run(ctx context.Context, transport Transport, client WatchClient, activator
 		return err
 	}
 	for {
-		summary, err := client.WatchContext(ctx)
+		summaries, err := client.WatchContext(ctx)
 		if err != nil {
 			return err
 		}
-		delivery, err := client.ResolveDelivery(summary, mode)
-		if err != nil {
-			return fmt.Errorf("resolve Conductor summary %d for %s: %w", summary.Sequence, transport.RuntimeLabel, err)
-		}
-		if err := activator.Activate(ctx, targetID, agent, delivery); err != nil {
-			return fmt.Errorf("deliver Conductor summary %d to %s: %w", summary.Sequence, transport.RuntimeLabel, err)
-		}
-		if err := client.AcknowledgeDelivery(delivery); err != nil {
-			return fmt.Errorf("acknowledge Conductor summary %d after %s delivery: %w", summary.Sequence, transport.RuntimeLabel, err)
+		for _, summary := range summaries {
+			delivery, err := client.ResolveDelivery(summary, mode)
+			if err != nil {
+				return fmt.Errorf("resolve Conductor summary %d for %s: %w", summary.Sequence, transport.RuntimeLabel, err)
+			}
+			if err := activator.Activate(ctx, targetID, agent, delivery); err != nil {
+				return fmt.Errorf("deliver Conductor summary %d to %s: %w", summary.Sequence, transport.RuntimeLabel, err)
+			}
+			if err := client.AcknowledgeDelivery(delivery); err != nil {
+				return fmt.Errorf("acknowledge Conductor summary %d after %s delivery: %w", summary.Sequence, transport.RuntimeLabel, err)
+			}
 		}
 	}
 }

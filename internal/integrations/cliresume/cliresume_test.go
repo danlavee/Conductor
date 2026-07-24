@@ -44,12 +44,12 @@ type stubWatchClient struct {
 	ackErr       error
 }
 
-func (c *stubWatchClient) WatchContext(context.Context) (conductor.Summary, error) {
+func (c *stubWatchClient) WatchContext(context.Context) ([]conductor.Summary, error) {
 	if c.delivered {
-		return conductor.Summary{}, c.stop
+		return nil, c.stop
 	}
 	c.delivered = true
-	return c.summary, nil
+	return []conductor.Summary{c.summary}, nil
 }
 
 func (c *stubWatchClient) ResolveDelivery(summary conductor.Summary, mode conductor.DeliveryMode) (conductor.Delivery, error) {

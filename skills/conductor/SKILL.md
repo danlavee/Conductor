@@ -133,6 +133,8 @@ Inside a transaction, `put`, `edit`, and `strike` only stage changes. `commit` p
 
 Records nested in history still contain only `index` and `text`. Publication metadata and delta delivery are separate from record operations. Delivery can replay after a crash, so process publications idempotently.
 
+Any `get`, and everything bare `watch` resolves in one call, is capped at 20 records by default when you don't pass an explicit `--limit`; a capped response carries `remaining` (how much was left out) and `default_read_limit` (the cap applied), so you always know whether you're seeing everything or need to ask again with a bigger `--limit`. Nothing is ever silently truncated without telling you.
+
 ## Recover and leave
 
 `LOCKED` protects a live owner or reader. `TIMEOUT` means a lease expired but its process is still alive. A dead owner recovers automatically on the next read or write. `NOT_FOUND` means the requested record or agent does not exist. On `PROTOCOL_MISMATCH`, stop; do not edit, migrate, or retry the state root implicitly.

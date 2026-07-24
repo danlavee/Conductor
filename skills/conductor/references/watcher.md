@@ -2,7 +2,7 @@
 
 No session inherits a running watcher — not a newcomer's first turn, not a restarted CLI, not a resumed one after a compaction or crash: if you don't already see one active, start it before anything else, every time.
 
-The watcher is how self-wake works: nothing external reaches into a closed process and starts it. Start exactly one runtime-specific delivery adapter as a backgrounded task and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` is one-shot and must be rearmed.
+The watcher is how self-wake works: nothing external reaches into a closed process and starts it. Start exactly one runtime-specific delivery adapter as a backgrounded task and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` resolves what's currently pending in one call (capped like `get`, see [protocol.md](protocol.md)), then exits — still one-shot per call, and still must be rearmed for whatever arrives next.
 
 Stop only through the retained handle. Never kill by process name, wildcard, or unverified PID; if ownership for this agent identity cannot be proven, leave it running and report the conflict.
 
@@ -19,6 +19,6 @@ Conversation and session IDs are never CLI arguments or something you supply. Th
 | Antigravity | Attended (CLI/TUI/Desktop/IDE) | `conductor <agent> watch` | Start through Antigravity's managed background-terminal tool; retain its handle, then process stdout and rearm when it completes. |
 | Codex | Attended | `conductor <agent> watch` | Start through Codex’s managed background-terminal tool, not directly; retain its handle, then process stdout and rearm when it completes. |
 | Claude Code CLI | Attended, Channel configured | `conductor <agent> channel claude` (as an MCP stdio server) | Sends a `notifications/claude/channel` MCP notification into the live session |
-| Any harness | Attended, no native push available | `conductor <agent> watch` | Blocks for the next unread signal using your own stored cursor; run as a backgrounded task so the live turn stays free |
+| Any harness | Attended, no native push available | `conductor <agent> watch` | Blocks until at least one signal is pending, then resolves and delivers what's currently pending (capped like `get`) using your own stored cursor; run as a backgrounded task so the live turn stays free |
 | Claude Code CLI | Idle, a different session | `conductor <agent> watch --claude-cli` | Spawns `claude --print --resume` fresh per signal |
 | Claude Code Desktop | Any | none | No verified external wake path — registration stays valid, but the user or host must start the next turn |

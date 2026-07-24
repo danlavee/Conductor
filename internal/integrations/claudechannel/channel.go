@@ -18,7 +18,7 @@ import (
 const protocolVersion = "2025-11-25"
 
 type WatchClient interface {
-	WatchContext(context.Context) (conductor.Summary, error)
+	WatchContext(context.Context) ([]conductor.Summary, error)
 	AcknowledgeSummary(conductor.Summary) error
 }
 
@@ -143,23 +143,25 @@ func Run(ctx context.Context, client WatchClient, input io.Reader, output io.Wri
 
 func watch(ctx context.Context, client WatchClient, writer *synchronizedEncoder, agent string, result chan<- error) {
 	for {
-		summary, err := client.WatchContext(ctx)
+		summaries, err := client.WatchContext(ctx)
 		if err != nil {
 			result <- err
 			return
 		}
-		notification := outboundNotification{
-			JSONRPC: "2.0",
-			Method:  "notifications/claude/channel",
-			Params:  summaryNotification(agent, summary),
-		}
-		if err := writer.write(notification); err != nil {
-			result <- fmt.Errorf("deliver Conductor summary %d to Claude channel: %w", summary.Sequence, err)
-			return
-		}
-		if err := client.AcknowledgeSummary(summary); err != nil {
-			result <- fmt.Errorf("acknowledge Conductor summary %d after Claude channel delivery: %w", summary.Sequence, err)
-			return
+		for _, summary := range summaries {
+			notification := outboundNotification{
+				JSONRPC: "2.0",
+				Method:  "notifications/claude/channel",
+				Params:  summaryNotification(agent, summary),
+			}
+			if err := writer.write(notification); err != nil {
+				result <- fmt.Errorf("deliver Conductor summary %d to Claude channel: %w", summary.Sequence, err)
+				return
+			}
+			if err := client.AcknowledgeSummary(summary); err != nil {
+				result <- fmt.Errorf("acknowledge Conductor summary %d after Claude channel delivery: %w", summary.Sequence, err)
+				return
+			}
 		}
 	}
 }
