@@ -16,4 +16,4 @@ It acknowledges only after a successful process exit with valid JSON output. The
 
 That resumed turn has no attached terminal, so a tool call requiring interactive approval can stall with no approver. Verify unattended delivery once with a throwaway publication and confirm the resumed turn advances the delta cursor before relying on it.
 
-This path is suitable for an idle persisted session. It is not input injection into a separately running CLI or Desktop process. Use the [Claude Channel](claude-channel.md) for an open Claude Code CLI session.
+This path is suitable for an idle persisted session. It is not input injection into a separately running CLI or Desktop process.

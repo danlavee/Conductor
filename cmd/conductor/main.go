@@ -342,11 +342,6 @@ func run(args []string) error {
 			return runClaudeCLIWatchCommand(context.Background(), client, agent, mode)
 		}
 		return usageError()
-	case "channel":
-		if len(rest) != 1 || rest[0] != "claude" {
-			return usageError()
-		}
-		return runClaudeChannelCommand(context.Background(), client, agent)
 	default:
 		return usageError()
 	}
@@ -531,7 +526,7 @@ func parseGet(args []string) (conductor.ReadRequest, error) {
 }
 
 func usageError() error {
-	return errors.New("usage: conductor install <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--claude-cli] [--mode=summary|content] | conductor <agent> channel claude")
+	return errors.New("usage: conductor install <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--claude-cli] [--mode=summary|content]")
 }
 
 func installUsageError() error {

@@ -11,7 +11,6 @@ Implemented integrations:
 - [Codex](integrations/codex.md)
 - [Antigravity](integrations/agy.md), through its host-managed background terminal
 - [Claude Code CLI](integrations/claude-cli.md)
-- [Claude Code Channel](integrations/claude-channel.md)
 
 Investigated but not externally bindable:
 
