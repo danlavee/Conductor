@@ -374,3 +374,104 @@ func TestTextIdenticalEditStillPublishes(t *testing.T) {
 		t.Fatalf("history = %#v, %v", history, err)
 	}
 }
+
+func TestClientRedact(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+	if _, err := client.Join("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Publish three records
+	r1, err := client.Put("dev/tasks", "task 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := client.Put("dev/tasks", "task 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r3, err := client.Put("dev/tasks", "task 3")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify initial materialized state
+	full, err := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full.Records) != 3 {
+		t.Fatalf("expected 3 records, got %d", len(full.Records))
+	}
+	if full.Records[0].Index != r1.Index || full.Records[1].Index != r2.Index || full.Records[2].Index != r3.Index {
+		t.Fatal("records out of index sequence order")
+	}
+
+	// 2. Redact single record (Record 2)
+	err = client.Redact("dev/tasks", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Verify record 2 is gone, but 1 and 3 are present (indices MUST not shift)
+	fullRedacted, err := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fullRedacted.Records) != 2 {
+		t.Fatalf("expected 2 records after redaction, got %d", len(fullRedacted.Records))
+	}
+	if fullRedacted.Records[0].Index != 1 || fullRedacted.Records[0].Text != "task 1" {
+		t.Fatalf("record 1 shifted or changed: %#v", fullRedacted.Records[0])
+	}
+	if fullRedacted.Records[1].Index != 3 || fullRedacted.Records[1].Text != "task 3" {
+		t.Fatalf("record 3 shifted or changed: %#v", fullRedacted.Records[1])
+	}
+
+	// 4. Verify that automatic backup file exists in the topic directory
+	dir, err := client.topicDir("dev/tasks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, "history.jsonl.bak-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly 1 backup file, found %d", len(matches))
+	}
+	// Verify backup contains the original unredacted history
+	backupData, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backupData) == 0 {
+		t.Fatal("backup file is empty")
+	}
+
+	// 5. Redact remaining range [1, 3]
+	err = client.Redact("dev/tasks", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify all records in the range are completely pruned from live history
+	fullCleared, err := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fullCleared.Records) != 0 {
+		t.Fatalf("expected 0 records, got %d", len(fullCleared.Records))
+	}
+
+	// Now there should be exactly two backup files (one from each redaction)
+	matchesAfter, err := filepath.Glob(filepath.Join(dir, "history.jsonl.bak-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matchesAfter) != 2 {
+		t.Fatalf("expected exactly 2 backup files, found %d", len(matchesAfter))
+	}
+}
+

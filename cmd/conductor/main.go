@@ -259,6 +259,53 @@ func run(args []string) error {
 			return usageError()
 		}
 		return writeRecordResult(result, err)
+	case "redact":
+		if len(rest) < 2 || len(rest) > 3 {
+			return usageError()
+		}
+		topic := rest[0]
+		var start, end int64
+		var err error
+
+		if len(rest) == 2 {
+			index, parseErr := parseRecordIndex(rest[1])
+			if parseErr != nil {
+				return parseErr
+			}
+			start = index
+			end = index
+		} else {
+			for _, arg := range rest[1:] {
+				if val, ok := strings.CutPrefix(arg, "--start="); ok {
+					start, err = strconv.ParseInt(val, 10, 64)
+					if err != nil {
+						return fmt.Errorf("invalid --start: %w", err)
+					}
+				} else if val, ok := strings.CutPrefix(arg, "--end="); ok {
+					end, err = strconv.ParseInt(val, 10, 64)
+					if err != nil {
+						return fmt.Errorf("invalid --end: %w", err)
+					}
+				} else {
+					return usageError()
+				}
+			}
+		}
+
+		if start <= 0 || end <= 0 || end < start {
+			return errors.New("invalid redact range")
+		}
+
+		if err := client.Redact(topic, start, end); err != nil {
+			return err
+		}
+
+		return conductor.WriteJSON(os.Stdout, map[string]string{
+			"status": "redacted",
+			"topic":  topic,
+			"start":  strconv.FormatInt(start, 10),
+			"end":    strconv.FormatInt(end, 10),
+		})
 	case "get":
 		request, err := parseGet(rest)
 		if err != nil {
