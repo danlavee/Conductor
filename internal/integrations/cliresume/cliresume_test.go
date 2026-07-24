@@ -42,6 +42,7 @@ type stubWatchClient struct {
 	stop         error
 	resolveErr   error
 	ackErr       error
+	events       *[]string
 }
 
 func (c *stubWatchClient) WatchContext(context.Context) ([]conductor.Summary, error) {
@@ -60,6 +61,9 @@ func (c *stubWatchClient) ResolveDelivery(summary conductor.Summary, mode conduc
 }
 
 func (c *stubWatchClient) AcknowledgeDelivery(conductor.Delivery) error {
+	if c.events != nil {
+		*c.events = append(*c.events, "ack")
+	}
 	c.acknowledged = true
 	return c.ackErr
 }
@@ -69,9 +73,13 @@ type stubActivator struct {
 	agent    string
 	delivery conductor.Delivery
 	err      error
+	events   *[]string
 }
 
 func (a *stubActivator) Activate(_ context.Context, target, agent string, delivery conductor.Delivery) error {
+	if a.events != nil {
+		*a.events = append(*a.events, "activate")
+	}
 	a.target = target
 	a.agent = agent
 	a.delivery = delivery
@@ -117,11 +125,12 @@ func TestNewFailsWithHelpfulErrorWhenNotFoundAnywhere(t *testing.T) {
 
 func TestRunDeliversThenAcknowledges(t *testing.T) {
 	stop := errors.New("stop")
-	client := &stubWatchClient{summary: conductor.Summary{Type: "update", Topic: "dev/tasks", Sequence: 4, Agent: "writer"}, stop: stop}
-	activator := &stubActivator{}
+	var events []string
+	client := &stubWatchClient{summary: conductor.Summary{Type: "update", Topic: "dev/tasks", Sequence: 4, Agent: "writer"}, stop: stop, events: &events}
+	activator := &stubActivator{events: &events}
 	err := Run(context.Background(), testTransport, client, activator, "target-1", "tester1", conductor.DeliverySummary)
-	if !errors.Is(err, stop) || !client.acknowledged || activator.target != "target-1" || activator.agent != "tester1" {
-		t.Fatalf("error=%v acknowledged=%v activator=%#v", err, client.acknowledged, activator)
+	if !errors.Is(err, stop) || !client.acknowledged || activator.target != "target-1" || activator.agent != "tester1" || strings.Join(events, ",") != "activate,ack" {
+		t.Fatalf("error=%v acknowledged=%v events=%v activator=%#v", err, client.acknowledged, events, activator)
 	}
 }
 
@@ -130,6 +139,20 @@ func TestRunLeavesFailedDeliveryUnread(t *testing.T) {
 	err := Run(context.Background(), testTransport, client, &stubActivator{err: errors.New("failed")}, "target-1", "tester1", conductor.DeliverySummary)
 	if err == nil || client.acknowledged || !strings.Contains(err.Error(), "summary 5") {
 		t.Fatalf("error=%v acknowledged=%v", err, client.acknowledged)
+	}
+}
+
+func TestRunReportsAcknowledgmentFailureAfterActivation(t *testing.T) {
+	ackFailure := errors.New("ack failed")
+	var events []string
+	client := &stubWatchClient{
+		summary: conductor.Summary{Type: "update", Topic: "dev/tasks", Sequence: 5, Agent: "writer"},
+		ackErr:  ackFailure,
+		events:  &events,
+	}
+	err := Run(context.Background(), testTransport, client, &stubActivator{events: &events}, "target-1", "tester1", conductor.DeliverySummary)
+	if !errors.Is(err, ackFailure) || strings.Join(events, ",") != "activate,ack" || !strings.Contains(err.Error(), "acknowledge Conductor summary 5") {
+		t.Fatalf("error=%v events=%v", err, events)
 	}
 }
 
@@ -263,8 +286,11 @@ func TestSignalPromptContentModeSkipsGetAndListAgents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(prompt, "already included") || !strings.Contains(prompt, "Do not call get or list-agents") {
+	if !strings.Contains(prompt, "already included") || !strings.Contains(prompt, "Do not call get, list-agents, or watch") || !strings.Contains(prompt, "after this turn succeeds") {
 		t.Fatalf("prompt = %q", prompt)
+	}
+	if strings.Contains(prompt, "already acknowledged") || strings.Contains(prompt, "call watch again") {
+		t.Fatalf("prompt misstates delivery settlement: %q", prompt)
 	}
 }
 

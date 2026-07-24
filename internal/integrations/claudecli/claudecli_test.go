@@ -129,7 +129,7 @@ func TestSignalPromptContentModeSkipsGetAndListAgents(t *testing.T) {
 		Mode:    conductor.DeliveryContent,
 		Delta:   &conductor.ReadResult{Mode: "delta", Topic: "dev/tasks"},
 	})
-	if err != nil || !strings.Contains(prompt, "already included") || !strings.Contains(prompt, "Do not call get or list-agents") {
+	if err != nil || !strings.Contains(prompt, "already included") || !strings.Contains(prompt, "Do not call get, list-agents, or watch") || !strings.Contains(prompt, "after this turn succeeds") {
 		t.Fatalf("prompt=%q error=%v", prompt, err)
 	}
 }

@@ -153,7 +153,7 @@ func SignalPrompt(runtimeLabel, agent string, delivery conductor.Delivery) (stri
 		return "", err
 	}
 	if delivery.Mode == conductor.DeliveryContent {
-		return fmt.Sprintf("Conductor activated this %s turn for agent %q with a resolved delivery: %s. Its content is already included (a topic delta for an update, the roster for a join or leave), and both the summary and topic cursor are already acknowledged. Do not call get or list-agents for it; act on the included data directly, then call watch again to re-arm. The adapter already owns the wait loop, so do not start conductor watch yourself. Process idempotently and report the result.", runtimeLabel, agent, payload), nil
+		return fmt.Sprintf("Conductor activated this %s turn for agent %q with a resolved delivery: %s. Its content is already included (a topic delta for an update, the roster for a join or leave). Do not call get, list-agents, or watch for it; act on the included data directly. The adapter will acknowledge the summary and any associated topic cursor after this turn succeeds, then re-arm its own wait loop. Process idempotently and report the result.", runtimeLabel, agent, payload), nil
 	}
 	return fmt.Sprintf("Conductor activated this %s turn for agent %q with summary %s. Use the installed Conductor skill to process it. For an update, read the named topic; for a join or leave, refresh the roster. The adapter already owns the wait loop, so do not start conductor watch. Process this summary idempotently and report the result.", runtimeLabel, agent, payload), nil
 }
