@@ -28,11 +28,10 @@ type Delivery struct {
 	Mode    DeliveryMode `json:"mode"`
 	Roster  []Agent      `json:"roster,omitempty"`
 	Delta   *ReadResult  `json:"delta,omitempty"`
-	// covered holds every original pending summary this delivery satisfies --
-	// possibly several, when consecutive-or-not "update" summaries for the
-	// same topic were grouped into one Get call. AcknowledgeBatch marks all
-	// of them read, not just Summary.
-	covered []Summary
+	// coverageKnown distinguishes an intentionally empty coverage set produced
+	// by ResolveBatch from a delivery constructed outside batch resolution.
+	coveredSummaries []Summary
+	coverageKnown    bool
 }
 
 func (c *Client) ResolveDelivery(summary Summary, mode DeliveryMode) (Delivery, error) {
@@ -72,24 +71,25 @@ func (c *Client) AcknowledgeDelivery(delivery Delivery) error {
 		return err
 	}
 
-	slot := ""
-	var sequence int64
-	if delivery.Delta != nil {
-		if delivery.Delta.Mode == "delta" && delivery.Delta.maxSequence > 0 {
-			slot = recordCursorSlot(delivery.Delta.Topic, delivery.Delta.record)
-			sequence = delivery.Delta.maxSequence
-		}
-	} else if delivery.Mode == DeliverySummary && delivery.Summary.Type == "update" {
-		slot = delivery.Summary.Topic
-		sequence = delivery.Summary.Sequence
-	}
+	cursorSlot, throughSequence := deliveryCursorAdvance(delivery)
 
 	return c.updateCursor(agent, func(cursor *Cursor) {
 		applySummaryAcknowledgment(cursor, delivery.Summary, offset)
-		if sequence > cursor.Topics[slot] {
-			cursor.Topics[slot] = sequence
+		if throughSequence > cursor.Topics[cursorSlot] {
+			cursor.Topics[cursorSlot] = throughSequence
 		}
 	})
+}
+
+func deliveryCursorAdvance(delivery Delivery) (cursorSlot string, throughSequence int64) {
+	if delivery.Delta != nil {
+		if delivery.Delta.Mode == "delta" && delivery.Delta.maxSequence > 0 {
+			return recordCursorSlot(delivery.Delta.Topic, delivery.Delta.record), delivery.Delta.maxSequence
+		}
+	} else if delivery.Mode == DeliverySummary && delivery.Summary.Type == "update" {
+		return delivery.Summary.Topic, delivery.Summary.Sequence
+	}
+	return "", 0
 }
 
 // BatchDelivery is every delivery one watch call resolved, capped at
@@ -150,7 +150,8 @@ func finalizeGroupDelivery(delivery Delivery, group []Summary) (Delivery, []Summ
 	if delivery.Delta != nil && len(covered) > 0 {
 		delivery.Summary = covered[len(covered)-1]
 	}
-	delivery.covered = covered
+	delivery.coveredSummaries = covered
+	delivery.coverageKnown = true
 	return delivery, uncovered
 }
 
@@ -159,20 +160,58 @@ func finalizeGroupDelivery(delivery Delivery, group []Summary) (Delivery, []Summ
 // carries. Summaries left out by Remaining were never touched and stay
 // pending for the next watch call.
 func (c *Client) AcknowledgeBatch(batch BatchDelivery) error {
+	type summaryAcknowledgment struct {
+		summary Summary
+		offset  int64
+	}
+	var agent string
+	var acknowledgments []summaryAcknowledgment
+	sequenceByCursorSlot := map[string]int64{}
 	for _, delivery := range batch.Deliveries {
-		if err := c.AcknowledgeDelivery(delivery); err != nil {
-			return err
+		summaries := delivery.coveredSummaries
+		if !delivery.coverageKnown {
+			summaries = []Summary{delivery.Summary}
 		}
-		for _, summary := range delivery.covered {
-			if summary.Sequence == delivery.Summary.Sequence {
-				continue
-			}
-			if err := c.AcknowledgeSummary(summary); err != nil {
+		for _, summary := range summaries {
+			currentAgent, offset, err := c.prepareSummaryAcknowledgment(summary)
+			if err != nil {
 				return err
 			}
+			if agent == "" {
+				agent = currentAgent
+			} else if currentAgent != agent {
+				return fmt.Errorf("batch summaries resolve to different agents")
+			}
+			acknowledgments = append(acknowledgments, summaryAcknowledgment{summary: summary, offset: offset})
+		}
+		cursorSlot, throughSequence := deliveryCursorAdvance(delivery)
+		if throughSequence > sequenceByCursorSlot[cursorSlot] {
+			sequenceByCursorSlot[cursorSlot] = throughSequence
 		}
 	}
-	return nil
+	if agent == "" && len(sequenceByCursorSlot) > 0 {
+		if err := c.validateProtocol(); err != nil {
+			return err
+		}
+		var err error
+		agent, err = c.requireAgent()
+		if err != nil {
+			return err
+		}
+	}
+	if agent == "" {
+		return nil
+	}
+	return c.updateCursor(agent, func(cursor *Cursor) {
+		for _, acknowledgment := range acknowledgments {
+			applySummaryAcknowledgment(cursor, acknowledgment.summary, acknowledgment.offset)
+		}
+		for cursorSlot, throughSequence := range sequenceByCursorSlot {
+			if throughSequence > cursor.Topics[cursorSlot] {
+				cursor.Topics[cursorSlot] = throughSequence
+			}
+		}
+	})
 }
 
 // groupSummariesByTopic buckets pending "update" summaries for the same

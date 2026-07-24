@@ -2,7 +2,7 @@
 
 No session inherits a running watcher — not a newcomer's first turn, not a restarted CLI, not a resumed one after a compaction or crash: if you don't already see one active, start it before anything else, every time. This is unlike joining, which is disk-persisted and outlives the session; only the watcher itself is session-scoped and needs restarting.
 
-The watcher is how self-wake works: nothing external reaches into a closed process and starts it. Start exactly one runtime-specific delivery adapter as a backgrounded task and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` resolves what's currently pending in one call (capped like `get`, see [protocol.md](protocol.md)), then exits — still one-shot per call, and still must be rearmed for whatever arrives next.
+The watcher is how self-wake works: nothing external reaches into a closed process and starts it. Start exactly one runtime-specific delivery adapter as a backgrounded task and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` resolves the current backlog up to its shared record cap, reports unresolved summaries in `remaining`, then exits - still one-shot per call, and still must be rearmed for whatever remains or arrives next.
 
 Stop only through the retained handle. Never kill by process name, wildcard, or unverified PID; if ownership for this agent identity cannot be proven, leave it running and report the conflict.
 

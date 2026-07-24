@@ -36,13 +36,15 @@ var testTransportWithHint = func() Transport {
 }()
 
 type stubWatchClient struct {
-	summary      conductor.Summary
-	delivered    bool
-	acknowledged bool
-	stop         error
-	resolveErr   error
-	ackErr       error
-	events       *[]string
+	summary               conductor.Summary
+	summaries             []conductor.Summary
+	delivered             bool
+	acknowledged          bool
+	acknowledgedSummaries []conductor.Summary
+	stop                  error
+	resolveErr            error
+	ackErr                error
+	events                *[]string
 }
 
 func (c *stubWatchClient) WatchContext(context.Context) ([]conductor.Summary, error) {
@@ -50,6 +52,9 @@ func (c *stubWatchClient) WatchContext(context.Context) ([]conductor.Summary, er
 		return nil, c.stop
 	}
 	c.delivered = true
+	if c.summaries != nil {
+		return c.summaries, nil
+	}
 	return []conductor.Summary{c.summary}, nil
 }
 
@@ -60,20 +65,23 @@ func (c *stubWatchClient) ResolveDelivery(summary conductor.Summary, mode conduc
 	return conductor.Delivery{Summary: summary, Mode: mode}, nil
 }
 
-func (c *stubWatchClient) AcknowledgeDelivery(conductor.Delivery) error {
+func (c *stubWatchClient) AcknowledgeDelivery(delivery conductor.Delivery) error {
 	if c.events != nil {
 		*c.events = append(*c.events, "ack")
 	}
 	c.acknowledged = true
+	c.acknowledgedSummaries = append(c.acknowledgedSummaries, delivery.Summary)
 	return c.ackErr
 }
 
 type stubActivator struct {
-	target   string
-	agent    string
-	delivery conductor.Delivery
-	err      error
-	events   *[]string
+	target       string
+	agent        string
+	delivery     conductor.Delivery
+	deliveries   []conductor.Delivery
+	err          error
+	failSequence int64
+	events       *[]string
 }
 
 func (a *stubActivator) Activate(_ context.Context, target, agent string, delivery conductor.Delivery) error {
@@ -83,7 +91,11 @@ func (a *stubActivator) Activate(_ context.Context, target, agent string, delive
 	a.target = target
 	a.agent = agent
 	a.delivery = delivery
-	return a.err
+	a.deliveries = append(a.deliveries, delivery)
+	if a.err != nil && (a.failSequence == 0 || delivery.Summary.Sequence == a.failSequence) {
+		return a.err
+	}
+	return nil
 }
 
 func TestNewFallsBackToCandidateExecutableWhenNotOnPath(t *testing.T) {
@@ -139,6 +151,28 @@ func TestRunLeavesFailedDeliveryUnread(t *testing.T) {
 	err := Run(context.Background(), testTransport, client, &stubActivator{err: errors.New("failed")}, "target-1", "tester1", conductor.DeliverySummary)
 	if err == nil || client.acknowledged || !strings.Contains(err.Error(), "summary 5") {
 		t.Fatalf("error=%v acknowledged=%v", err, client.acknowledged)
+	}
+}
+
+func TestRunAcknowledgesOnlySuccessfulPrefixOfSummaryBatch(t *testing.T) {
+	first := conductor.Summary{Type: "update", Topic: "dev/tasks", Sequence: 4, Agent: "writer"}
+	second := conductor.Summary{Type: "join", Topic: "registry", Sequence: 5, Agent: "writer"}
+	var events []string
+	client := &stubWatchClient{summaries: []conductor.Summary{first, second}, events: &events}
+	activator := &stubActivator{err: errors.New("failed"), failSequence: second.Sequence, events: &events}
+
+	err := Run(context.Background(), testTransport, client, activator, "target-1", "tester1", conductor.DeliverySummary)
+	if err == nil || !strings.Contains(err.Error(), "summary 5") {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.Join(events, ",") != "activate,ack,activate" {
+		t.Fatalf("events = %v", events)
+	}
+	if len(client.acknowledgedSummaries) != 1 || client.acknowledgedSummaries[0] != first {
+		t.Fatalf("acknowledged summaries = %#v", client.acknowledgedSummaries)
+	}
+	if len(activator.deliveries) != 2 {
+		t.Fatalf("activated deliveries = %#v", activator.deliveries)
 	}
 }
 

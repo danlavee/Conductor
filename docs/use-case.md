@@ -50,8 +50,8 @@ sequenceDiagram
     C-->>A: "Resulting index-and-text records"
 
     W->>C: "watch"
-    C-->>W: "One signal or resolved payload"
-    W-->>B: "Deliver signal"
+    C-->>W: "Capped delivery batch plus remaining"
+    W-->>B: "Deliver resolved batch"
     B->>C: "get resource"
     C->>D: "Read changes after B's cursor"
     C-->>B: "Delta result"
@@ -155,4 +155,4 @@ flowchart TD
     N -. "Crash before acknowledgement" .-> RR["Delivery may replay; it is not silently lost"]
 ```
 
-Recovery is opportunistic: a later read or write triggers it after lease expiry. `watch` only consumes signals and does not recover an interrupted resource transaction. `watch --since <index>` deliberately discards that index and all lower signal indexes, including a lower index that arrives late.
+Recovery is opportunistic: a later read or write triggers it after lease expiry. `watch` only consumes signals and does not recover an interrupted resource transaction. The SDK-only `WatchSinceContext(ctx, index)` operation deliberately discards that index and all lower signal indexes, including a lower index that arrives late.

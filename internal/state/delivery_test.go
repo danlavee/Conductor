@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -224,8 +225,16 @@ func TestResolveBatchGroupsSameTopicSignalsAndCapsAtDefaultReadLimit(t *testing.
 		t.Fatalf("batch remaining/default_read_limit = %d/%d, want 3/%d", batch.Remaining, batch.DefaultLimit, DefaultReadLimit)
 	}
 
+	cursorWrites := 0
+	reader.saveCursorFn = func(agent string, cursor Cursor) error {
+		cursorWrites++
+		return writeJSONAtomic(filepath.Join(reader.Home, "cursors", agent+".json"), cursor)
+	}
 	if err := reader.AcknowledgeBatch(batch); err != nil {
 		t.Fatal(err)
+	}
+	if cursorWrites != 1 {
+		t.Fatalf("batch cursor writes = %d, want 1", cursorWrites)
 	}
 	leftover, err := reader.Watch()
 	if err != nil {
@@ -233,6 +242,211 @@ func TestResolveBatchGroupsSameTopicSignalsAndCapsAtDefaultReadLimit(t *testing.
 	}
 	if len(leftover) != 3 {
 		t.Fatalf("leftover signals after acknowledging the batch = %d, want 3", len(leftover))
+	}
+}
+
+func TestFailedGroupedBatchAcknowledgmentReplaysSummariesAndContent(t *testing.T) {
+	home := t.TempDir()
+	writer := newTestClient(t, home, "")
+	if _, err := writer.Join("writer", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	reader := newTestClient(t, home, "")
+	if _, err := reader.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.SubscribeTopic("dev/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, reader)
+	for range 2 {
+		if _, err := writer.Put("dev/tasks", "x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summaries, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveFailure := errors.New("save failed")
+	reader.saveCursorFn = func(string, Cursor) error {
+		return saveFailure
+	}
+	if err := reader.AcknowledgeBatch(batch); !errors.Is(err, saveFailure) {
+		t.Fatalf("error = %v, want save failure", err)
+	}
+	reader.saveCursorFn = nil
+
+	replayed, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(replayed, summaries) {
+		t.Fatalf("replayed summaries = %#v, want %#v", replayed, summaries)
+	}
+	delta, err := reader.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadDelta})
+	if err != nil || len(delta.Publications) != 2 {
+		t.Fatalf("replayed delta = %#v, error = %v", delta, err)
+	}
+}
+
+func TestBatchDoesNotAcknowledgeSummaryReportedAsRemaining(t *testing.T) {
+	home := t.TempDir()
+	writer := newTestClient(t, home, "")
+	if _, err := writer.Join("writer", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	reader := newTestClient(t, home, "")
+	if _, err := reader.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.SubscribeTopic("dev/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, reader)
+	if _, err := writer.Put("dev/tasks", "x"); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta, err := reader.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadDelta})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.AcknowledgeRead(delta); err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch.Remaining != len(summaries) {
+		t.Fatalf("remaining = %d, want %d", batch.Remaining, len(summaries))
+	}
+	if err := reader.AcknowledgeBatch(batch); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(replayed, summaries) {
+		t.Fatalf("remaining summaries were acknowledged: got %#v, want %#v", replayed, summaries)
+	}
+}
+
+func TestBatchPersistsTopicOnlyProgressWithoutAcknowledgingRemainingSummary(t *testing.T) {
+	home := t.TempDir()
+	writer := newTestClient(t, home, "")
+	if _, err := writer.Join("writer", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	reader := newTestClient(t, home, "")
+	if _, err := reader.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.SubscribeTopic("dev/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, reader)
+
+	if err := writer.Begin("dev/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	for range DefaultReadLimit + 1 {
+		if _, err := writer.StagePut("old"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldPublication, err := writer.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Put("dev/tasks", "new"); err != nil {
+		t.Fatal(err)
+	}
+	all, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("summaries = %#v, want two", all)
+	}
+	if err := reader.AcknowledgeSummary(all[0]); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0] != all[1] {
+		t.Fatalf("pending summaries = %#v, want %#v", pending, all[1:])
+	}
+
+	firstBatch, err := reader.ResolveBatch(pending, DeliveryContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstBatch.Remaining != 1 || len(firstBatch.Deliveries) != 1 || len(firstBatch.Deliveries[0].coveredSummaries) != 0 {
+		t.Fatalf("first batch = %#v", firstBatch)
+	}
+	if err := reader.AcknowledgeBatch(firstBatch); err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := reader.loadCursor("reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursor.Topics["dev/tasks"] != oldPublication.Sequence {
+		t.Fatalf("topic cursor = %d, want %d", cursor.Topics["dev/tasks"], oldPublication.Sequence)
+	}
+	replayed, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replayed) != 1 || replayed[0] != pending[0] {
+		t.Fatalf("remaining summary was acknowledged: %#v", replayed)
+	}
+	secondBatch, err := reader.ResolveBatch(replayed, DeliveryContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondBatch.Remaining != 0 || len(secondBatch.Deliveries) != 1 || secondBatch.Deliveries[0].Delta == nil || len(secondBatch.Deliveries[0].Delta.Publications) != 1 {
+		t.Fatalf("second batch = %#v", secondBatch)
+	}
+}
+
+func TestAcknowledgeBatchSupportsDeliveryWithoutCoverageMetadata(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := client.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) == 0 {
+		t.Fatal("watch returned no summaries")
+	}
+	summary := summaries[0]
+
+	batch := BatchDelivery{Deliveries: []Delivery{{Summary: summary, Mode: DeliverySummary}}}
+	if err := client.AcknowledgeBatch(batch); err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := client.loadCursor("reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !indexAcknowledged(cursor.SummaryRanges, summary.Sequence) {
+		t.Fatalf("summary was not acknowledged: %#v", cursor)
 	}
 }
 

@@ -10,7 +10,7 @@ Ask the user which action to take for archiving and pruning — that half of thi
 
 ## Available maintenance commands
 
-- `conductor <agent> get <group/topic> --full` — read every record in a topic before deciding what to archive.
+- `conductor <agent> get <group/topic> --full` - read the first capped page of current records. If `remaining` is nonzero, continue with indexed range reads until every record relevant to the decision has been inspected.
 - `conductor <agent> put <group/topic>-archive --file=<path>` — copy the records being archived into a sibling `-archive` topic, one JSON string per line, as one atomic commit. Do this before anything else touches the originals.
 - `conductor <agent> redact <group/topic> <index>` — physically remove an archived record from live history after its copy is verified.
 - `conductor <agent> redact <group/topic> --start=N --end=M` — physically prune a range of archived records from live operational history.
@@ -33,7 +33,7 @@ Run this at the start of every session, before anything else — this is the one
 When a user asks to prune, archive, clean up, or redact old entries from a topic's history:
 
 1. **Read Live Operational History**:
-   Fetch the full current history of the target topic to understand its bounds and contents:
+   Fetch the first capped page, then follow `remaining` with indexed range reads (starting after the last returned index) until the complete decision range has been inspected:
    ```bash
    conductor <agent> get <group/topic> --full
    ```
@@ -57,7 +57,7 @@ When a user asks to prune, archive, clean up, or redact old entries from a topic
    conductor <agent> redact <group/topic> --start=1 --end=50
    ```
 5. **Verify and Confirm**:
-   Verify that the target records are removed from the active path and notify the user of the successful backup created on disk:
+   Verify that the target records are removed from the active path. If the full response reports `remaining`, continue with indexed range reads through the affected indexes before declaring success, then notify the user of the backup created on disk:
    ```bash
    conductor <agent> get <group/topic> --full
    ```

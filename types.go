@@ -24,8 +24,8 @@ const (
 	ReadFull  = state.ReadFull
 )
 
-// DefaultReadLimit is the record cap get and watch apply per response when
-// the caller doesn't request more explicitly.
+// DefaultReadLimit caps get and watch responses. Range and delta reads may
+// request more explicitly; full reads always use this cap.
 const DefaultReadLimit = state.DefaultReadLimit
 
 const (
