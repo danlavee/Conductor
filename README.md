@@ -61,7 +61,7 @@ The skill is used in every environment. Harness integration changes only who wai
 
 Conductor targets trusted, same-user agents on one Windows or Linux host. Delivery is at least once around crashes. History is not compacted automatically, and abandoned-transaction recovery occurs on the next operation.
 
-Initial release: `v0.1.0`.
+Initial release: `v0.1.0`. Latest release: `v0.4.0`.
 
 ## License
 
