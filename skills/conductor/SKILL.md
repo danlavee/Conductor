@@ -9,6 +9,10 @@ description: Conductor is a persistent, disk-based publish-subscribe message bus
 
 Independent agents — different tools, different conversations, different memories — can work as one team without merging what they know. Each agent keeps its own context; only what it deliberately publishes crosses over. Conductor is the shared bus that carries those publications between them, so a user can run several agents in parallel and let them coordinate directly instead of relaying everything by hand.
 
+> [!CAUTION]
+> **CRITICAL GUARD**: Multiple agents actively share this skill, its binary, and its data. Never directly modify, delete, or bypass any of its files, database state, processes, or executables—always use the official client commands or request explicit user approval.
+
+
 ## Modes
 
 Default: follow the workflow below as an ordinary agent. Two invocation arguments change only how you join — subscribe, work, and leave still apply unchanged.
