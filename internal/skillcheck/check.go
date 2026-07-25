@@ -78,16 +78,7 @@ func Validate(root string) []string {
 		sort.Strings(problems)
 		return problems
 	}
-	for verb := range commands {
-		if !supportedCommands[verb] {
-			problems = append(problems, "supportedCommands is missing CLI verb: "+verb)
-		}
-	}
-	for verb := range supportedCommands {
-		if !commands[verb] {
-			problems = append(problems, "supportedCommands has a verb main.go no longer dispatches: "+verb)
-		}
-	}
+	problems = append(problems, commandFreshnessProblems(commands)...)
 
 	for _, slash := range relevant {
 		if slash == "skills/conductor" || strings.HasPrefix(slash, "skills/conductor/") {
@@ -128,6 +119,36 @@ func Validate(root string) []string {
 	}
 
 	sort.Strings(problems)
+	return problems
+}
+
+// CheckCommandFreshness reports every way supportedCommands -- the verb list
+// ValidateSkill is stuck using, since it also runs at install time against a
+// bundled skill with no Go source available -- has drifted from main.go's
+// real dispatch. ValidateSkill itself can never call this (no source at
+// install time), so callers that exercise ValidateSkill against what
+// actually ships (e.g. an embedded-bundle test) should call this too,
+// instead of relying on Validate's repo-wide check alone.
+func CheckCommandFreshness(root string) []string {
+	commands, err := cliCommands(root)
+	if err != nil {
+		return []string{"list CLI commands: " + err.Error()}
+	}
+	return commandFreshnessProblems(commands)
+}
+
+func commandFreshnessProblems(commands map[string]bool) []string {
+	var problems []string
+	for verb := range commands {
+		if !supportedCommands[verb] {
+			problems = append(problems, "supportedCommands is missing CLI verb: "+verb)
+		}
+	}
+	for verb := range supportedCommands {
+		if !commands[verb] {
+			problems = append(problems, "supportedCommands has a verb main.go no longer dispatches: "+verb)
+		}
+	}
 	return problems
 }
 
