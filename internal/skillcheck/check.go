@@ -48,11 +48,29 @@ var supportedCommands = map[string]bool{
 var (
 	// commandPattern matches a verb after "conductor", optionally skipping a
 	// single <placeholder> token (e.g. <agent>) -- covers both
-	// "conductor <agent> join" and standalone "conductor install".
-	commandPattern = regexp.MustCompile("(?m)(?:^|`)[ \\t]*conductor[ \\t]+(?:<[a-z][a-z-]*>[ \\t]+)?([a-z][a-z0-9-]*)")
-	linkPattern    = regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
-	frontmatter    = regexp.MustCompile(`(?s)\A---\r?\nname: conductor\r?\ndescription: .+?\r?\n---\r?\n`)
+	// "conductor <agent> join" and standalone "conductor install". Only ever
+	// run against codeOnly(text) (see below), never raw prose -- otherwise an
+	// ordinary sentence like "conductor <agent> is not required..." would
+	// have "is" captured and flagged as an unsupported command.
+	commandPattern    = regexp.MustCompile("(?m)(?:^|`)[ \\t]*conductor[ \\t]+(?:<[a-z][a-z-]*>[ \\t]+)?([a-z][a-z0-9-]*)")
+	fencedCodePattern = regexp.MustCompile("(?s)```.*?```")
+	inlineCodePattern = regexp.MustCompile("`[^`\n]*`")
+	linkPattern       = regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
+	frontmatter       = regexp.MustCompile(`(?s)\A---\r?\nname: conductor\r?\ndescription: .+?\r?\n---\r?\n`)
 )
+
+// codeOnly returns the concatenation of every fenced code block and inline
+// code span in text, newlines preserved, backticks intact -- ordinary prose
+// is excluded entirely, so commandPattern can never mistake a sentence for
+// a command example. Matches how every real command in this repo's docs is
+// actually written: inside backticks or a fenced block, never bare prose.
+func codeOnly(text string) string {
+	var blocks []string
+	blocks = append(blocks, fencedCodePattern.FindAllString(text, -1)...)
+	remainder := fencedCodePattern.ReplaceAllString(text, "\n")
+	blocks = append(blocks, inlineCodePattern.FindAllString(remainder, -1)...)
+	return strings.Join(blocks, "\n")
+}
 
 // Validate returns every structural problem found under the repository root.
 func Validate(root string) []string {
@@ -108,7 +126,7 @@ func Validate(root string) []string {
 		}
 		text := string(data)
 		if commands != nil {
-			for _, match := range commandPattern.FindAllStringSubmatch(text, -1) {
+			for _, match := range commandPattern.FindAllStringSubmatch(codeOnly(text), -1) {
 				if !commands[match[1]] {
 					problems = append(problems, "unsupported command "+match[1]+" in "+slash)
 				}
@@ -351,7 +369,7 @@ func ValidateSkill(skill fs.FS) []string {
 			return nil
 		}
 		text := string(data)
-		for _, match := range commandPattern.FindAllStringSubmatch(text, -1) {
+		for _, match := range commandPattern.FindAllStringSubmatch(codeOnly(text), -1) {
 			if !supportedCommands[match[1]] {
 				problems = append(problems, "unsupported command "+match[1]+" in "+filePath)
 			}
