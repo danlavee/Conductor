@@ -4,6 +4,9 @@ package skillcheck
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -11,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -30,15 +34,22 @@ var requiredSkillFiles = []string{
 	"references/limitations.md",
 }
 
+// supportedCommands is ValidateSkill's copy of cmd/conductor/main.go's
+// command verbs. It exists only because ValidateSkill also runs at install
+// time against a bundled skill with no Go source available to read the real
+// dispatch from -- Validate cross-checks this against cliCommands so drift
+// fails a test instead of silently doing nothing.
 var supportedCommands = map[string]bool{
-	"register": true, "deregister": true, "list-agents": true,
+	"join": true, "leave": true, "list-agents": true, "subscribe": true, "list": true,
 	"begin": true, "commit": true, "abort": true, "put": true, "edit": true, "strike": true,
-	"get": true, "watch": true, "install": true, "version": true,
-	"migrate": true,
+	"redact": true, "get": true, "watch": true, "install": true, "version": true, "migrate": true,
 }
 
 var (
-	commandPattern = regexp.MustCompile("(?m)(?:^|`)[ \\t]*conductor[ \\t]+([a-z][a-z0-9-]*)")
+	// commandPattern matches a verb after "conductor", optionally skipping a
+	// single <placeholder> token (e.g. <agent>) -- covers both
+	// "conductor <agent> join" and standalone "conductor install".
+	commandPattern = regexp.MustCompile("(?m)(?:^|`)[ \\t]*conductor[ \\t]+(?:<[a-z][a-z-]*>[ \\t]+)?([a-z][a-z0-9-]*)")
 	linkPattern    = regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
 	frontmatter    = regexp.MustCompile(`(?s)\A---\r?\nname: conductor\r?\ndescription: .+?\r?\n---\r?\n`)
 )
@@ -60,6 +71,22 @@ func Validate(root string) []string {
 		problems = append(problems, "list repository files: "+err.Error())
 		sort.Strings(problems)
 		return problems
+	}
+	commands, err := cliCommands(root)
+	if err != nil {
+		problems = append(problems, "list CLI commands: "+err.Error())
+		sort.Strings(problems)
+		return problems
+	}
+	for verb := range commands {
+		if !supportedCommands[verb] {
+			problems = append(problems, "supportedCommands is missing CLI verb: "+verb)
+		}
+	}
+	for verb := range supportedCommands {
+		if !commands[verb] {
+			problems = append(problems, "supportedCommands has a verb main.go no longer dispatches: "+verb)
+		}
 	}
 
 	for _, slash := range relevant {
@@ -84,7 +111,7 @@ func Validate(root string) []string {
 		}
 		text := string(data)
 		for _, match := range commandPattern.FindAllStringSubmatch(text, -1) {
-			if !supportedCommands[match[1]] {
+			if !commands[match[1]] {
 				problems = append(problems, "unsupported command "+match[1]+" in "+slash)
 			}
 		}
@@ -102,6 +129,66 @@ func Validate(root string) []string {
 
 	sort.Strings(problems)
 	return problems
+}
+
+// cliCommands returns every command verb cmd/conductor/main.go actually
+// dispatches on, read directly from its two top-level switch statements
+// (switch args[0] for standalone commands, switch command for agent-scoped
+// ones) rather than a hand-maintained copy -- so this list cannot silently
+// drift from what the CLI really accepts, the way a separate list did.
+func cliCommands(root string) (map[string]bool, error) {
+	mainPath := filepath.Join(root, "cmd", "conductor", "main.go")
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, mainPath, nil, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", mainPath, err)
+	}
+	commands := map[string]bool{}
+	ast.Inspect(file, func(node ast.Node) bool {
+		statement, ok := node.(*ast.SwitchStmt)
+		if !ok || !isDispatchSwitch(statement.Tag) {
+			return true
+		}
+		for _, clause := range statement.Body.List {
+			caseClause, ok := clause.(*ast.CaseClause)
+			if !ok {
+				continue
+			}
+			for _, expression := range caseClause.List {
+				literal, ok := expression.(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					continue
+				}
+				if value, err := strconv.Unquote(literal.Value); err == nil {
+					commands[value] = true
+				}
+			}
+		}
+		return true
+	})
+	if len(commands) == 0 {
+		return nil, fmt.Errorf("no command switch found in %s", mainPath)
+	}
+	return commands, nil
+}
+
+// isDispatchSwitch reports whether tag is "command" or "args[0]" -- run()'s
+// two dispatch points -- as opposed to unrelated switches in the same file
+// (the watch --claude-cli sub-flag, migrate's protocol-version dispatch).
+func isDispatchSwitch(tag ast.Expr) bool {
+	if ident, ok := tag.(*ast.Ident); ok {
+		return ident.Name == "command"
+	}
+	index, ok := tag.(*ast.IndexExpr)
+	if !ok {
+		return false
+	}
+	ident, ok := index.X.(*ast.Ident)
+	if !ok || ident.Name != "args" {
+		return false
+	}
+	literal, ok := index.Index.(*ast.BasicLit)
+	return ok && literal.Value == "0"
 }
 
 // relevantFiles returns every file under root that git wouldn't ignore --
