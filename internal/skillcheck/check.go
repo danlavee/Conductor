@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -54,34 +55,32 @@ func Validate(root string) []string {
 		problems = append(problems, "skills/conductor/"+problem)
 	}
 
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return nil
+	relevant, err := relevantFiles(root)
+	if err != nil {
+		problems = append(problems, "list repository files: "+err.Error())
+		sort.Strings(problems)
+		return problems
+	}
+
+	for _, slash := range relevant {
+		if slash == "skills/conductor" || strings.HasPrefix(slash, "skills/conductor/") {
+			continue
 		}
-		relative, _ := filepath.Rel(root, path)
-		slash := filepath.ToSlash(relative)
-		if info.IsDir() && (info.Name() == "__pycache__" || info.Name() == ".local" || info.Name() == ".claude") {
-			return filepath.SkipDir
-		}
-		if info.IsDir() && slash == "skills/conductor" {
-			return filepath.SkipDir
-		}
-		if info.IsDir() || strings.Contains(slash, "/.local/") || strings.HasPrefix(slash, ".local/") {
-			return nil
-		}
-		if strings.Contains(info.Name(), "_v2") {
+		path := filepath.Join(root, filepath.FromSlash(slash))
+		name := filepath.Base(slash)
+		if strings.Contains(name, "_v2") {
 			problems = append(problems, "version-suffixed duplicate remains: "+slash)
 		}
-		if filepath.Ext(info.Name()) == ".py" || filepath.Ext(info.Name()) == ".pyc" {
+		if filepath.Ext(name) == ".py" || filepath.Ext(name) == ".pyc" {
 			problems = append(problems, "Python implementation remains: "+slash)
 		}
-		if filepath.Ext(info.Name()) != ".md" && slash != "README.md" {
-			return nil
+		if filepath.Ext(name) != ".md" && slash != "README.md" {
+			continue
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			problems = append(problems, "unreadable file: "+slash)
-			return nil
+			continue
 		}
 		text := string(data)
 		for _, match := range commandPattern.FindAllStringSubmatch(text, -1) {
@@ -99,11 +98,28 @@ func Validate(root string) []string {
 				problems = append(problems, "broken link "+match[1]+" in "+slash)
 			}
 		}
-		return nil
-	})
+	}
 
 	sort.Strings(problems)
 	return problems
+}
+
+// relevantFiles returns every file under root that git wouldn't ignore --
+// tracked or untracked, but never a .gitignore'd path -- relative to root
+// and slash-separated. .gitignore is the single source of truth for what
+// this validator skips, so nothing here is hardcoded.
+func relevantFiles(root string) ([]string, error) {
+	output, err := exec.Command("git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard").Output()
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, line := range strings.Split(strings.TrimRight(string(output), "\n"), "\n") {
+		if line != "" {
+			files = append(files, filepath.ToSlash(line))
+		}
+	}
+	return files, nil
 }
 
 // ValidateSkill returns structural and reference problems in a portable skill filesystem.
