@@ -8,9 +8,9 @@ Before installing, ask: "Install for this project or for the user across project
 
 ## Steps
 
-1. Resolve and show the absolute destination:
-   - Project: `<project>/.agents/skills/conductor`
-   - User: `$HOME/.agents/skills/conductor`
+1. Resolve and show the absolute destination, using the installing host's own vendor-specific skills directory if it has one, or the generic `.agents` convention otherwise:
+   - Project: `<project>/<vendor-dir>/skills/conductor`
+   - User: `$HOME/<vendor-dir>/skills/conductor`
 2. Confirm that its parent is the intended skills directory. For a project install, disclose that this changes the project tree.
 3. Wait for confirmation, then run:
 

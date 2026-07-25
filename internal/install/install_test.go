@@ -46,6 +46,21 @@ func TestInstallRequiresExactAbsoluteSkillDirectory(t *testing.T) {
 	}
 }
 
+func TestValidateDestinationAcceptsKnownVendorDirsOnly(t *testing.T) {
+	base := t.TempDir()
+	for _, vendorDir := range vendorSkillDirs {
+		t.Run(vendorDir, func(t *testing.T) {
+			destination := filepath.Join(base, vendorDir, "skills", "conductor")
+			if err := ValidateDestination(destination); err != nil {
+				t.Fatalf("known vendor dir %s rejected: %v", vendorDir, err)
+			}
+		})
+	}
+	if err := ValidateDestination(filepath.Join(base, ".codex", "skills", "conductor")); err == nil {
+		t.Fatal("unknown vendor dir was accepted")
+	}
+}
+
 func TestWindowsDestinationDistinguishesExtendedLocalAndUNC(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows path semantics")

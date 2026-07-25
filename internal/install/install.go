@@ -230,6 +230,13 @@ func preflight(destination string, source Source) (string, []payloadFile, manife
 	return cleanDestination, files, expected, manifestData, nil
 }
 
+// vendorSkillDirs lists every known vendor skills root Conductor may be
+// installed under. .agents is Conductor's own cross-vendor convention (see
+// docs/installation.md); .claude is Claude Code's actual one, which doesn't
+// follow it. Extend this as other vendors' real conventions are confirmed --
+// never guess one in.
+var vendorSkillDirs = []string{".agents", ".claude"}
+
 func validateDestination(destination, goos string) (string, error) {
 	if goos != "windows" && goos != "linux" {
 		return "", fmt.Errorf("unsupported operating system %q", goos)
@@ -244,16 +251,24 @@ func validateDestination(destination, goos string) (string, error) {
 	if goos == "windows" && isUNCVolume(filepath.VolumeName(clean)) {
 		return "", errors.New("UNC destinations are unsupported")
 	}
-	components := []string{filepath.Base(filepath.Dir(filepath.Dir(clean))), filepath.Base(filepath.Dir(clean)), filepath.Base(clean)}
-	want := []string{".agents", "skills", "conductor"}
-	for index := range components {
-		matches := components[index] == want[index]
+	equal := func(a, b string) bool {
 		if goos == "windows" {
-			matches = strings.EqualFold(components[index], want[index])
+			return strings.EqualFold(a, b)
 		}
-		if !matches {
-			return "", errors.New("destination must end in .agents/skills/conductor")
+		return a == b
+	}
+	vendorDir := filepath.Base(filepath.Dir(filepath.Dir(clean)))
+	skillsDir := filepath.Base(filepath.Dir(clean))
+	conductorDir := filepath.Base(clean)
+	vendorMatches := false
+	for _, candidate := range vendorSkillDirs {
+		if equal(vendorDir, candidate) {
+			vendorMatches = true
+			break
 		}
+	}
+	if !vendorMatches || !equal(skillsDir, "skills") || !equal(conductorDir, "conductor") {
+		return "", fmt.Errorf("destination must end in <vendor-dir>/skills/conductor (vendor-dir one of %s)", strings.Join(vendorSkillDirs, ", "))
 	}
 	return clean, nil
 }
