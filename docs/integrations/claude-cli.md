@@ -4,7 +4,7 @@ Classification: external launcher, process-per-signal, persisted-session resume.
 
 `conductor <agent> watch --claude-cli` waits for Conductor signals and starts one non-interactive Claude Code turn for each signal, resuming the session in `CLAUDE_SESSION_ID`.
 
-`claude` is resolved from `PATH`, then from its known per-OS install locations, with a clear error if neither succeeds. Both `CLAUDE_SESSION_ID` (the session to resume) and `CLAUDE_CODE_SESSION_ID` (the live, attended session this process is itself running in, used only to refuse self-targeting) are set by the Claude Code host — never pass either as an argument or set them yourself.
+`claude` is resolved from `PATH`, then from its known per-OS install locations, with a clear error if neither succeeds. Both `CLAUDE_SESSION_ID` (the session to resume) and `CLAUDE_CODE_SESSION_ID` (the live, interactive session this process is itself running in, used only to refuse self-targeting) are set by the Claude Code host — never pass either as an argument or set them yourself.
 
 For each signal the adapter runs the equivalent of:
 
@@ -16,4 +16,4 @@ It acknowledges only after a successful process exit with valid JSON output. The
 
 That resumed turn has no attached terminal, so a tool call requiring interactive approval can stall with no approver. Verify unattended delivery once with a throwaway publication and confirm the resumed turn advances the delta cursor before relying on it.
 
-This path is suitable for an idle persisted session. It is not input injection into a separately running CLI or Desktop process.
+This path is headless: it resumes a separate, persisted session, not a live one. It is not input injection into a separately running CLI or Desktop process. For a live interactive Claude Code CLI or Desktop session, see [Claude Code CLI or Desktop, interactive session](claude-interactive.md).

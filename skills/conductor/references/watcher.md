@@ -1,6 +1,6 @@
 # The watcher
 
-No session inherits a running watcher — not a newcomer's first turn, not a restarted CLI, not a resumed one after a compaction or crash: if you don't already see one active, start it before anything else, every time.
+No session inherits a running watcher — not a newcomer's first turn, not a restarted CLI, not a resumed one after a compaction or crash: if you don't already see one active, start it before anything else, every time. This is unlike joining, which is disk-persisted and outlives the session; only the watcher itself is session-scoped and needs restarting.
 
 The watcher is how self-wake works: nothing external reaches into a closed process and starts it. Start exactly one runtime-specific delivery adapter as a backgrounded task and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` resolves what's currently pending in one call (capped like `get`, see [protocol.md](protocol.md)), then exits — still one-shot per call, and still must be rearmed for whatever arrives next.
 
@@ -8,17 +8,16 @@ Stop only through the retained handle. Never kill by process name, wildcard, or 
 
 Every watcher command accepts `--mode`. `--mode=content` is the default and delivers the resolved information directly. `--mode=summary` returns only a location pointer instead, requiring a separate read to see what changed — reach for it only when the user specifically asks for that lighter behavior, not as a default choice.
 
-Use exactly one wait owner for the joined identity. Decide first whether the current turn is attended (a human or host is live in it now) or idle (a host will resume it later on a signal) — the per-signal Claude resume watcher (`--claude-cli`) may only target an idle session; pointing one at the session you are attending creates a competing headless process against the live transcript, where interactive tool approval may be unavailable.
+Use exactly one wait owner for the joined identity. The axis that decides whether a row applies at all is whether the harness can wake a thread by any mechanism — an API call, a harness-provided background-task tool, or a per-signal spawn — or is dormant/blocked, with no way for any thread to wake itself; only the latter has no usable row. Within a wakeable harness, decide whether you're resuming your own current turn (self-wake: a backgrounded task you started, resumed on its completion) or targeting a separate session from outside it — CLI-headless watching always does the latter, spawning a fresh process against a different, dormant session; never point it at the session you are currently running in, since that spawns a competing process against the same live transcript, where interactive tool approval may be unavailable. Support is per-vendor, not universal — the table below merges vendors or modes into one row only where they share an identical mechanism; don't assume one vendor's support implies another's.
 
 ## Choose a row
 
 Conversation and session IDs are never CLI arguments or something you supply. The Claude resume adapter reads `CLAUDE_SESSION_ID`, set automatically by its harness. Generic watches need no thread or conversation ID. Only the agent name is a CLI argument.
 
-| Harness | Session | Command | Mechanism |
+| Vendor | Mode | Command | Mechanism |
 | --- | --- | --- | --- |
-| Antigravity | Attended (CLI/TUI/Desktop/IDE) | `conductor <agent> watch` | Start through Antigravity's managed background-terminal tool; retain its handle, then process stdout and rearm when it completes. |
-| Codex | Attended | `conductor <agent> watch` | Start through Codex’s managed background-terminal tool, not directly; retain its handle, then process stdout and rearm when it completes. |
-| Claude Code CLI | Attended, Channel configured | `conductor <agent> channel claude` (as an MCP stdio server) | Sends a `notifications/claude/channel` MCP notification into the live session |
-| Any harness | Attended, no native push available | `conductor <agent> watch` | Blocks until at least one signal is pending, then resolves and delivers what's currently pending (capped like `get`) using your own stored cursor; run as a backgrounded task so the live turn stays free |
-| Claude Code CLI | Idle, a different session | `conductor <agent> watch --claude-cli` | Spawns `claude --print --resume` fresh per signal |
-| Claude Code Desktop | Any | none | No verified external wake path — registration stays valid, but the user or host must start the next turn |
+| Claude<br>Antigravity | CLI interactive<br>Desktop | `conductor <agent> watch` | Native background-process tool; retain handle, resume on completion. Confirmed live for Claude CLI; reported (not reproduced here) for Claude Desktop; same mechanism across all Antigravity frontends. |
+| Codex | CLI interactive | `conductor <agent> watch` | Managed background-terminal tool; retain handle, resume on completion. |
+| Claude<br>Antigravity<br>Codex | CLI headless | `conductor <agent> watch --headless` | Same pattern regardless of harness: spawns a fresh process per signal against a separate, dormant session, resuming through that harness's own resume command. |
+| Codex | Desktop | — not supported yet — | No desktop-app surface evaluated. |
+| Any other harness | — | `conductor <agent> watch` | Generic backgrounded-watch fallback; untested beyond the three vendors above. |
