@@ -18,6 +18,6 @@ Conversation and session IDs are never CLI arguments or something you supply. Th
 | --- | --- | --- | --- |
 | Claude<br>Antigravity | CLI interactive<br>Desktop | `conductor <agent> watch` | Native background-process tool; retain handle, resume on completion. Confirmed live for Claude CLI; reported (not reproduced here) for Claude Desktop; same mechanism across all Antigravity frontends. |
 | Codex | CLI interactive | `conductor <agent> watch` | Managed background-terminal tool; retain handle, resume on completion. |
-| Claude<br>Antigravity<br>Codex | CLI headless | `conductor <agent> watch --headless` | Same pattern regardless of harness: spawns a fresh process per signal against a separate, dormant session, resuming through that harness's own resume command. |
+| Claude<br>Antigravity<br>Codex | CLI headless | `conductor <agent> watch --headless` `<future>` | Not yet implemented -- the CLI only accepts `--claude-cli` today. Documents the intended pattern: spawns a fresh process per signal against a separate, dormant session, resuming through that harness's own resume command. |
 | Codex | Desktop | — not supported yet — | No desktop-app surface evaluated. |
 | Any other harness | — | `conductor <agent> watch` | Generic backgrounded-watch fallback; untested beyond the three vendors above. |
