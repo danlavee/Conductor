@@ -60,7 +60,7 @@ func Validate(root string) []string {
 		}
 		relative, _ := filepath.Rel(root, path)
 		slash := filepath.ToSlash(relative)
-		if info.IsDir() && (info.Name() == "__pycache__" || info.Name() == ".local") {
+		if info.IsDir() && (info.Name() == "__pycache__" || info.Name() == ".local" || info.Name() == ".claude") {
 			return filepath.SkipDir
 		}
 		if info.IsDir() && slash == "skills/conductor" {
