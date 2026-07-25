@@ -1,6 +1,8 @@
 .local/
 docs/.local/
 .claude/
+__pycache__/
+*.pyc
 
 # Local Go build outputs
 /conductor
