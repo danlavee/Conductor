@@ -66,19 +66,25 @@ func Validate(root string) []string {
 		problems = append(problems, "skills/conductor/"+problem)
 	}
 
+	// relevantFiles supplies the file list every remaining check walks, so
+	// its failure genuinely leaves nothing to check -- unlike cliCommands
+	// below, this one has to stay a hard return.
 	relevant, err := relevantFiles(root)
 	if err != nil {
 		problems = append(problems, "list repository files: "+err.Error())
 		sort.Strings(problems)
 		return problems
 	}
+
+	// A cliCommands failure only removes the ability to check verbs against
+	// main.go's real dispatch -- it must not also cancel the _v2/.py/broken-
+	// link checks below, which don't depend on it.
 	commands, err := cliCommands(root)
 	if err != nil {
 		problems = append(problems, "list CLI commands: "+err.Error())
-		sort.Strings(problems)
-		return problems
+	} else {
+		problems = append(problems, commandFreshnessProblems(commands)...)
 	}
-	problems = append(problems, commandFreshnessProblems(commands)...)
 
 	for _, slash := range relevant {
 		if slash == "skills/conductor" || strings.HasPrefix(slash, "skills/conductor/") {
@@ -101,9 +107,11 @@ func Validate(root string) []string {
 			continue
 		}
 		text := string(data)
-		for _, match := range commandPattern.FindAllStringSubmatch(text, -1) {
-			if !commands[match[1]] {
-				problems = append(problems, "unsupported command "+match[1]+" in "+slash)
+		if commands != nil {
+			for _, match := range commandPattern.FindAllStringSubmatch(text, -1) {
+				if !commands[match[1]] {
+					problems = append(problems, "unsupported command "+match[1]+" in "+slash)
+				}
 			}
 		}
 		for _, match := range linkPattern.FindAllStringSubmatch(text, -1) {
@@ -165,9 +173,19 @@ func cliCommands(root string) (map[string]bool, error) {
 		return nil, fmt.Errorf("parse %s: %w", mainPath, err)
 	}
 	commands := map[string]bool{}
+	foundStandaloneSwitch := false
+	foundAgentScopedSwitch := false
 	ast.Inspect(file, func(node ast.Node) bool {
 		statement, ok := node.(*ast.SwitchStmt)
-		if !ok || !isDispatchSwitch(statement.Tag) {
+		if !ok {
+			return true
+		}
+		switch {
+		case isAgentScopedDispatchTag(statement.Tag):
+			foundAgentScopedSwitch = true
+		case isStandaloneDispatchTag(statement.Tag):
+			foundStandaloneSwitch = true
+		default:
 			return true
 		}
 		for _, clause := range statement.Body.List {
@@ -187,19 +205,36 @@ func cliCommands(root string) (map[string]bool, error) {
 		}
 		return true
 	})
-	if len(commands) == 0 {
-		return nil, fmt.Errorf("no command switch found in %s", mainPath)
+	// Require BOTH dispatch points, not just "found something" -- a single
+	// renamed switch would otherwise silently return a truncated set instead
+	// of failing loudly, and every verb it used to contribute would then be
+	// misreported as "no longer dispatched" by the freshness cross-check.
+	if !foundStandaloneSwitch || !foundAgentScopedSwitch {
+		var missing []string
+		if !foundStandaloneSwitch {
+			missing = append(missing, `switch args[0] { (standalone commands)`)
+		}
+		if !foundAgentScopedSwitch {
+			missing = append(missing, `switch command { (agent-scoped commands)`)
+		}
+		return nil, fmt.Errorf("%s: dispatch switch shape changed, cliCommands needs updating -- missing: %s", mainPath, strings.Join(missing, "; "))
 	}
 	return commands, nil
 }
 
-// isDispatchSwitch reports whether tag is "command" or "args[0]" -- run()'s
-// two dispatch points -- as opposed to unrelated switches in the same file
+// isAgentScopedDispatchTag reports whether tag is the bare identifier
+// "command" -- run()'s dispatch point for every agent-scoped verb (join,
+// put, watch, ...) -- as opposed to unrelated switches in the same file
 // (the watch --claude-cli sub-flag, migrate's protocol-version dispatch).
-func isDispatchSwitch(tag ast.Expr) bool {
-	if ident, ok := tag.(*ast.Ident); ok {
-		return ident.Name == "command"
-	}
+func isAgentScopedDispatchTag(tag ast.Expr) bool {
+	ident, ok := tag.(*ast.Ident)
+	return ok && ident.Name == "command"
+}
+
+// isStandaloneDispatchTag reports whether tag is "args[0]" -- run()'s
+// dispatch point for install/version/migrate, the commands that precede
+// the leading-agent-argument grammar.
+func isStandaloneDispatchTag(tag ast.Expr) bool {
 	index, ok := tag.(*ast.IndexExpr)
 	if !ok {
 		return false
@@ -215,17 +250,61 @@ func isDispatchSwitch(tag ast.Expr) bool {
 // relevantFiles returns every file under root that git wouldn't ignore --
 // tracked or untracked, but never a .gitignore'd path -- relative to root
 // and slash-separated. .gitignore is the single source of truth for what
-// this validator skips, so nothing here is hardcoded.
+// this validator skips, so nothing here is hardcoded. Falls back to a plain
+// filesystem walk when git isn't usable (no git binary, or root isn't a
+// working tree -- an exported source tarball, a container image built
+// without .git), so this still works without a hard git dependency.
 func relevantFiles(root string) ([]string, error) {
-	output, err := exec.Command("git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard").Output()
+	if files, err := gitTrackedFiles(root); err == nil {
+		return files, nil
+	}
+	return walkFiles(root)
+}
+
+func gitTrackedFiles(root string) ([]string, error) {
+	// -z gives NUL-separated, unquoted paths -- without it, git C-style
+	// quotes and octal-escapes any path with non-ASCII or special
+	// characters under the default core.quotepath=true, which a plain
+	// newline split would return as a literal quoted/escaped string.
+	output, err := exec.Command("git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z").Output()
 	if err != nil {
 		return nil, err
 	}
 	var files []string
-	for _, line := range strings.Split(strings.TrimRight(string(output), "\n"), "\n") {
-		if line != "" {
-			files = append(files, filepath.ToSlash(line))
+	for _, entry := range strings.Split(strings.TrimRight(string(output), "\x00"), "\x00") {
+		if entry != "" {
+			files = append(files, filepath.ToSlash(entry))
 		}
+	}
+	return files, nil
+}
+
+// walkFiles is relevantFiles' git-less fallback: a plain filesystem walk
+// that skips dot-directories (.git, .claude, .local, and any future one) as
+// a general convention rather than an enumerated list, plus __pycache__ --
+// named explicitly, since it's a universal Python convention rather than
+// something .gitignore (unavailable in this fallback) would otherwise cover.
+func walkFiles(root string) ([]string, error) {
+	var files []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if path != root && (strings.HasPrefix(info.Name(), ".") || info.Name() == "__pycache__") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		files = append(files, filepath.ToSlash(relative))
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return files, nil
 }
