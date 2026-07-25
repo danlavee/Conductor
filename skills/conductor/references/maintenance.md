@@ -6,7 +6,7 @@ Join as `conductor-maintenance`, with exactly this responsibility string every t
 
 Start the watcher like any other agent.
 
-Ask the user which action to take — this document sets no automatic policy, no staleness threshold, no schedule.
+Ask the user which action to take for archiving and pruning — that half of this document sets no automatic policy, no staleness threshold, no schedule. Skill currency is different: it has a real owner and a real trigger, below.
 
 ## Available maintenance commands
 
@@ -16,6 +16,17 @@ Ask the user which action to take — this document sets no automatic policy, no
 - `conductor <agent> redact <group/topic> --start=N --end=M` — physically prune a range of archived records from live operational history.
 - `conductor <agent> strike <group/topic> <index>` — mark an already-archived record in place, one index at a time. Only after its copy in the `-archive` topic is confirmed committed; never before.
 - `conductor <agent> get collaboration/rules --full` — check the seeded rules are still intact, if asked to verify them.
+- `conductor verify <installed-skill-directory>` — read-only: reports `current`, `outdated`, `unknown` (no manifest, can't tell), or `not-installed`, by comparing the installed manifest against the binary you're running this from. Writes nothing.
+
+## Procedure: Checking Skill Currency
+
+Run this at the start of every session, before anything else — this is the one duty in this document with a standing trigger, precisely because nothing else in the system checks it and an out-of-date skill can sit unnoticed indefinitely otherwise.
+
+1. Determine the current source the same way [update-skill.md](update-skill.md) step 1 does (defaults to `go install github.com/danlavee/Conductor/cmd/conductor@latest`; compile first if using a local checkout).
+2. Run `conductor verify <installed-skill-directory>` using that binary.
+3. `current` — note it and move on to whatever else you were asked to do.
+4. `outdated` — follow [update-skill.md](update-skill.md)'s full procedure to bring it up to date.
+5. `unknown` or `not-installed` — this installed copy was never placed via `conductor install`; report that finding rather than guessing, the same as update-skill.md's own local-edit-detection step does.
 
 ## Procedure: Archiving and Pruning History
 
