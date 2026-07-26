@@ -110,7 +110,9 @@ type BatchDelivery struct {
 // grouped and resolved with one Get call at their highest sequence, since
 // nothing is acknowledged until the caller accepts the whole batch and
 // resolving them independently would each re-fetch the same growing,
-// still-unacknowledged window and wildly over-count the budget.
+// still-unacknowledged window and wildly over-count the budget. "join" and
+// "leave" summaries group the same way across every topic, since they all
+// resolve to the same current-roster read.
 func (c *Client) ResolveBatch(summaries []Summary, mode DeliveryMode) (BatchDelivery, error) {
 	groups := groupSummariesByTopic(summaries)
 	budget := DefaultReadLimit
@@ -214,23 +216,23 @@ func (c *Client) AcknowledgeBatch(batch BatchDelivery) error {
 	})
 }
 
-// groupSummariesByTopic buckets pending "update" summaries for the same
-// topic together, wherever they fall in summaries, since Get's delta for
-// the highest-sequence one already spans every earlier one in the same
-// unacknowledged window.
+// membershipGroupKey buckets every "join"/"leave" summary together regardless of topic.
+const membershipGroupKey = "\x00membership"
+
+// groupSummariesByTopic buckets "update" summaries per topic and all "join"/"leave" summaries into one shared bucket.
 func groupSummariesByTopic(summaries []Summary) [][]Summary {
 	var groups [][]Summary
 	positions := make(map[string]int, len(summaries))
 	for _, summary := range summaries {
+		key := summary.Topic
 		if summary.Type != "update" {
-			groups = append(groups, []Summary{summary})
-			continue
+			key = membershipGroupKey
 		}
-		if position, ok := positions[summary.Topic]; ok {
+		if position, ok := positions[key]; ok {
 			groups[position] = append(groups[position], summary)
 			continue
 		}
-		positions[summary.Topic] = len(groups)
+		positions[key] = len(groups)
 		groups = append(groups, []Summary{summary})
 	}
 	return groups

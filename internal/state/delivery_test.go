@@ -1,10 +1,12 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseDeliveryMode(t *testing.T) {
@@ -242,6 +244,68 @@ func TestResolveBatchGroupsSameTopicSignalsAndCapsAtDefaultReadLimit(t *testing.
 	}
 	if len(leftover) != 3 {
 		t.Fatalf("leftover signals after acknowledging the batch = %d, want 3", len(leftover))
+	}
+}
+
+func TestResolveBatchGroupsJoinAndLeaveSignalsAcrossTopics(t *testing.T) {
+	home := t.TempDir()
+	reader := newTestClient(t, home, "")
+	if _, err := reader.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.SubscribeTopic("collaboration/agents"); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, reader)
+
+	// Three more agents join, each producing an "update" (collaboration/agents)
+	// and a "join" (registry) signal -- six pending signals from four agents.
+	for _, name := range []string{"a", "b", "c"} {
+		other := newTestClient(t, home, "")
+		if _, err := other.Join(name, "dev"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summaries, err := reader.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 6 {
+		t.Fatalf("pending signals = %d, want 6", len(summaries))
+	}
+
+	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The three "update" signals share one collaboration/agents delivery, and
+	// the three "join" signals share one roster delivery -- two total, not six.
+	if len(batch.Deliveries) != 2 {
+		t.Fatalf("batch deliveries = %#v, want 2 (one update group, one membership group)", batch.Deliveries)
+	}
+	var sawUpdate, sawJoin bool
+	for _, delivery := range batch.Deliveries {
+		switch delivery.Summary.Type {
+		case "update":
+			sawUpdate = true
+		case "join":
+			sawJoin = true
+			if len(delivery.Roster) != 4 {
+				t.Fatalf("join delivery roster = %#v, want 4 agents", delivery.Roster)
+			}
+		}
+	}
+	if !sawUpdate || !sawJoin {
+		t.Fatalf("batch = %#v, want one update delivery and one join delivery", batch)
+	}
+
+	if err := reader.AcknowledgeBatch(batch); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := reader.WatchContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected no pending signals after acknowledging the batch, got err=%v", err)
 	}
 }
 
