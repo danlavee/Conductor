@@ -10,7 +10,14 @@ This is a conversation you carry out, not a CLI command. When asked to update or
    - `outdated`: continue — show what would actually change (skill content, binary version, protocol) before doing anything. `verify` only reports *that* it differs, not *what*; that diff is still yours to produce.
 3. **Check protocol compatibility.** Compare the incoming binary's protocol against the live state root's declared version.
 4. **Get explicit approval** before anything destructive.
-5. **Execute.** Announce on the bus, check for other running processes, migrate if step 3 required it, create a pre-upgrade backup snapshot of the active binary (by appending a `.pre-upgrade-[timestamp]` suffix to its filename), rename-then-place swap, verify with real functional calls — not just `version`.
+5. **Execute.** Announce on the bus, then use one explicit cutover identity:
+   1. Confirm the incoming `version` reports `cutover_capability: 1`. Finish or abort every durable transaction.
+   2. Run `conductor cutover freeze <absolute-active-root> --id=<id> --release=<release>`. This closes operation admission, drains in-flight calls, refuses active legacy watchers, and leaves writes blocked.
+   3. If the protocol changes, run `conductor migrate <absolute-active-root> <absolute-staging-root>` and validate the staging root with real reads. Keep the old root as the rollback snapshot.
+   4. Replace the root generation at the same logical path, binary, and skill while still frozen. Then run `conductor cutover replace <absolute-active-root> --id=<id>`.
+   5. Let every old watcher fire its one no-delta `conductor-replaced` activation and exit. Reload the installed skill and binary, and re-arm the replacement watchers.
+   6. Run `conductor cutover activate <absolute-active-root> --id=<id>`, then verify one fresh publication, delivery, and acknowledgment.
+   Before the root is replaced, `conductor cutover abort <absolute-active-root> --id=<id>` safely returns to active admission. After replacement, never abort; resume the same `replace`/`activate` cutover identity. A timeout never unfreezes the system.
 6. **Sync** the repo and installed skill copies afterward.
 
 ## Where this goes wrong

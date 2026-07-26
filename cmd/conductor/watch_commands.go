@@ -37,11 +37,15 @@ func runOneShotWatch(ctx context.Context, client *conductor.Client, mode conduct
 		return err
 	}
 	defer func() { _ = release() }()
-	summaries, err := client.WatchContext(ctx)
+	result, err := client.WatchResultContext(ctx)
 	if err != nil {
 		return err
 	}
-	batch, err := client.ResolveBatch(summaries, mode)
+	defer result.Close()
+	if result.Activation != nil {
+		return conductor.WriteJSON(os.Stdout, result.Activation)
+	}
+	batch, err := client.ResolveBatch(result.Summaries, mode)
 	if err != nil {
 		return err
 	}

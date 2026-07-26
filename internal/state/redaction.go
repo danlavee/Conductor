@@ -14,6 +14,11 @@ import (
 // Redact physically deletes records within the inclusive index range [start, end],
 // creates a pre-redaction backup, and notifies subscribers.
 func (c *Client) Redact(topic string, start, end int64) error {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return err
+	}
+	defer releaseOperation()
 	if err := c.validateProtocol(); err != nil {
 		return err
 	}

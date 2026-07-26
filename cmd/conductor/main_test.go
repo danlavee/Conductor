@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	conductor "github.com/danlavee/Conductor"
+	"github.com/danlavee/Conductor/internal/cutover"
 	installer "github.com/danlavee/Conductor/internal/install"
 	"github.com/danlavee/Conductor/internal/integrations/codexdesktop"
 )
@@ -338,6 +340,26 @@ func TestVersionDoesNotInitializeRuntime(t *testing.T) {
 	}
 }
 
+func TestVersionExposesCutoverCapability(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "version")
+	if err != nil {
+		t.Fatalf("version: %v: %s", err, stderr)
+	}
+	var version struct {
+		CutoverCapability int `json:"cutover_capability"`
+	}
+	if err := json.Unmarshal(stdout, &version); err != nil {
+		t.Fatal(err)
+	}
+	if version.CutoverCapability != cutover.Capability {
+		t.Fatalf("cutover capability = %d", version.CutoverCapability)
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("runtime state was initialized: %v", err)
+	}
+}
+
 func TestUsageExposesOnlyCodexDesktopTransport(t *testing.T) {
 	message := usageError().Error()
 	if !strings.Contains(message, "--codex-desktop") {
@@ -351,16 +373,37 @@ func TestUsageExposesOnlyCodexDesktopTransport(t *testing.T) {
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--codex-desktop | --claude-cli] [--mode=summary|content]"
+	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--codex-desktop | --claude-cli] [--mode=summary|content]"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}
 }
 
-func TestMigrateRemainsGlobalAndDoesNotInitializeRuntime(t *testing.T) {
+func TestMigrateRequiresFrozenSourceAndDoesNotInitializeRuntime(t *testing.T) {
 	source := t.TempDir()
 	destination := filepath.Join(t.TempDir(), "destination")
 	if err := os.WriteFile(filepath.Join(source, "protocol.json"), []byte("{\"version\":4}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	t.Setenv("CONDUCTOR_HOME", state)
+
+	err := run([]string{"migrate", source, destination})
+	if err == nil || err.Error() != "migration requires a frozen cutover source" {
+		t.Fatalf("error = %v", err)
+	}
+	if _, statErr := os.Stat(state); !os.IsNotExist(statErr) {
+		t.Fatalf("runtime state was initialized: %v", statErr)
+	}
+}
+
+func TestMigrateDispatchesOnlyAfterFreezeBarrier(t *testing.T) {
+	source := t.TempDir()
+	destination := filepath.Join(t.TempDir(), "destination")
+	if err := os.WriteFile(filepath.Join(source, "protocol.json"), []byte("{\"version\":4}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cutover.Freeze(source, "cut-1", currentVersion(), nil); err != nil {
 		t.Fatal(err)
 	}
 	state := filepath.Join(t.TempDir(), "runtime-state")
@@ -440,6 +483,93 @@ func TestOneShotWatchReleasesOwnership(t *testing.T) {
 	}
 	if err := release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCutoverFreezeReplaceFireAndRearm(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+	executable := os.Args[0]
+	targetRelease := currentVersion()
+	if _, _, err := runCLIHelper(executable, root, "", "a", "join", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLIHelper(executable, root, "", "a", "subscribe", "--topic=dev/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLIHelper(executable, root, "", "a", "watch", "--mode=summary"); err != nil {
+		t.Fatalf("drain join: %v", err)
+	}
+
+	watch := exec.Command(executable, "a", "watch", "--mode=summary")
+	watch.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
+	watch.Env = replaceEnvironment(watch.Env, "CONDUCTOR_HOME", root)
+	var watchOut, watchErr bytes.Buffer
+	watch.Stdout = &watchOut
+	watch.Stderr = &watchErr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	controlDir, err := cutover.Directory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := filepath.Join(controlDir, "watch", "a.owner.json")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(owner); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = watch.Process.Kill()
+			t.Fatal("watcher did not publish cutover capability")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, stderr, err := runCLIHelper(executable, root, "", "cutover", "freeze", root, "--id=cut-1", "--release="+targetRelease); err != nil {
+		_ = watch.Process.Kill()
+		t.Fatalf("freeze: %v: %s", err, stderr)
+	}
+	if _, stderr, err := runCLIHelper(executable, root, "", "a", "put", "dev/tasks", "blocked"); err == nil {
+		_ = watch.Process.Kill()
+		t.Fatal("write succeeded while frozen")
+	} else if !bytes.Contains(stderr, []byte("frozen")) {
+		t.Fatalf("blocked write error = %s", stderr)
+	}
+	if _, stderr, err := runCLIHelper(executable, root, "", "cutover", "replace", root, "--id=cut-1"); err != nil {
+		_ = watch.Process.Kill()
+		t.Fatalf("replace: %v: %s", err, stderr)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- watch.Wait() }()
+	select {
+	case err := <-waited:
+		if err != nil {
+			t.Fatalf("watch: %v: %s", err, watchErr.String())
+		}
+	case <-time.After(3 * time.Second):
+		_ = watch.Process.Kill()
+		t.Fatal("watch did not fire replacement activation")
+	}
+	var activation conductor.ReplacementActivation
+	if err := json.Unmarshal(watchOut.Bytes(), &activation); err != nil {
+		t.Fatalf("activation JSON: %v: %s", err, watchOut.String())
+	}
+	if activation.Type != "conductor-replaced" || activation.CutoverID != "cut-1" || activation.Release != targetRelease {
+		t.Fatalf("activation = %#v", activation)
+	}
+	if _, stderr, err := runCLIHelper(executable, root, "", "cutover", "activate", root, "--id=cut-1"); err != nil {
+		t.Fatalf("activate: %v: %s", err, stderr)
+	}
+	if _, _, err := runCLIHelper(executable, root, "", "a", "put", "dev/tasks", "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runCLIHelper(executable, root, "", "a", "watch", "--mode=summary")
+	if err != nil {
+		t.Fatalf("rearm: %v: %s", err, stderr)
+	}
+	var batch conductor.BatchDelivery
+	if err := json.Unmarshal(stdout, &batch); err != nil || len(batch.Deliveries) == 0 {
+		t.Fatalf("rearmed delivery = %#v, %v: %s", batch, err, stdout)
 	}
 }
 

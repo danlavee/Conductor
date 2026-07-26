@@ -10,6 +10,12 @@ Every watcher command accepts `--mode`. `--mode=content` is the default and deli
 
 Use exactly one wait owner for the joined identity. The axis that decides whether a row applies at all is whether the harness can wake a thread by any mechanism — an API call, a harness-provided background-task tool, or a per-signal spawn — or is dormant/blocked, with no way for any thread to wake itself; only the latter has no usable row. Within a wakeable harness, decide whether you're resuming your own current turn (self-wake: a backgrounded task you started, resumed on its completion) or targeting a separate session from outside it — CLI-headless watching always does the latter, spawning a fresh process against a different, dormant session; never point it at the session you are currently running in, since that spawns a competing process against the same live transcript, where interactive tool approval may be unavailable. Support is per-vendor, not universal — the table below merges vendors or modes into one row only where they share an identical mechanism; don't assume one vendor's support implies another's.
 
+## Replacement activation
+
+A cutover-aware watcher can return a typed `conductor-replaced` activation instead of a delivery batch. It contains only the cutover ID, target release, and new generation. It has no summaries or delta and must not be resolved or acknowledged.
+
+When this activation arrives, the old watcher has already stopped reading the protocol root and exits after firing it. Reload the installed skill and executable, then re-arm exactly one watcher for the same agent. A watcher started after replacement waits for activation of the new generation and does not emit the old replacement activation again. Pending pre-freeze signals remain unread for that replacement watcher.
+
 ## Choose a row
 
 Conversation and session IDs are never CLI arguments or something you supply. The Claude resume adapter reads `CLAUDE_SESSION_ID`, set automatically by its harness. Generic watches need no thread or conversation ID. Only the agent name is a CLI argument.

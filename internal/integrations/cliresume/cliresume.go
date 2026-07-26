@@ -51,13 +51,14 @@ func (t Transport) Validate(targetID, agent string) error {
 }
 
 type WatchClient interface {
-	WatchContext(context.Context) ([]conductor.Summary, error)
+	WatchResultContext(context.Context) (conductor.WatchResult, error)
 	ResolveDelivery(conductor.Summary, conductor.DeliveryMode) (conductor.Delivery, error)
 	AcknowledgeDelivery(conductor.Delivery) error
 }
 
 type Activator interface {
 	Activate(context.Context, string, string, conductor.Delivery) error
+	ActivateReplacement(context.Context, string, string, conductor.ReplacementActivation) error
 }
 
 // CLI activates a Transport's runtime by spawning one resume process per
@@ -96,6 +97,19 @@ func (a *CLI) Activate(ctx context.Context, targetID, agent string, delivery con
 	if err != nil {
 		return err
 	}
+	return a.activatePrompt(ctx, targetID, agent, prompt)
+}
+
+func (a *CLI) ActivateReplacement(ctx context.Context, targetID, agent string, activation conductor.ReplacementActivation) error {
+	payload, err := json.Marshal(activation)
+	if err != nil {
+		return err
+	}
+	prompt := fmt.Sprintf("Conductor was replaced during cutover. Control activation: %s. This activation contains no topic delta and must not be acknowledged. Reload the installed Conductor skill and executable, then re-arm exactly one watch for agent %q. Do not read the old protocol root.", payload, agent)
+	return a.activatePrompt(ctx, targetID, agent, prompt)
+}
+
+func (a *CLI) activatePrompt(ctx context.Context, targetID, agent, prompt string) error {
 	command := a.Command(ctx, a.Executable, a.Transport.ResumeArguments(targetID, prompt)...)
 	command.Env = setEnvironment(os.Environ(), map[string]string{
 		a.Transport.DeliveryEnvironment: "1",
@@ -119,28 +133,41 @@ func (a *CLI) hint(targetID, agent string) string {
 	return a.Transport.ResumeFailureHint(targetID, agent)
 }
 
-// Run owns the wait loop: watch, resolve the signal's data per mode, activate
-// one resume, then acknowledge only after that resume succeeds.
+// Run owns the wait loop. Replacement is a control-only activation and exits
+// the old adapter without resolution or acknowledgment.
 func Run(ctx context.Context, transport Transport, client WatchClient, activator Activator, targetID, agent string, mode conductor.DeliveryMode) error {
 	if err := transport.Validate(targetID, agent); err != nil {
 		return err
 	}
 	for {
-		summaries, err := client.WatchContext(ctx)
+		result, err := client.WatchResultContext(ctx)
 		if err != nil {
 			return err
 		}
-		for _, summary := range summaries {
+		if result.Activation != nil {
+			defer result.Close()
+			if err := activator.ActivateReplacement(ctx, targetID, agent, *result.Activation); err != nil {
+				return fmt.Errorf("deliver Conductor replacement to %s: %w", transport.RuntimeLabel, err)
+			}
+			return nil
+		}
+		for _, summary := range result.Summaries {
 			delivery, err := client.ResolveDelivery(summary, mode)
 			if err != nil {
+				_ = result.Close()
 				return fmt.Errorf("resolve Conductor summary %d for %s: %w", summary.Sequence, transport.RuntimeLabel, err)
 			}
 			if err := activator.Activate(ctx, targetID, agent, delivery); err != nil {
+				_ = result.Close()
 				return fmt.Errorf("deliver Conductor summary %d to %s: %w", summary.Sequence, transport.RuntimeLabel, err)
 			}
 			if err := client.AcknowledgeDelivery(delivery); err != nil {
+				_ = result.Close()
 				return fmt.Errorf("acknowledge Conductor summary %d after %s delivery: %w", summary.Sequence, transport.RuntimeLabel, err)
 			}
+		}
+		if err := result.Close(); err != nil {
+			return err
 		}
 	}
 }

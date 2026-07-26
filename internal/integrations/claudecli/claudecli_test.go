@@ -17,12 +17,12 @@ type stubWatchClient struct {
 	resolveErr   error
 }
 
-func (c *stubWatchClient) WatchContext(context.Context) ([]conductor.Summary, error) {
+func (c *stubWatchClient) WatchResultContext(context.Context) (conductor.WatchResult, error) {
 	if c.delivered {
-		return nil, c.stop
+		return conductor.WatchResult{}, c.stop
 	}
 	c.delivered = true
-	return []conductor.Summary{c.summary}, nil
+	return conductor.WatchResult{Summaries: []conductor.Summary{c.summary}}, nil
 }
 
 func (c *stubWatchClient) ResolveDelivery(summary conductor.Summary, mode conductor.DeliveryMode) (conductor.Delivery, error) {
@@ -48,6 +48,10 @@ func (a *stubActivator) Activate(_ context.Context, session, agent string, deliv
 	a.session = session
 	a.agent = agent
 	a.delivery = delivery
+	return a.err
+}
+
+func (a *stubActivator) ActivateReplacement(context.Context, string, string, conductor.ReplacementActivation) error {
 	return a.err
 }
 

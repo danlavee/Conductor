@@ -12,6 +12,11 @@ import (
 // provide identity explicitly; Conductor no longer infers it from an
 // environment variable or a terminal-session binding.
 func (c *Client) ResolveAgent() (string, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return "", err
+	}
+	defer releaseOperation()
 	if err := c.validateProtocol(); err != nil {
 		return "", err
 	}

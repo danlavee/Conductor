@@ -9,6 +9,11 @@ import (
 )
 
 func (c *Client) Subscription() (Subscription, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return Subscription{}, err
+	}
+	defer releaseOperation()
 	agent, err := c.requireAgent()
 	if err != nil {
 		return Subscription{}, err
@@ -17,6 +22,11 @@ func (c *Client) Subscription() (Subscription, error) {
 }
 
 func (c *Client) SubscribeTopicGroup(group string) (Subscription, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return Subscription{}, err
+	}
+	defer releaseOperation()
 	if strings.TrimSpace(group) != group || group == "" || strings.ContainsAny(group, `/\\`) {
 		return Subscription{}, errors.New("invalid topic group")
 	}
@@ -26,6 +36,11 @@ func (c *Client) SubscribeTopicGroup(group string) (Subscription, error) {
 }
 
 func (c *Client) SubscribeTopic(topic string) (Subscription, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return Subscription{}, err
+	}
+	defer releaseOperation()
 	if err := validTopic(topic); err != nil {
 		return Subscription{}, err
 	}
@@ -35,6 +50,11 @@ func (c *Client) SubscribeTopic(topic string) (Subscription, error) {
 }
 
 func (c *Client) ListTopicGroups() ([]string, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return nil, err
+	}
+	defer releaseOperation()
 	entries, err := os.ReadDir(filepath.Join(c.Home, "topics"))
 	if err != nil {
 		return nil, err
@@ -50,6 +70,11 @@ func (c *Client) ListTopicGroups() ([]string, error) {
 }
 
 func (c *Client) ListTopics(group string) ([]string, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return nil, err
+	}
+	defer releaseOperation()
 	if strings.TrimSpace(group) != group || group == "" || strings.ContainsAny(group, `/\\`) {
 		return nil, errors.New("invalid topic group")
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	conductor "github.com/danlavee/Conductor"
+	"github.com/danlavee/Conductor/internal/cutover"
 	"github.com/danlavee/Conductor/internal/install"
 	skillbundle "github.com/danlavee/Conductor/skills"
 )
@@ -54,9 +55,12 @@ func run(args []string) error {
 			return errors.New("usage: conductor version")
 		}
 		return conductor.WriteJSON(os.Stdout, struct {
-			Version  string `json:"version"`
-			Protocol int    `json:"protocol"`
-		}{Version: currentVersion(), Protocol: conductor.CurrentProtocolVersion})
+			Version           string `json:"version"`
+			Protocol          int    `json:"protocol"`
+			CutoverCapability int    `json:"cutover_capability"`
+		}{Version: currentVersion(), Protocol: conductor.CurrentProtocolVersion, CutoverCapability: cutover.Capability})
+	case "cutover":
+		return runCutoverCommand(args[1:])
 	case "migrate":
 		if len(args) != 3 {
 			return errors.New("usage: conductor migrate <absolute-source-root> <absolute-destination-root>")

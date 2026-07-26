@@ -45,17 +45,21 @@ type stubWatchClient struct {
 	resolveErr            error
 	ackErr                error
 	events                *[]string
+	activation            *conductor.ReplacementActivation
 }
 
-func (c *stubWatchClient) WatchContext(context.Context) ([]conductor.Summary, error) {
+func (c *stubWatchClient) WatchResultContext(context.Context) (conductor.WatchResult, error) {
 	if c.delivered {
-		return nil, c.stop
+		return conductor.WatchResult{}, c.stop
 	}
 	c.delivered = true
-	if c.summaries != nil {
-		return c.summaries, nil
+	if c.activation != nil {
+		return conductor.WatchResult{Activation: c.activation}, nil
 	}
-	return []conductor.Summary{c.summary}, nil
+	if c.summaries != nil {
+		return conductor.WatchResult{Summaries: c.summaries}, nil
+	}
+	return conductor.WatchResult{Summaries: []conductor.Summary{c.summary}}, nil
 }
 
 func (c *stubWatchClient) ResolveDelivery(summary conductor.Summary, mode conductor.DeliveryMode) (conductor.Delivery, error) {
@@ -82,6 +86,15 @@ type stubActivator struct {
 	err          error
 	failSequence int64
 	events       *[]string
+	replacement  *conductor.ReplacementActivation
+}
+
+func (a *stubActivator) ActivateReplacement(_ context.Context, _, _ string, activation conductor.ReplacementActivation) error {
+	if a.events != nil {
+		*a.events = append(*a.events, "replace")
+	}
+	a.replacement = &activation
+	return a.err
 }
 
 func (a *stubActivator) Activate(_ context.Context, target, agent string, delivery conductor.Delivery) error {
@@ -143,6 +156,19 @@ func TestRunDeliversThenAcknowledges(t *testing.T) {
 	err := Run(context.Background(), testTransport, client, activator, "target-1", "tester1", conductor.DeliverySummary)
 	if !errors.Is(err, stop) || !client.acknowledged || activator.target != "target-1" || activator.agent != "tester1" || strings.Join(events, ",") != "activate,ack" {
 		t.Fatalf("error=%v acknowledged=%v events=%v activator=%#v", err, client.acknowledged, events, activator)
+	}
+}
+
+func TestRunFiresReplacementWithoutResolutionOrAcknowledgment(t *testing.T) {
+	activation := conductor.ReplacementActivation{Type: "conductor-replaced", CutoverID: "cut-1", Release: "v5", Generation: 2}
+	var events []string
+	client := &stubWatchClient{activation: &activation, events: &events}
+	activator := &stubActivator{events: &events}
+	if err := Run(context.Background(), testTransport, client, activator, "target-1", "tester1", conductor.DeliveryContent); err != nil {
+		t.Fatal(err)
+	}
+	if client.acknowledged || strings.Join(events, ",") != "replace" || activator.replacement == nil || *activator.replacement != activation {
+		t.Fatalf("ack=%v events=%v replacement=%#v", client.acknowledged, events, activator.replacement)
 	}
 }
 

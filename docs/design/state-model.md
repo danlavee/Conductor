@@ -86,4 +86,18 @@ Recovery is opportunistic. `watch` consumes existing signals and never recovers 
 
 These distinctions make repair bounded. A stale cache can be rebuilt from history. A missing inbox append can be reconciled from its event. Neither repair changes the publication itself.
 
+## Replacement cutover
+
+Replacement uses a protocol-independent control plane beside, not inside, the logical state root:
+
+```text
+active -> freezing -> frozen -> replaced -> active(new generation)
+```
+
+Every normal SDK operation holds an external crash-released admission lease. `freezing` closes admission; the freeze command drains all leases before publishing the `frozen` barrier. From that point until new-generation activation, acknowledgments, recovery, transactions, membership, subscriptions, publications, cursors, and root-side lock files are all blocked.
+
+A watcher releases its lease between polls. Once it observes the barrier it performs control-only polling and keeps no root handle. A watcher that began in the old active generation emits exactly one `conductor-replaced` activation after replacement, with no summaries or content and no acknowledgment, then exits. A newly started watcher waits for the new active generation without duplicating that activation. Existing unread delivery state is therefore left for the replacement watcher.
+
+The first deployment of this mechanism cannot fence older binaries. Freeze preflight checks active watch ownership metadata and refuses seamless cutover when an active watcher lacks the capability. A pre-replacement validation failure may safely restore active admission; after replacement the same durable cutover identity must be resumed through activation.
+
 Exact file ordering and crash windows belong to the [protocol reference](../../skills/conductor/references/protocol.md). The [architecture](architecture.md) explains why these states exist; [runtime boundaries](runtime-boundaries.md) define when delivery leaves Conductor's responsibility.

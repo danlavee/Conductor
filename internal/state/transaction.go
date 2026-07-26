@@ -28,6 +28,15 @@ func forcedBroadcastTopic(topic string) bool {
 
 // Begin acquires one topic lease and creates a durable empty transaction.
 func (c *Client) Begin(topic string) (err error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if releaseErr := releaseOperation(); err == nil {
+			err = releaseErr
+		}
+	}()
 	if err := c.validateProtocol(); err != nil {
 		return err
 	}
@@ -87,6 +96,11 @@ func (c *Client) beginLocked(agent, topic string) error {
 }
 
 func (c *Client) StagePut(text string) (Record, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return Record{}, err
+	}
+	defer releaseOperation()
 	return c.stageRecord(func(txn *Transaction) (Record, error) {
 		index, err := c.nextRecordIndex(txn.Topic)
 		if err != nil {
@@ -99,6 +113,11 @@ func (c *Client) StagePut(text string) (Record, error) {
 }
 
 func (c *Client) StageEdit(index int64, text string) (Record, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return Record{}, err
+	}
+	defer releaseOperation()
 	return c.stageRecord(func(txn *Transaction) (Record, error) {
 		if _, err := c.recordForTransaction(*txn, index); err != nil {
 			return Record{}, err
@@ -108,6 +127,11 @@ func (c *Client) StageEdit(index int64, text string) (Record, error) {
 }
 
 func (c *Client) StageStrike(index int64) (Record, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return Record{}, err
+	}
+	defer releaseOperation()
 	return c.stageRecord(func(txn *Transaction) (Record, error) {
 		record, err := c.recordForTransaction(*txn, index)
 		if err != nil {
@@ -173,14 +197,29 @@ func (c *Client) recordForTransaction(txn Transaction, index int64) (Record, err
 }
 
 func (c *Client) Put(topic, text string) (Record, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return Record{}, err
+	}
+	defer releaseOperation()
 	return c.oneShotRecord(topic, func() (Record, error) { return c.StagePut(text) })
 }
 
 func (c *Client) Edit(topic string, index int64, text string) (Record, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return Record{}, err
+	}
+	defer releaseOperation()
 	return c.oneShotRecord(topic, func() (Record, error) { return c.StageEdit(index, text) })
 }
 
 func (c *Client) Strike(topic string, index int64) (Record, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return Record{}, err
+	}
+	defer releaseOperation()
 	return c.oneShotRecord(topic, func() (Record, error) { return c.StageStrike(index) })
 }
 
@@ -207,6 +246,11 @@ func (c *Client) oneShotRecord(topic string, operation func() (Record, error)) (
 
 // Commit publishes every final staged record atomically.
 func (c *Client) Commit() (Publication, error) {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return Publication{}, err
+	}
+	defer releaseOperation()
 	return c.commit()
 }
 
@@ -356,6 +400,11 @@ func (c *Client) transactionPath(agent string) string {
 }
 
 func (c *Client) Abort() error {
+	releaseOperation, err := c.beginOperation()
+	if err != nil {
+		return err
+	}
+	defer releaseOperation()
 	if err := c.validateProtocol(); err != nil {
 		return err
 	}
