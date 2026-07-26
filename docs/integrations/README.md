@@ -2,7 +2,8 @@
 
 | Target | Topology | Lifecycle | Activation | Command |
 | --- | --- | --- | --- | --- |
-| Codex attended chat | Host-managed terminal | One-shot, rearmed by the agent | Background-terminal completion | `conductor <agent> watch` |
+| [Codex attended chat](codex.md) | Host-managed terminal | One-shot, rearmed by the agent | Background-terminal completion | `conductor <agent> watch` |
+| [Codex Desktop task](codex.md) | Desktop-owned heartbeat | Persistent schedule, nonblocking polls | Same-task heartbeat turn | `conductor <agent> watch --codex-desktop` |
 | Antigravity attended conversation | Host-managed terminal | One-shot, rearmed by the agent | Background-terminal completion | `conductor <agent> watch` |
 | [Claude Code CLI, headless, process-per-signal](claude-cli.md) | External launcher | Process-per-signal | `claude -p --resume` | `conductor <agent> watch --claude-cli` |
 | [Claude Code CLI or Desktop, interactive session](claude-interactive.md) | Self-managed background task | One-shot, rearmed by the agent | Backgrounded watch completion | `conductor <agent> watch` |

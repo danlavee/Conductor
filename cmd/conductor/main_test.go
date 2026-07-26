@@ -14,6 +14,7 @@ import (
 
 	conductor "github.com/danlavee/Conductor"
 	installer "github.com/danlavee/Conductor/internal/install"
+	"github.com/danlavee/Conductor/internal/integrations/codexdesktop"
 )
 
 const cliHelperEnvironment = "CONDUCTOR_CLI_TEST_HELPER"
@@ -337,9 +338,12 @@ func TestVersionDoesNotInitializeRuntime(t *testing.T) {
 	}
 }
 
-func TestUsageDoesNotExposeCodexTransports(t *testing.T) {
+func TestUsageExposesOnlyCodexDesktopTransport(t *testing.T) {
 	message := usageError().Error()
-	for _, flag := range []string{"--codex", "--codex-cli"} {
+	if !strings.Contains(message, "--codex-desktop") {
+		t.Fatalf("usage omits Codex Desktop transport: %s", message)
+	}
+	for _, flag := range []string{"--codex ", "--codex-cli"} {
 		if strings.Contains(message, flag) {
 			t.Fatalf("usage retains removed Codex transport %s: %s", flag, message)
 		}
@@ -347,7 +351,7 @@ func TestUsageDoesNotExposeCodexTransports(t *testing.T) {
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--claude-cli] [--mode=summary|content]"
+	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--codex-desktop | --claude-cli] [--mode=summary|content]"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}
@@ -450,6 +454,40 @@ func TestRemovedWatchModesReturnUsage(t *testing.T) {
 		if err := run(args); err == nil || err.Error() != usageError().Error() {
 			t.Fatalf("%v: error = %v, want usage error", args, err)
 		}
+	}
+}
+
+func TestCodexDesktopWatchReturnsActivityThenIdleWithoutBlocking(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "a", "join", "dev"); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "a", "watch", "--codex-desktop")
+	if err != nil || len(stderr) != 0 {
+		t.Fatalf("activity poll error = %v, stderr = %q", err, stderr)
+	}
+	var activity codexdesktop.Result
+	if err := json.Unmarshal(stdout, &activity); err != nil {
+		t.Fatalf("activity output is not JSON: %q: %v", stdout, err)
+	}
+	if activity.Status != "activity" || activity.Transport != "codex-desktop" || activity.Agent != "a" || activity.Batch == nil || len(activity.Batch.Deliveries) == 0 {
+		t.Fatalf("activity result = %#v", activity)
+	}
+	if activity.Batch.Deliveries[0].Mode != conductor.DeliveryContent {
+		t.Fatalf("default delivery mode = %q", activity.Batch.Deliveries[0].Mode)
+	}
+
+	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "a", "watch", "--codex-desktop")
+	if err != nil || len(stderr) != 0 {
+		t.Fatalf("idle poll error = %v, stderr = %q", err, stderr)
+	}
+	var idle codexdesktop.Result
+	if err := json.Unmarshal(stdout, &idle); err != nil {
+		t.Fatalf("idle output is not JSON: %q: %v", stdout, err)
+	}
+	if idle.Status != "idle" || idle.Transport != "codex-desktop" || idle.Agent != "a" || idle.Batch != nil {
+		t.Fatalf("idle result = %#v", idle)
 	}
 }
 

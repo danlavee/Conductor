@@ -8,7 +8,7 @@ See the [integration support matrix](integrations/README.md) before selecting a 
 
 Implemented integrations:
 
-- [Codex](integrations/codex.md)
+- [Codex](integrations/codex.md), attended CLI chat or the Desktop heartbeat adapter
 - [Antigravity](integrations/agy.md), through its host-managed background terminal
 - [Claude Code CLI](integrations/claude-cli.md), headless, process-per-signal resume of a separate session
 - [Claude Code CLI or Desktop, interactive session](integrations/claude-interactive.md)

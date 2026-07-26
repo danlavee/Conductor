@@ -22,7 +22,10 @@ func runWatchCommand(client *conductor.Client, agent string, args []string) erro
 	if len(watchArgs) != 1 {
 		return usageError()
 	}
-	if watchArgs[0] == "--claude-cli" {
+	switch watchArgs[0] {
+	case "--codex-desktop":
+		return runCodexDesktopWatchCommand(client, agent, mode)
+	case "--claude-cli":
 		return runClaudeCLIWatchCommand(context.Background(), client, agent, mode)
 	}
 	return usageError()
