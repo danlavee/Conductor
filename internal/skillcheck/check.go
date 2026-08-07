@@ -246,8 +246,8 @@ func cliCommands(root string) (map[string]bool, error) {
 
 // isAgentScopedDispatchTag reports whether tag is the bare identifier
 // "command" -- run()'s dispatch point for every agent-scoped verb (join,
-// put, watch, ...) -- as opposed to unrelated switches in the same file
-// (the watch --claude-cli sub-flag, migrate's protocol-version dispatch).
+// put, watch, ...) -- as opposed to unrelated switches in the same file,
+// such as migrate's protocol-version dispatch.
 func isAgentScopedDispatchTag(tag ast.Expr) bool {
 	ident, ok := tag.(*ast.Ident)
 	return ok && ident.Name == "command"

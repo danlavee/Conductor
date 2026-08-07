@@ -641,15 +641,23 @@ func TestStatusReportsRegistrationAndLiveWakeability(t *testing.T) {
 		t.Fatalf("status after join = %#v", joined)
 	}
 
+	// Registered before waiting on ownership, not after: every step between
+	// here and the deliberate stop below can t.Fatal, and a watcher left alive
+	// by one of them still holds a handle inside the directory the test's own
+	// cleanup then tries to remove. Stopping twice is harmless -- stopWatch
+	// discards both the kill and the wait error -- so the insurance costs
+	// nothing on the path where the test succeeds.
 	watch, _ := startWatch(t, root)
+	defer stopWatch(t, watch)
 	waitForOwnership(t, root)
 	watching := readStatus(t, root)
 	if !watching.Registered || !watching.Wakeable || watching.PID != watch.Process.Pid {
 		t.Fatalf("status while watching = %#v, watcher pid = %d", watching, watch.Process.Pid)
 	}
 
-	_ = watch.Process.Kill()
-	_ = watch.Wait()
+	// The stop is the thing under test here, not just teardown: a dead watcher
+	// must read as unwakeable while its sidecar is still on disk.
+	stopWatch(t, watch)
 	controlDir, err := cutover.Directory(root)
 	if err != nil {
 		t.Fatal(err)
@@ -660,6 +668,41 @@ func TestStatusReportsRegistrationAndLiveWakeability(t *testing.T) {
 	dead := readStatus(t, root)
 	if !dead.Registered || dead.Wakeable {
 		t.Fatalf("status after the watcher died = %#v", dead)
+	}
+}
+
+// A wakeability query is asked from outside the bus, and the two ways it could
+// fail to be are both silent. Initializing a protocol root in order to report
+// on it creates the thing being asked about; refusing to answer mid-cutover
+// withholds the answer exactly when an operator most wants it, since a frozen
+// bus is when "would anyone respond" stops being obvious.
+func TestStatusNeitherInitializesNorEntersTheBus(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+
+	before := readStatus(t, root)
+	if before.Registered || before.Wakeable {
+		t.Fatalf("status on an uninitialized root = %#v", before)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("status initialized the protocol root: %v", err)
+	}
+
+	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
+		t.Fatalf("join: %v: %s", err, stderr)
+	}
+	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "cutover", "freeze", root, "--id=cut-1", "--release="+currentVersion()); err != nil {
+		t.Fatalf("freeze: %v: %s", err, stderr)
+	}
+	// Confirm the freeze is actually in force, so the assertion below is about
+	// status tolerating it rather than about nothing being frozen.
+	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "put", "dev/tasks", "blocked"); err == nil {
+		t.Fatal("write succeeded while frozen")
+	} else if !bytes.Contains(stderr, []byte("frozen")) {
+		t.Fatalf("blocked write error = %s", stderr)
+	}
+	frozen := readStatus(t, root)
+	if !frozen.Registered || frozen.Wakeable {
+		t.Fatalf("status while frozen = %#v", frozen)
 	}
 }
 
