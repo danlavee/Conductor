@@ -1,0 +1,53 @@
+{
+  "SessionStart": [
+    {
+      "matcher": "startup|resume|clear|compact|fork",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/bin/conductor",
+          "args": ["adapter", "claude", "identity"],
+          "timeout": 15
+        },
+        {
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/bin/conductor",
+          "args": ["adapter", "claude", "arm"],
+          "asyncRewake": true,
+          "timeout": 86400,
+          "statusMessage": "Conductor: holding a delivery stream",
+          "rewakeSummary": "Conductor delivery",
+          "rewakeMessage": "Conductor delivered team work addressed to you. This turn started on its own; no human is necessarily present, so do not ask a question and wait. The delivery payload follows. Act on it, then finish the turn -- the next watcher arms itself automatically when you do."
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/bin/conductor",
+          "args": ["adapter", "claude", "arm"],
+          "asyncRewake": true,
+          "timeout": 86400,
+          "statusMessage": "Conductor: holding a delivery stream",
+          "rewakeSummary": "Conductor delivery",
+          "rewakeMessage": "Conductor delivered team work addressed to you. This turn started on its own; no human is necessarily present, so do not ask a question and wait. The delivery payload follows. Act on it, then finish the turn -- the next watcher arms itself automatically when you do."
+        }
+      ]
+    }
+  ],
+  "SessionEnd": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/bin/conductor",
+          "args": ["adapter", "claude", "release"],
+          "timeout": 10
+        }
+      ]
+    }
+  ]
+}

@@ -93,11 +93,11 @@ Requirement 10 is what makes the resident component and the turn-boundary trigge
 
 `watch` is the stream. `status` is the wakeability query: it reports whether an identity is on the roster and whether a live process currently holds its ownership guard, derived from the guard's owner record and the operating system's own view of that process. It never acquires the guard, because a status check that could momentarily block a live stream would be a way to cause the failure it exists to detect; and it never trusts a claim to be watching, because that claim is exactly what goes stale when a stream dies silently.
 
-Both are host-neutral. An adapter reaches them through the same public client any other caller would use — the direction of the dependency is the whole point, and it is the inverse of the vendor `watch` flags this design replaces.
+Both are host-neutral. The adapter subtree is where host knowledge lives, and it reaches the bus through the same public client any other caller would use — the direction of the dependency is the whole point, and it is the inverse of the vendor `watch` flags this design replaced.
 
 ## First instance: Claude
 
-Packaged as a plugin — `.claude-plugin/plugin.json`, with `hooks/hooks.json` and an optional `.mcp.json` beside it. Not yet built; the design below is what it will register.
+Packaged as a plugin — `.claude-plugin/plugin.json` with `hooks/hooks.json` beside it, and an optional `.mcp.json`. It lives at [`adapters/claude-code/`](../../adapters/claude-code/README.md); its host-specific logic is `conductor adapter claude <arm|release|identity>`.
 
 | Responsibility | Realization |
 | --- | --- |
@@ -130,11 +130,9 @@ Still open: the consecutive-block cap on turn-boundary blocking and how the adap
 
 ## Not yet built
 
-No adapter exists yet. Every host still uses the interim path, in which the agent owns the stream's lifecycle.
-
 Requirement 3 — the roster reporting wakeability — is not implemented. `status` answers for one identity; `list-agents` still reports who registered, not who would respond. Closing the gap means resolving each roster entry's guard at listing time, and deciding whether wakeability belongs on the wire type or beside it.
 
-Installation does not yet register host configuration. `conductor install` places the skill and the executable, and nothing places host configuration.
+Installation does not yet register host configuration. `conductor install` places the skill and the executable; putting the plugin where the host loads it, and the executable inside the plugin, is a documented manual step in [the adapter's README](../../adapters/claude-code/README.md).
 
 ## Consequences
 

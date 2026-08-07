@@ -59,6 +59,8 @@ func run(args []string) error {
 			Protocol          int    `json:"protocol"`
 			CutoverCapability int    `json:"cutover_capability"`
 		}{Version: currentVersion(), Protocol: conductor.CurrentProtocolVersion, CutoverCapability: cutover.Capability})
+	case "adapter":
+		return runAdapterCommand(args[1:])
 	case "cutover":
 		return runCutoverCommand(args[1:])
 	case "migrate":
