@@ -29,6 +29,23 @@ func TestResolveIdentityReadsProjectBinding(t *testing.T) {
 	}
 }
 
+// TestResolveIdentityIgnoresAByteOrderMark covers the identity file as it is
+// actually produced on this host: Notepad and PowerShell's Set-Content
+// -Encoding utf8 both prepend U+FEFF. TrimSpace does not treat it as
+// whitespace, so an unstripped mark rides into the agent name and fails
+// validation at every session start -- while the file looks correct in every
+// editor that hides the mark.
+func TestResolveIdentityIgnoresAByteOrderMark(t *testing.T) {
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, IdentityFile), []byte("\xef\xbb\xbfplanner\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := ResolveIdentity(project)
+	if err != nil || agent != "planner" {
+		t.Fatalf("bound project = %q, %v; want %q", agent, err, "planner")
+	}
+}
+
 func TestArmDeliversPendingWorkAndReleasesOwnership(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
 	client := joined(t, root)

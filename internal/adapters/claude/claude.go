@@ -39,6 +39,12 @@ const (
 	// forget, or lose to a compaction.
 	IdentityFile = ".conductor-agent"
 
+	// byteOrderMark is U+FEFF, spelled as its UTF-8 bytes because Go rejects
+	// the character itself anywhere but the first position of a file -- and
+	// because a literal one here would read as an empty string to anyone
+	// reviewing the line that strips it.
+	byteOrderMark = "\xef\xbb\xbf"
+
 	// WakeExitCode is this host's wake primitive. A backgrounded hook that
 	// exits with it starts a turn in an otherwise idle session and appends its
 	// stdout to a system reminder the model reads.
@@ -96,7 +102,13 @@ func ResolveIdentity(projectDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(data)), nil
+	// The byte order mark is stripped because this file is written by hand on
+	// a host where the ordinary ways of doing that add one: Notepad and
+	// PowerShell's Set-Content -Encoding utf8 both do. TrimSpace does not
+	// consider it whitespace, so it would otherwise survive into the agent
+	// name and fail validation at every session start, reporting an identity
+	// that looks correct in every editor that hides the mark.
+	return strings.TrimSpace(strings.TrimPrefix(string(data), byteOrderMark)), nil
 }
 
 // Arm holds the identity's delivery stream and converts the first delivery
