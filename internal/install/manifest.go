@@ -43,12 +43,12 @@ type payloadFile struct {
 }
 
 func preflight(destination string, source Source) (string, []payloadFile, manifest, []byte, error) {
-	cleanDestination, err := validateDestination(destination, source.GOOS)
+	cleanDestination, err := validateDestination(destination, source.Payload, source.GOOS)
 	if err != nil {
 		return "", nil, manifest{}, nil, err
 	}
 	if source.Bundle == nil {
-		return "", nil, manifest{}, nil, errors.New("skill bundle is missing")
+		return "", nil, manifest{}, nil, errors.New("payload bundle is missing")
 	}
 	if source.GOOS != runtime.GOOS || source.GOARCH != runtime.GOARCH {
 		return "", nil, manifest{}, nil, errors.New("installer platform does not match the running executable")
@@ -56,8 +56,10 @@ func preflight(destination string, source Source) (string, []payloadFile, manife
 	if source.Protocol <= 0 {
 		return "", nil, manifest{}, nil, errors.New("protocol version must be positive")
 	}
-	if problems := skillcheck.ValidateSkill(source.Bundle); len(problems) > 0 {
-		return "", nil, manifest{}, nil, fmt.Errorf("invalid embedded skill: %s", strings.Join(problems, "; "))
+	if source.Payload.isSkill() {
+		if problems := skillcheck.ValidateSkill(source.Bundle); len(problems) > 0 {
+			return "", nil, manifest{}, nil, fmt.Errorf("invalid embedded skill: %s", strings.Join(problems, "; "))
+		}
 	}
 	bundleFiles, err := collectBundle(source.Bundle)
 	if err != nil {
@@ -70,13 +72,10 @@ func preflight(destination string, source Source) (string, []payloadFile, manife
 	if len(executableData) == 0 {
 		return "", nil, manifest{}, nil, errors.New("running executable is empty")
 	}
-	executablePath := "scripts/conductor"
-	if source.GOOS == "windows" {
-		executablePath += ".exe"
-	}
+	executablePath := source.Payload.executableRelativePath(source.GOOS)
 	for _, file := range bundleFiles {
 		if file.Path == executablePath || file.Path == manifestName {
-			return "", nil, manifest{}, nil, fmt.Errorf("skill bundle reserves installed path %s", file.Path)
+			return "", nil, manifest{}, nil, fmt.Errorf("payload bundle reserves installed path %s", file.Path)
 		}
 	}
 	bundleDigest := digestPayload(bundleFiles)
@@ -172,19 +171,12 @@ func encodeManifest(value manifest) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-func executableRelativePath(goos string) string {
-	if goos == "windows" {
-		return "scripts/conductor.exe"
-	}
-	return "scripts/conductor"
-}
-
 func resultFor(status, destination string, value manifest, manifestData []byte) Result {
 	return Result{
 		Status:       status,
 		Version:      value.Version,
 		Protocol:     value.Protocol,
-		SkillPath:    destination,
+		InstallPath:  destination,
 		BinaryPath:   filepath.Join(destination, filepath.FromSlash(value.Executable)),
 		FileCount:    len(value.Files),
 		ManifestHash: digest(manifestData),

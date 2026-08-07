@@ -138,7 +138,11 @@ Still open: the consecutive-block cap on turn-boundary blocking and how the adap
 
 ## Not yet built
 
-Installation does not yet register host configuration. `conductor install` places the skill and the executable; putting the plugin where the host loads it, and the executable inside the plugin, is a documented manual step in [the adapter's README](../../adapters/claude-code/README.md).
+Installation places host configuration but does not enable it. `conductor adapter claude install <dir>` writes the plugin tree and puts the executable at the path its hooks name, with the same staging, hashing and atomic publication the skill gets — so the placement is no longer a manual copy that can be done half-right.
+
+Enabling it is still a host command the user runs. That boundary is deliberate rather than unfinished work: this host discovers plugins through private state of its own — an install registry and a marketplace index, both undocumented and both versioned on the host's schedule — and writing into them would make Conductor's correctness depend on a format nobody promised to keep. The payload therefore ships a marketplace manifest so the remaining step is one documented command against a local directory, and Conductor asserts nothing about what the host does with it.
+
+The same reasoning rules out writing the hook registrations into the user's settings file. It would work, and it would mean Conductor editing a hand-maintained file it does not own, with no way to merge safely or to know what it overwrote.
 
 ## Consequences
 

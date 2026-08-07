@@ -272,7 +272,7 @@ func TestInstallProcessSuccessAndIdempotency(t *testing.T) {
 	if err := json.Unmarshal(stdout, &first); err != nil {
 		t.Fatal(err)
 	}
-	if first.Status != "installed" || first.SkillPath != destination {
+	if first.Status != "installed" || first.InstallPath != destination {
 		t.Fatalf("first result = %+v", first)
 	}
 	if first.Protocol != conductor.CurrentProtocolVersion {
@@ -375,7 +375,7 @@ func TestUsageExposesNoVendorWatchTransports(t *testing.T) {
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release|identity> | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] [--mode=summary|content] | conductor <agent> status"
+	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release|identity> | conductor adapter claude install <absolute-adapter-directory> | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] [--mode=summary|content] | conductor <agent> status"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}

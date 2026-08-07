@@ -2,7 +2,9 @@
 
 Status: built on this branch, at [`adapters/claude-code/`](../../adapters/claude-code/README.md). The wake mechanism is verified — an idle session with no active turn was woken twice by a backgrounded hook exiting 2, re-arming itself between wakes with no human input. See [verified wake methods](verified-wake-methods.md) for the run and the evidence standard. What remains unverified is coverage, not viability: the wake was proven with a standalone probe rather than with this adapter's own binary, the lifecycle trigger was exercised only on `startup`, and teardown not at all.
 
-Packaged as a Claude Code plugin: `.claude-plugin/plugin.json`, with `hooks/hooks.json` and an optional `.mcp.json` beside it. Installing the plugin and binding an identity is the whole setup — there is no per-session step and nothing for the agent to run.
+Packaged as a Claude Code plugin: `.claude-plugin/plugin.json`, with `hooks/hooks.json`, a marketplace manifest, and an optional `.mcp.json` beside it. Installing the plugin and binding an identity is the whole setup — there is no per-session step and nothing for the agent to run.
+
+`conductor adapter claude install <dir>` places the tree and the executable together, so the two cannot disagree about where the binary is. Enabling the plugin stays a host command, because the host's plugin registry is private state Conductor declines to write; see [the adapter's README](../../adapters/claude-code/README.md) for the two commands.
 
 ## The four responsibilities
 
