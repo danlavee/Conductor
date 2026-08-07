@@ -51,11 +51,11 @@ func runAgentCommand(agent, command string, rest []string) error {
 		if len(rest) != 0 {
 			return usageError()
 		}
-		agents, err := client.ListAgents()
+		roster, err := client.Roster()
 		if err != nil {
 			return err
 		}
-		return conductor.WriteJSON(os.Stdout, agents)
+		return conductor.WriteJSON(os.Stdout, roster)
 	case "subscribe":
 		if len(rest) != 1 {
 			return usageError()

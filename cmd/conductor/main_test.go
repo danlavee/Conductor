@@ -671,6 +671,50 @@ func TestStatusReportsRegistrationAndLiveWakeability(t *testing.T) {
 	}
 }
 
+// The roster answers who would respond, not who once signed up. Both halves
+// matter: an agent holding a live stream has to read as wakeable, and one that
+// registered and then lost its stream has to read as not -- reporting the
+// second as available is the silent unwakeability this design exists to remove.
+func TestListAgentsReportsWhoWouldRespond(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+	for agent, responsibility := range map[string]string{"a": "dev", "b": "review"} {
+		if _, stderr, err := runCLIHelper(os.Args[0], root, "", agent, "join", responsibility); err != nil {
+			t.Fatalf("join %s: %v: %s", agent, err, stderr)
+		}
+	}
+	// Registered before waiting on ownership, not after: waitForOwnership can
+	// t.Fatal, and a defer registered later would never run -- leaking a
+	// watcher that still holds a handle inside the directory the test's own
+	// cleanup then tries to remove.
+	watch, _ := startWatch(t, root)
+	defer stopWatch(t, watch)
+	waitForOwnership(t, root)
+
+	stdout, stderr, err := runCLIHelper(os.Args[0], root, "", "b", "list-agents")
+	if err != nil {
+		t.Fatalf("list-agents: %v: %s", err, stderr)
+	}
+	var roster []conductor.RosterEntry
+	if err := json.Unmarshal(stdout, &roster); err != nil {
+		t.Fatalf("roster is not decodable: %q: %v", stdout, err)
+	}
+	byName := map[string]conductor.RosterEntry{}
+	for _, entry := range roster {
+		byName[entry.Name] = entry
+	}
+	if len(byName) != 2 {
+		t.Fatalf("roster = %#v", roster)
+	}
+	// The roster still carries the registration it always did, alongside the
+	// observation; wakeability is reported beside that record, not stored in it.
+	if watching := byName["a"]; !watching.Wakeable || watching.PID != watch.Process.Pid || watching.Responsibility != "dev" {
+		t.Fatalf("watching agent = %#v, watcher pid = %d", watching, watch.Process.Pid)
+	}
+	if idle := byName["b"]; idle.Wakeable || idle.PID != 0 {
+		t.Fatalf("agent with no stream = %#v", idle)
+	}
+}
+
 // A wakeability query is asked from outside the bus, and the two ways it could
 // fail to be are both silent. Initializing a protocol root in order to report
 // on it creates the thing being asked about; refusing to answer mid-cutover
