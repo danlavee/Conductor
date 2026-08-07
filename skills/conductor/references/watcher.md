@@ -1,29 +1,29 @@
-# The watcher
+# Delivery
 
-No session inherits a running watcher — not a newcomer's first turn, not a restarted CLI, not a resumed one after a compaction or crash: if you don't already see one active, start it before anything else, every time. This is unlike joining, which is disk-persisted and outlives the session; only the watcher itself is session-scoped and needs restarting.
+You do not start, stop, restart, or hold a handle to anything. Your host's Conductor adapter keeps you reachable — while you are idle, while you are working on something unrelated, and across restarts, resumes, and compactions. Publications arrive on their own.
 
-The watcher is how self-wake works: nothing external reaches into a closed process and starts it. Start exactly one runtime-specific delivery adapter as a backgrounded task and retain its handle. Restart it only if it exits; activated turns must not start another. If the bundled syntax fails, stop rather than guessing. Validate it with one tagged signal that produces a new completed turn. Bare `watch` resolves the current backlog up to its shared record cap, reports unresolved summaries in `remaining`, then exits - still one-shot per call, and still must be rearmed for whatever remains or arrives next.
+If you are carrying the older habit of starting a background watcher and rearming it after every signal, drop it. Starting one yourself collides with the adapter that already owns your identity and is refused with `LOCKED`.
 
-Stop only through the retained handle. Never kill by process name, wildcard, or unverified PID; if ownership for this agent identity cannot be proven, leave it running and report the conflict.
+## What arrives
 
-Every watcher command accepts `--mode`. `--mode=content` is the default and delivers the resolved information directly. `--mode=summary` returns only a location pointer instead, requiring a separate read to see what changed — reach for it only when the user specifically asks for that lighter behavior, not as a default choice.
+A delivery names what changed and, by default, carries the resolved content. Process each one idempotently: delivery is at least once, so an interruption before acknowledgement replays a delivery rather than skipping it.
 
-Use exactly one wait owner for the joined identity. The axis that decides whether a row applies at all is whether the harness can wake a thread by any mechanism — an API call, a harness-provided background-task tool, or a per-signal spawn — or is dormant/blocked, with no way for any thread to wake itself; only the latter has no usable row. Within a wakeable harness, decide whether you're resuming your own current turn (self-wake: a backgrounded task you started, resumed on its completion) or targeting a separate session from outside it — CLI-headless watching always does the latter, spawning a fresh process against a different, dormant session; never point it at the session you are currently running in, since that spawns a competing process against the same live transcript, where interactive tool approval may be unavailable. Support is per-vendor, not universal — the table below merges vendors or modes into one row only where they share an identical mechanism; don't assume one vendor's support implies another's.
+A delivery resolves the pending backlog up to a shared record cap and reports anything left over in `remaining`. That surplus is not lost and is not yours to chase — it arrives in the next delivery.
+
+`--mode` selects whether a delivery carries resolved content or only a location pointer. It is adapter configuration, not a per-signal choice you make.
+
+## Confirming you are reachable
+
+`conductor <agent> status` answers whether your identity is currently wakeable. Normal operation does not need it — the adapter is responsible, not you. Use it to diagnose a host you suspect is misconfigured, or when the user asks who on the roster would actually respond.
 
 ## Replacement activation
 
-A cutover-aware watcher can return a typed `conductor-replaced` activation instead of a delivery batch. It contains only the cutover ID, target release, and new generation. It has no summaries or delta and must not be resolved or acknowledged.
+An adapter can receive a typed `conductor-replaced` activation instead of a delivery. It carries only the cutover ID, target release, and new generation — no summaries, no delta, nothing to resolve or acknowledge.
 
-When this activation arrives, the old watcher has already stopped reading the protocol root and exits after firing it. Reload the installed skill and executable, then re-arm exactly one watcher for the same agent. A watcher started after replacement waits for activation of the new generation and does not emit the old replacement activation again. Pending pre-freeze signals remain unread for that replacement watcher.
+Reconnection is the adapter's job. Yours is to reload the installed skill and executable, because the ones you are holding are the outgoing release. Pending pre-freeze signals remain unread for the replacement.
 
-## Choose a row
+## Hosts without an adapter
 
-Conversation and session IDs are never CLI arguments or something you supply. The Claude resume adapter reads `CLAUDE_SESSION_ID`, set automatically by its harness. Generic watches need no thread or conversation ID. Only the agent name is a CLI argument.
+Which hosts have one is recorded in the [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md). A host with no adapter yet falls back to `conductor <agent> watch --once`, which blocks for one delivery and exits. In that mode only, you own the lifecycle: start it through your host's background facility, retain the handle, process the delivery, and start it again. Stop it only through that handle — never by process name, wildcard, or unverified PID.
 
-| Vendor | Mode | Command | Mechanism |
-| --- | --- | --- | --- |
-| Claude<br>Antigravity | CLI interactive<br>Desktop | `conductor <agent> watch` | Native background-process tool; retain handle, resume on completion. Confirmed live for Claude CLI; reported (not reproduced here) for Claude Desktop; same mechanism across all Antigravity frontends. |
-| Codex | CLI interactive | `conductor <agent> watch` | Managed background-terminal tool; retain handle, resume on completion. |
-| Claude<br>Antigravity<br>Codex | CLI headless | `conductor <agent> watch --headless` `<future>` | Not yet implemented -- the CLI only accepts `--claude-cli` today. Documents the intended pattern: spawns a fresh process per signal against a separate, dormant session, resuming through that harness's own resume command. |
-| Codex | Desktop | `conductor <agent> watch --codex-desktop` | A task-attached heartbeat invokes one nonblocking check per minute. |
-| Any other harness | — | `conductor <agent> watch` | Generic backgrounded-watch fallback; untested beyond the three vendors above. |
+Owning the lifecycle is the previous model, kept until each host's adapter lands. It is not the design, and everything above applies the moment your host has one.

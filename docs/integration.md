@@ -1,20 +1,7 @@
-# Host integrations
+# Host adapters
 
-Conductor's state and watch protocol are host-neutral. An integration owns the runtime-specific step that turns a Conductor signal into an agent turn.
+Conductor's state and delivery contract are host-neutral. An adapter owns the host-specific step that turns a delivery into an agent turn, and owns its own restoration.
 
-Integration topology, activation, and lifecycle are separate properties. See the [integration model](integrations/architecture.md).
+Reachability and wakeability are different properties. Conductor owns reachability outright: a publication lands, persists, and is waiting whenever an agent next looks. Wakeability — whether that arrival starts a turn — is shared with the host, and is what an adapter exists to guarantee. See [wake adapters](design/wake-adapters.md) for the requirements, and the [adapter registry](integrations/README.md) for what exists.
 
-See the [integration support matrix](integrations/README.md) before selecting a watcher. A watcher is functional only when its documented host binding is present and its startup validation succeeds.
-
-Implemented integrations:
-
-- [Codex](integrations/codex.md), attended CLI chat or the Desktop heartbeat adapter
-- [Antigravity](integrations/agy.md), through its host-managed background terminal
-- [Claude Code CLI](integrations/claude-cli.md), headless, process-per-signal resume of a separate session
-- [Claude Code CLI or Desktop, interactive session](integrations/claude-interactive.md)
-
-Investigated but not externally bindable:
-
-- [Claude Code Desktop boundary](integrations/claude-desktop.md), no headless mechanism
-
-All implemented adapters acquire one crash-released watch-ownership lock per Conductor identity. Delivery and acknowledgement are not atomic: a crash after host acceptance but before acknowledgement may replay a signal, so agents must process signals idempotently.
+Every adapter acquires one crash-released ownership lock per Conductor identity, so redundant restoration attempts converge on a single live stream instead of double-delivering. Delivery and acknowledgement are not atomic: an interruption after host acceptance but before acknowledgement replays a delivery, so agents must process deliveries idempotently.

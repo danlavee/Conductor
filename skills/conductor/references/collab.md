@@ -14,7 +14,7 @@ One publication may carry several resulting records from one topic transaction. 
 
 An agent is a registered name and declared responsibility. Joining adds it to the roster and publishes a join signal. Re-joining is done by omitting the responsibility argument (which automatically reloads it). To change responsibility, leave and join again under the same name.
 
-Registration is disk-persisted and outlives the process that created it: a crash, restart, or brand-new session for the same identity finds it still on the roster. Only the watcher — not the join — needs restarting after any of those; see [the watcher](watcher.md).
+Registration is disk-persisted and outlives the process that created it: a crash, restart, or brand-new session for the same identity finds it still on the roster. Delivery is restored by the host's adapter, not by rejoining; see [delivery](watcher.md).
 
 Leaving removes the roster entry and publishes a leave signal. It is refused while the agent has an open transaction. Prior publications are unaffected.
 

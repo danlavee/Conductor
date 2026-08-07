@@ -1,11 +1,11 @@
 ---
 name: conductor
-description: Conductor is a persistent, disk-based publish-subscribe message bus that lets independent AI agents — different tools, sessions, and memories — coordinate as one team without merging what they know. Each agent sets a self-waking Conductor watch; nothing external reaches into a closed process and starts it. Use when the user asks an agent to join, collaborate through, wait on, update, or leave Conductor.
+description: Conductor is a persistent, disk-based publish-subscribe message bus that lets independent AI agents — different tools, sessions, and memories — coordinate as one team without merging what they know. A host adapter keeps each joined agent reachable and delivers publications to it. Use when the user asks an agent to join, collaborate through, wait on, update, or leave Conductor.
 ---
 
 # Collaborate through Conductor
 
-**A watcher must be running for you at all times you're part of this team — no prior step substitutes for it, and nothing else makes you reachable. If one isn't active right now, start it before anything else.**
+**Joining is the last thing you do to stay connected. Your host's adapter keeps you reachable from then on — you hold no handle, restart nothing, and check nothing.**
 
 Independent agents — different tools, different conversations, different memories — can work as one team without merging what they know. Each agent keeps its own context; only what it deliberately publishes crosses over. Conductor is the shared bus that carries those publications between them, so a user can run several agents in parallel and let them coordinate directly instead of relaying everything by hand.
 
@@ -24,21 +24,20 @@ Default: follow the workflow below as an ordinary agent. Two invocation argument
 
 ## The operating model
 
-Conductor is a publish-subscribe message bus with one variant: records are mutable. A topic group holds topics (channels); each topic holds records, identified by index, holding text. A publication is one atomic addition or change of one or more records in one topic. Each publication produces one signal for its subscribers; one `watch` call resolves the current backlog up to the shared cap, reports unresolved summaries in `remaining`, and does not limit later rearmed calls.
+Conductor is a publish-subscribe message bus with one variant: records are mutable. A topic group holds topics (channels); each topic holds records, identified by index, holding text. A publication is one atomic addition or change of one or more records in one topic. Each publication produces one signal for its subscribers; one delivery resolves the current backlog up to the shared cap and reports whatever is left over in `remaining`, which arrives in the next delivery.
 
 Joining puts an agent's `<agent>` name and responsibility on the `collaboration/agents` topic. Agents subscribe to whichever topics and topic groups they choose. One topic group is special: `collaboration` always broadcasts its `rules` and `agents` topics to every registered agent, with no subscription and no opt-out — everything else requires an explicit subscription.
 
-The watcher streams publications from those subscribed topics to you: run it continuously in the background — both while idle and while actively working on something else — and it delivers each publication as it happens, regardless of what you're currently doing. There is no external wake; nothing reaches into a closed process from outside. Waking a fully headless session (one with no open process at all) is not yet part of this model — see [the watcher](references/watcher.md).
+Publications from those subscribed topics are delivered to you as they happen, whether you are idle or working on something else. Your host's adapter owns that delivery and its own restoration; you do not manage it — see [delivery](references/watcher.md). An agent with no live process at all cannot be woken, but nothing is lost: everything published while it was gone is waiting when it returns.
 
 `get` is the active, pull side of reading: you ask for records already published to a topic, rather than waiting for the watcher's passive stream to bring them to you. Use it for deliberate, out-of-band lookups: recalling something, double-checking a record, catching up after being away, or other non-routine activity.
 
 ## The whole workflow
 
 1. **Join (Registration)** — `conductor <agent> join <responsibility>` to register yourself on the roster. Skip this step if you are already registered on disk.
-2. **Start watching** - Start exactly one background watcher (`conductor <agent> watch`) through the host method in [watcher.md](references/watcher.md) and retain its handle. Restart it only if it exits; never start a second watcher process when executing a turn, maintaining exactly one active watcher at all times. Bare `watch` resolves the current backlog up to its shared cap, reports unresolved summaries in `remaining`, then exits - still one-shot per call, and still must be rearmed for whatever remains or arrives next.
-3. **Subscribe** — Pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
-4. **Work** — Publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`.
-5. **Leave (Offboarding)** — Settle any open transaction and stop your watcher. Only run `conductor <agent> leave` if you are permanently offboarding.
+2. **Subscribe** — Pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
+3. **Work** — Publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`. Deliveries arrive on their own; process each one idempotently.
+4. **Leave (Offboarding)** — Settle any open transaction. Only run `conductor <agent> leave` if you are permanently offboarding.
 
 The sections below fill in the mechanics of each step.
 
@@ -50,10 +49,10 @@ Resolve the directory containing this loaded `SKILL.md`. Invoke `scripts/conduct
 
 If you are a brand-new agent, or need to reconnect, follow this ordered procedure exactly:
 1. **Register**: Run `conductor <agent> join <responsibility>` once to register yourself. (Omit the responsibility if you are already registered on disk).
-2. **Watch**: Start exactly one background watcher (`conductor <agent> watch`) using your harness's background terminal tool.
-3. **Process & Rearm**: Watching will return collaboration information. Rearm the watcher normally while `remaining` is nonzero, then leave one watcher blocked for the next signal.
-4. **Execute**: Follow collaboration instructions emitted from the bus.
-5. **Reconcile**: Apply any instructions already given by the user together with the join instruction.
+2. **Execute**: Join returns the current collaboration information. Follow the instructions it carries.
+3. **Reconcile**: Apply any instructions already given by the user together with the join instruction.
+
+Registration is disk-persisted. Rejoining an identity that is already on the roster is safe and is not how you restore delivery — the adapter does that.
 
 ## Offboarding
 
@@ -61,9 +60,9 @@ The `leave` command is for **permanently offboarding** yourself from the roster,
 
 Every command takes your `<agent>` name as its first argument.
 
-## Streaming information and Wake on Activity
+## Delivery
 
-See [the watcher](references/watcher.md) for the exact command and lifecycle per runtime.
+See [delivery](references/watcher.md) for what arrives, how to confirm you are reachable, and the fallback for hosts whose adapter has not landed yet.
 
 ## Subscribe
 
@@ -133,10 +132,10 @@ Inside a transaction, `put`, `edit`, and `strike` only stage changes. `commit` p
 
 Records nested in history still contain only `index` and `text`. Publication metadata and delta delivery are separate from record operations. Delivery can replay after a crash, so process publications idempotently.
 
-Any `get`, and everything bare `watch` resolves in one call, is capped at 20 records by default. A capped response carries `remaining` (how much was left out) and `default_read_limit` (the cap applied). Rearm `watch` while work remains; range and delta reads may use a larger explicit `--limit`, while a capped full read continues through indexed range reads. Nothing is ever silently truncated without telling you.
+Any `get`, and everything one delivery resolves, is capped at 20 records by default. A capped response carries `remaining` (how much was left out) and `default_read_limit` (the cap applied). A capped delivery's surplus arrives in the next one; range and delta reads may use a larger explicit `--limit`, while a capped full read continues through indexed range reads. Nothing is ever silently truncated without telling you.
 
 ## Recover and leave
 
 `LOCKED` protects a live owner or reader. `TIMEOUT` means a lease expired but its process is still alive. A dead owner recovers automatically on the next read or write. `NOT_FOUND` means the requested record or agent does not exist. On `PROTOCOL_MISMATCH`, stop; do not edit, migrate, or retry the state root implicitly.
 
-See [watcher.md](references/watcher.md) for per-runtime wake commands, [collab.md](references/collab.md) for the conceptual model, [protocol.md](references/protocol.md) for exact state behavior, [limitations.md](references/limitations.md) for deployment boundaries, [onboarding.md](references/onboarding.md) for first-time setup, [maintenance.md](references/maintenance.md) for recurring upkeep, and [update-skill.md](references/update-skill.md) for the upgrade procedure.
+See [watcher.md](references/watcher.md) for delivery and reachability, [collab.md](references/collab.md) for the conceptual model, [protocol.md](references/protocol.md) for exact state behavior, [limitations.md](references/limitations.md) for deployment boundaries, [onboarding.md](references/onboarding.md) for first-time setup, [maintenance.md](references/maintenance.md) for recurring upkeep, and [update-skill.md](references/update-skill.md) for the upgrade procedure.

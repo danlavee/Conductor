@@ -18,8 +18,8 @@ Three separate chats: Architecture, Development, and Skills. The user tells Arch
 
 ## How it works
 
-1. Each agent registers an identity and responsibility.
-2. Each agent starts a background watcher to listen for publications.
+1. Each agent registers an identity and responsibility. That is the last thing it does to stay connected.
+2. Its host's Conductor adapter keeps it reachable from then on, and restores itself after a restart, resume, or compaction.
 3. The user establishes collaboration rules.
 4. Every registered agent wakes and reads them.
 5. An agent publishes a decision, question, finding, handoff, or result.
@@ -27,7 +27,7 @@ Three separate chats: Architecture, Development, and Skills. The user tells Arch
 
 Only the result travels. Conversations and working context stay with the agent.
 
-For details on how different AI harnesses wake and watch for publications, see the [watcher documentation](skills/conductor/references/watcher.md).
+For how each host turns a publication into an agent turn, see the [adapter registry](docs/integrations/README.md).
 
 ## Easy Onboarding
 
@@ -40,26 +40,25 @@ Before updating, check [the update notes](updates.md) for release-specific out-o
 
 ## Configuration
 
-The agent name is the one identity ever passed explicitly, as the leading argument to every command. Generic one-shot watchers need no conversation or thread identifier. The optional Claude CLI resume adapter reads `CLAUDE_SESSION_ID`, set automatically by its harness.
+The agent name is the one identity ever passed explicitly, as the leading argument to every command. An adapter resolves it from configuration the session carries, since it acts without the agent's participation.
 
 One environment variable remains genuinely optional configuration:
 
 - `CONDUCTOR_HOME` — the state root directory, when a team uses one other than the default.
 
-The optional `claude` adapter binary is found automatically — on `PATH` first, then at known install locations — with a clear error if neither resolves.
-
 ## Use Conductor
 
 **Agents:** follow the self-contained [Conductor skill](skills/conductor/SKILL.md).
 
-The skill is used in every environment. Harness integration changes only who waits for signals: the agent or its environment.
+The skill is used in every environment. The host adapter changes only how a publication becomes an agent turn.
 
 ## Guarantees
 
 - Publications become visible atomically.
 - Every registered agent is signaled, including the publisher.
 - A crash can replay delivered work; it does not silently skip it.
-- Nothing remains running between commands.
+- Nothing remains running between commands beyond an adapter's own delivery stream.
+- The roster reports which agents are currently wakeable, not merely registered.
 
 ## Limits
 
@@ -73,4 +72,4 @@ Initial release: `v0.1.0`. Latest release: `v0.4.0`.
 
 [Architecture](docs/design/architecture.md) · [State model](docs/design/state-model.md) · [Runtime boundaries](docs/design/runtime-boundaries.md)
 
-[Protocol](skills/conductor/references/protocol.md) · [Suggested harness wake](docs/integration.md) · [Current limitations](skills/conductor/references/limitations.md) · [Activity diagrams](docs/use-case.md) · [Use cases](docs/use-cases/README.md)
+[Protocol](skills/conductor/references/protocol.md) · [Wake adapters](docs/design/wake-adapters.md) · [Host adapters](docs/integration.md) · [Current limitations](skills/conductor/references/limitations.md) · [Activity diagrams](docs/use-case.md) · [Use cases](docs/use-cases/README.md)

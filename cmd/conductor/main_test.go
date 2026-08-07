@@ -16,7 +16,6 @@ import (
 	conductor "github.com/danlavee/Conductor"
 	"github.com/danlavee/Conductor/internal/cutover"
 	installer "github.com/danlavee/Conductor/internal/install"
-	"github.com/danlavee/Conductor/internal/integrations/codexdesktop"
 )
 
 const cliHelperEnvironment = "CONDUCTOR_CLI_TEST_HELPER"
@@ -360,20 +359,23 @@ func TestVersionExposesCutoverCapability(t *testing.T) {
 	}
 }
 
-func TestUsageExposesOnlyCodexDesktopTransport(t *testing.T) {
+// The watch surface is host-neutral by construction: a vendor name in the
+// usage string is the first symptom of delivery-to-turn leaking back into
+// Conductor, which is the adapter's job and not the bus's.
+func TestUsageExposesNoVendorWatchTransports(t *testing.T) {
 	message := usageError().Error()
-	if !strings.Contains(message, "--codex-desktop") {
-		t.Fatalf("usage omits Codex Desktop transport: %s", message)
-	}
-	for _, flag := range []string{"--codex ", "--codex-cli"} {
+	for _, flag := range []string{"--codex-desktop", "--claude-cli", "--codex ", "--codex-cli"} {
 		if strings.Contains(message, flag) {
-			t.Fatalf("usage retains removed Codex transport %s: %s", flag, message)
+			t.Fatalf("usage retains vendor watch transport %s: %s", flag, message)
 		}
+	}
+	if !strings.Contains(message, "watch [--once]") {
+		t.Fatalf("usage omits the host-neutral watch: %s", message)
 	}
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--codex-desktop | --claude-cli] [--mode=summary|content]"
+	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] [--mode=summary|content] | conductor <agent> status"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}
@@ -436,9 +438,9 @@ func TestWatchDefaultsToContent(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], state, "", "a", "join", "dev"); err != nil {
 		t.Fatalf("join failed: %v", err)
 	}
-	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "a", "watch")
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "a", "watch", "--once")
 	if err != nil || len(stderr) != 0 {
-		t.Fatalf("bare watch failed: %v, stderr = %q", err, stderr)
+		t.Fatalf("watch --once failed: %v, stderr = %q", err, stderr)
 	}
 	var batch conductor.BatchDelivery
 	if err := json.Unmarshal(stdout, &batch); err != nil {
@@ -470,7 +472,7 @@ func TestOneShotWatchReleasesOwnership(t *testing.T) {
 	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	if err := runOneShotWatch(context.Background(), client, conductor.DeliverySummary); err != nil {
+	if err := runWatch(context.Background(), client, conductor.DeliverySummary, true); err != nil {
 		t.Fatal(err)
 	}
 	second, err := conductor.New(state, "a")
@@ -496,7 +498,7 @@ func TestCutoverFreezeReplaceFireAndRearm(t *testing.T) {
 	if _, _, err := runCLIHelper(executable, root, "", "a", "subscribe", "--topic=dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := runCLIHelper(executable, root, "", "a", "watch", "--mode=summary"); err != nil {
+	if _, _, err := runCLIHelper(executable, root, "", "a", "watch", "--once", "--mode=summary"); err != nil {
 		t.Fatalf("drain join: %v", err)
 	}
 
@@ -563,7 +565,7 @@ func TestCutoverFreezeReplaceFireAndRearm(t *testing.T) {
 	if _, _, err := runCLIHelper(executable, root, "", "a", "put", "dev/tasks", "fresh"); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err := runCLIHelper(executable, root, "", "a", "watch", "--mode=summary")
+	stdout, stderr, err := runCLIHelper(executable, root, "", "a", "watch", "--once", "--mode=summary")
 	if err != nil {
 		t.Fatalf("rearm: %v: %s", err, stderr)
 	}
@@ -580,6 +582,10 @@ func TestRemovedWatchModesReturnUsage(t *testing.T) {
 		{"a", "watch", "--since", "1"},
 		{"a", "watch", "--codex"},
 		{"a", "watch", "--codex-cli"},
+		{"a", "watch", "--codex-desktop"},
+		{"a", "watch", "--claude-cli"},
+		{"a", "watch", "--once", "--once"},
+		{"a", "status", "extra"},
 	} {
 		if err := run(args); err == nil || err.Error() != usageError().Error() {
 			t.Fatalf("%v: error = %v, want usage error", args, err)
@@ -587,38 +593,130 @@ func TestRemovedWatchModesReturnUsage(t *testing.T) {
 	}
 }
 
-func TestCodexDesktopWatchReturnsActivityThenIdleWithoutBlocking(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "runtime-state")
-	if _, _, err := runCLIHelper(os.Args[0], state, "", "a", "join", "dev"); err != nil {
+// A continuous watch must hold ownership across the quiet gap between
+// deliveries. If it released after draining a batch, a second watcher could
+// arm for the same identity and both would deliver.
+func TestContinuousWatchRetainsOwnershipAfterDelivering(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
 		t.Fatal(err)
 	}
+	watch, deliveries := startWatch(t, root)
+	defer stopWatch(t, watch)
 
-	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "a", "watch", "--codex-desktop")
-	if err != nil || len(stderr) != 0 {
-		t.Fatalf("activity poll error = %v, stderr = %q", err, stderr)
+	var batch conductor.BatchDelivery
+	if err := deliveries.Decode(&batch); err != nil {
+		t.Fatalf("continuous watch delivered nothing: %v", err)
 	}
-	var activity codexdesktop.Result
-	if err := json.Unmarshal(stdout, &activity); err != nil {
-		t.Fatalf("activity output is not JSON: %q: %v", stdout, err)
-	}
-	if activity.Status != "activity" || activity.Transport != "codex-desktop" || activity.Agent != "a" || activity.Batch == nil || len(activity.Batch.Deliveries) == 0 {
-		t.Fatalf("activity result = %#v", activity)
-	}
-	if activity.Batch.Deliveries[0].Mode != conductor.DeliveryContent {
-		t.Fatalf("default delivery mode = %q", activity.Batch.Deliveries[0].Mode)
+	if len(batch.Deliveries) == 0 {
+		t.Fatalf("batch = %#v", batch)
 	}
 
-	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "a", "watch", "--codex-desktop")
+	client, err := conductor.New(root, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release, err := client.AcquireWatchOwnership(); err == nil {
+		_ = release()
+		t.Fatal("a second watcher armed while a live stream owned the identity")
+	}
+}
+
+// status is the answer an adapter needs before deciding to re-arm, so it must
+// distinguish "no stream" from "a stream that died without releasing". A
+// killed watcher leaves its diagnostic sidecar behind; reporting that as
+// wakeable is exactly the silent unwakeability this design exists to remove.
+func TestStatusReportsRegistrationAndLiveWakeability(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+
+	before := readStatus(t, root)
+	if before.Agent != "a" || before.Registered || before.Wakeable {
+		t.Fatalf("status before join = %#v", before)
+	}
+	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	joined := readStatus(t, root)
+	if !joined.Registered || joined.Wakeable {
+		t.Fatalf("status after join = %#v", joined)
+	}
+
+	watch, _ := startWatch(t, root)
+	waitForOwnership(t, root)
+	watching := readStatus(t, root)
+	if !watching.Registered || !watching.Wakeable || watching.PID != watch.Process.Pid {
+		t.Fatalf("status while watching = %#v, watcher pid = %d", watching, watch.Process.Pid)
+	}
+
+	_ = watch.Process.Kill()
+	_ = watch.Wait()
+	controlDir, err := cutover.Directory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(controlDir, "watch", "a.owner.json")); err != nil {
+		t.Fatalf("killed watcher removed its sidecar, so the stale case is untested: %v", err)
+	}
+	dead := readStatus(t, root)
+	if !dead.Registered || dead.Wakeable {
+		t.Fatalf("status after the watcher died = %#v", dead)
+	}
+}
+
+// startWatch runs a continuous watch as a real process, and hands back a
+// decoder over its stdout so a test can wait on an actual delivery rather than
+// poll a buffer the child is concurrently writing.
+func startWatch(t *testing.T, root string) (*exec.Cmd, *json.Decoder) {
+	t.Helper()
+	watch := exec.Command(os.Args[0], "a", "watch")
+	watch.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
+	watch.Env = replaceEnvironment(watch.Env, "CONDUCTOR_HOME", root)
+	stdout, err := watch.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	return watch, json.NewDecoder(stdout)
+}
+
+func stopWatch(t *testing.T, watch *exec.Cmd) {
+	t.Helper()
+	_ = watch.Process.Kill()
+	_ = watch.Wait()
+}
+
+func waitForOwnership(t *testing.T, root string) {
+	t.Helper()
+	controlDir, err := cutover.Directory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := filepath.Join(controlDir, "watch", "a.owner.json")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(owner); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("watcher never took ownership")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func readStatus(t *testing.T, root string) conductor.WatchStatus {
+	t.Helper()
+	stdout, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "status")
 	if err != nil || len(stderr) != 0 {
-		t.Fatalf("idle poll error = %v, stderr = %q", err, stderr)
+		t.Fatalf("status failed: %v, stderr = %q", err, stderr)
 	}
-	var idle codexdesktop.Result
-	if err := json.Unmarshal(stdout, &idle); err != nil {
-		t.Fatalf("idle output is not JSON: %q: %v", stdout, err)
+	var status conductor.WatchStatus
+	if err := json.Unmarshal(stdout, &status); err != nil {
+		t.Fatalf("status output is not JSON: %q: %v", stdout, err)
 	}
-	if idle.Status != "idle" || idle.Transport != "codex-desktop" || idle.Agent != "a" || idle.Batch != nil {
-		t.Fatalf("idle result = %#v", idle)
-	}
+	return status
 }
 
 func TestParseGetRangeDefaultsAndGuards(t *testing.T) {
@@ -681,36 +779,6 @@ func TestGetDeltaAcknowledgesSuccessfulDelivery(t *testing.T) {
 	}
 	if len(delta.Publications) != 0 {
 		t.Fatalf("CLI delta was not acknowledged: %#v", delta)
-	}
-}
-
-func TestClaudeCLIWatchRejectsTrailingArguments(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "runtime-state")
-	t.Setenv("CONDUCTOR_HOME", state)
-	t.Setenv("CLAUDE_SESSION_ID", "session-1")
-	if err := run([]string{"a", "watch", "--claude-cli", "extra"}); err == nil || err.Error() != usageError().Error() {
-		t.Fatalf("error = %v, want usage error", err)
-	}
-}
-
-func TestClaudeCLIWatchRequiresSessionIDEnvironment(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "runtime-state")
-	t.Setenv("CONDUCTOR_HOME", state)
-	t.Setenv("CLAUDE_SESSION_ID", "")
-	err := run([]string{"a", "watch", "--claude-cli"})
-	if err == nil || !strings.Contains(err.Error(), "session ID") {
-		t.Fatalf("error = %v, want missing session ID", err)
-	}
-}
-
-func TestClaudeCLIWatchRefusesSelfTargetingTheLiveSession(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "runtime-state")
-	t.Setenv("CONDUCTOR_HOME", state)
-	t.Setenv("CLAUDE_SESSION_ID", "session-1")
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "session-1")
-	err := run([]string{"a", "watch", "--claude-cli"})
-	if err == nil || !strings.Contains(err.Error(), "live session") {
-		t.Fatalf("error = %v, want a live-session refusal", err)
 	}
 }
 
