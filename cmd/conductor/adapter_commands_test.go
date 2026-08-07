@@ -27,8 +27,15 @@ func TestAdapterArmWakesTheSessionAndOnlyWhenBound(t *testing.T) {
 	if len(stdout) != 0 {
 		t.Fatalf("an unbound arm wrote to the model: %s", stdout)
 	}
-	if !bytes.Contains(stderr, []byte(`"unbound"`)) {
-		t.Fatalf("unbound report = %s", stderr)
+	// The code is spelled literally for the same reason the exit code below is:
+	// its whole value is that it does not move, and a test that quotes the
+	// constant back would keep passing if it did.
+	var report adapterReport
+	if err := json.Unmarshal(stderr, &report); err != nil {
+		t.Fatalf("unbound report = %s: %v", stderr, err)
+	}
+	if report.Outcome != "unbound" || report.Code != 10 {
+		t.Fatalf("unbound report = %+v", report)
 	}
 
 	project := t.TempDir()

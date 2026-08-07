@@ -46,6 +46,37 @@ func TestResolveIdentityIgnoresAByteOrderMark(t *testing.T) {
 	}
 }
 
+// TestOutcomeCodesAreStableDistinctAndClearOfExitStatuses pins the numbering,
+// which is the entire point of having it: a code that shifted between builds
+// would silently reclassify every run already recorded under it. The literals
+// are written out rather than derived, so moving one is a test change and not
+// a quiet renumbering.
+func TestOutcomeCodesAreStableDistinctAndClearOfExitStatuses(t *testing.T) {
+	expected := map[Outcome]int{
+		Unbound: 10, Delivered: 11, Replaced: 12, Refused: 13,
+		Unregistered: 14, Released: 15, NotOwned: 16,
+	}
+	seen := map[int]Outcome{}
+	for outcome, want := range expected {
+		code := outcome.Code()
+		if code != want {
+			t.Errorf("%q code = %d, want %d", outcome, code, want)
+		}
+		// Clear of every exit status the adapter produces -- 0, 1, and the
+		// wake -- so a report code can never be misread as one.
+		if code <= WakeExitCode {
+			t.Errorf("%q code %d collides with an exit status", outcome, code)
+		}
+		if other, taken := seen[code]; taken {
+			t.Errorf("%q and %q share code %d", other, outcome, code)
+		}
+		seen[code] = outcome
+	}
+	if Outcome("invented").Code() != 0 {
+		t.Error("an outcome with no code must report zero rather than guess one")
+	}
+}
+
 func TestArmDeliversPendingWorkAndReleasesOwnership(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
 	client := joined(t, root)

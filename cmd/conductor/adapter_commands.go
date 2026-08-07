@@ -20,10 +20,16 @@ func (w *wakeSignal) Error() string { return fmt.Sprintf("wake exit %d", w.Code)
 // adapterReport is diagnostic output, and goes to stderr for that reason:
 // stdout belongs to the model on a waking exit, and anything else written
 // there would arrive as if it were delivered work.
+//
+// Code is the outcome's number, carried here rather than in the process's exit
+// status because the exit status is spoken for: this host reads anything but 0
+// and claude.WakeExitCode as a hook failure worth showing the user, and most
+// outcomes are ordinary no-ops that must not look like one.
 type adapterReport struct {
 	Adapter string `json:"adapter"`
 	Command string `json:"command"`
 	Outcome string `json:"outcome"`
+	Code    int    `json:"code"`
 	Agent   string `json:"agent,omitempty"`
 	Detail  string `json:"detail,omitempty"`
 }
@@ -41,7 +47,7 @@ func runAdapterCommand(args []string) error {
 		return err
 	}
 	if agent == "" {
-		return reportAdapter(command, "unbound", "", nil)
+		return reportAdapter(command, claude.Unbound, "", nil)
 	}
 	client, err := conductor.Open(os.Getenv("CONDUCTOR_HOME"), agent)
 	if err != nil {
@@ -83,25 +89,28 @@ func runAdapterArm(client *conductor.Client, session, agent string) error {
 	outcome, err := claude.Arm(context.Background(), client, session, os.Stdout)
 	if outcome.Wakes() {
 		if err != nil {
-			_ = reportAdapter("arm", string(outcome), agent, err)
+			_ = reportAdapter("arm", outcome, agent, err)
 		}
 		return &wakeSignal{Code: claude.WakeExitCode}
 	}
 	if err != nil {
 		return err
 	}
-	return reportAdapter("arm", string(outcome), agent, nil)
+	return reportAdapter("arm", outcome, agent, nil)
 }
 
-func releaseOutcome(released bool) string {
+func releaseOutcome(released bool) claude.Outcome {
 	if released {
-		return "released"
+		return claude.Released
 	}
-	return "not-owned"
+	return claude.NotOwned
 }
 
-func reportAdapter(command, outcome, agent string, detail error) error {
-	report := adapterReport{Adapter: "claude", Command: command, Outcome: outcome, Agent: agent}
+func reportAdapter(command string, outcome claude.Outcome, agent string, detail error) error {
+	report := adapterReport{
+		Adapter: "claude", Command: command,
+		Outcome: string(outcome), Code: outcome.Code(), Agent: agent,
+	}
 	if detail != nil {
 		report.Detail = detail.Error()
 	}
