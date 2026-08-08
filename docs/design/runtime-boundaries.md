@@ -56,4 +56,4 @@ Cancellation ends the current wait without acknowledging a signal. The SDK-only 
 
 Host-specific policy remains outside this repository: adapter lifetime, durable session mapping, retry after host acceptance, and behavior when an accepted trigger never reaches an agent.
 
-Practical adapter guidance lives in [host adapters](../integration.md) and the [adapter registry](../integrations/README.md). Native operating instructions live in the [Conductor skill](../../skills/conductor/SKILL.md). The [state model](state-model.md) defines delivery progress; the [protocol reference](../../skills/conductor/references/protocol.md) owns exact acknowledgement behavior.
+Practical adapter guidance lives in [host adapters](../host-adapters.md) and the [adapter registry](../integrations/README.md). Native operating instructions live in the [Conductor skill](../../skills/conductor/SKILL.md). The [state model](state-model.md) defines delivery progress; the [protocol reference](../../skills/conductor/references/protocol.md) owns exact acknowledgement behavior.
