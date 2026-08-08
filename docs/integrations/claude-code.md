@@ -1,6 +1,6 @@
 # Claude adapter
 
-Status: built on this branch, at [`adapters/claude-code/`](../../adapters/claude-code/README.md). The wake mechanism is verified — an idle session with no active turn was woken twice by a backgrounded hook exiting 2, re-arming itself between wakes with no human input. See [verified wake methods](verified-wake-methods.md) for the run and the evidence standard. What remains unverified is coverage, not viability: the wake was proven with a standalone probe rather than with this adapter's own binary, the lifecycle trigger was exercised only on `startup`, and teardown not at all.
+Status: built on this branch, at [`adapters/claude-code/`](../../adapters/claude-code/README.md). The wake mechanism is verified — an idle session with no active turn was woken twice by a backgrounded hook exiting 2, re-arming itself between wakes with no human input. See [verified wake methods](verified-wake-methods.md) for the run and the evidence standard. This adapter's own binary has since been run end to end against a live session: it woke an idle session with a delivery payload on stdout, drained a backlog, reported codes 10, 13, 14 and 16 directly and 11 through a waking exit, and `status` flipped to unwakeable when its stream died. What remains unverified is coverage, not viability: the lifecycle trigger was exercised only on `startup`, the turn-boundary trigger was never driven by a real `Stop` hook, and teardown never by a real `SessionEnd`.
 
 Packaged as a Claude Code plugin: `.claude-plugin/plugin.json`, with `hooks/hooks.json`, a marketplace manifest, and an optional `.mcp.json` beside it. Installing the plugin and binding an identity is the whole setup — there is no per-session step and nothing for the agent to run.
 
@@ -12,7 +12,7 @@ Each is one hook entry, and all of them run the same executable: `conductor adap
 
 | Responsibility | Realization | Verified |
 | --- | --- | --- |
-| Resident component | `adapter claude arm` as a background hook marked `asyncRewake`. It holds the identity's ownership guard, blocks on the stream, prints the delivery to stdout and exits 2; that output reaches the model as a system reminder, waking an idle session with no active turn. | Mechanism yes, this binary no |
+| Resident component | `adapter claude arm` as a background hook marked `asyncRewake`. It holds the identity's ownership guard, blocks on the stream, prints the delivery to stdout and exits 2; that output reaches the model as a system reminder, waking an idle session with no active turn. | Yes, with this binary |
 | Turn-boundary trigger | A `Stop` hook running the same `arm` command. Arming and the resident component are the same act: it backgrounds without blocking the turn, and every turn end re-arms. | Mechanism yes, this binary no |
 | Lifecycle trigger | A `SessionStart` hook matching `startup`, `resume`, `clear`, `compact`, and `fork`. Runs `identity` to announce the binding into context, then `arm`. | Partial — `startup` only |
 | Teardown | A `SessionEnd` hook running `release`. Not optional: the host awaits outstanding rewake hooks during session teardown, so a stream that ignores session end delays the host's exit. | No |

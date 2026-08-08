@@ -24,6 +24,8 @@ Reconnection is the adapter's job. Yours is to reload the installed skill and ex
 
 ## Hosts without an adapter
 
-Which hosts have one is recorded in the [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md). A host with no adapter yet falls back to `conductor <agent> watch --once`, which blocks for one delivery and exits. In that mode only, you own the lifecycle: start it through your host's background facility, retain the handle, process the delivery, and start it again. Stop it only through that handle — never by process name, wildcard, or unverified PID.
+Claude Code has an adapter; every other host does not yet. Assume the section above applies unless you are certain your host is un-adapted — starting a watcher on an adapted host is refused with `LOCKED`, and `conductor <agent> status` tells you which case you are in before you try. The current list lives in the [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md), but do not treat an unreachable URL as evidence that your host lacks one.
+
+A host with no adapter falls back to `conductor <agent> watch --once`, which blocks for one delivery and exits. In that mode only, you own the lifecycle: start it through your host's background facility, retain the handle, process the delivery, and start it again. Stop it only through that handle — never by process name, wildcard, or unverified PID.
 
 Owning the lifecycle is the previous model, kept until each host's adapter lands. It is not the design, and everything above applies the moment your host has one.
