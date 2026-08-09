@@ -19,8 +19,6 @@ import (
 	"time"
 
 	conductor "github.com/danlavee/Conductor"
-	"github.com/danlavee/Conductor/internal/cutover"
-	"github.com/danlavee/Conductor/internal/platform"
 )
 
 const (
@@ -30,10 +28,25 @@ const (
 	// keep in step.
 	AdapterName = "claude-code"
 
-	// SessionEnvironment carries the host's own identifier for the session a
-	// hook was fired from. Teardown is scoped by it so one session ending
-	// cannot silence a stream another session owns.
-	SessionEnvironment = "CLAUDE_SESSION_ID"
+	// The host exposes the same session identifier two ways, to two different
+	// kinds of caller, and this adapter has both kinds. Which one applies is
+	// decided by who started the process, never by preference: a hook cannot
+	// read SessionEnvironment and a command the model runs gets no argument
+	// substitution.
+
+	// SessionEnvironment is how a process the *model* starts learns which
+	// session it is in. The host exports it to child processes, which is what
+	// makes `bind` runnable by an agent from inside its own session.
+	SessionEnvironment = "CLAUDE_CODE_SESSION_ID"
+
+	// SessionPlaceholder is how a *hook* learns the same thing: the host
+	// substitutes it into the hook's argument list before spawning it. It is
+	// named here only so an unsubstituted one can be recognized. A host that
+	// does not know the placeholder passes it through as text, and a session
+	// literally called "${CLAUDE_SESSION_ID}" would be accepted as real -- and
+	// then every session on the machine would share one identifier, which is
+	// precisely the condition session scoping exists to prevent.
+	SessionPlaceholder = "${CLAUDE_SESSION_ID}"
 
 	// ProjectEnvironment locates the project a session is attached to. The
 	// host substitutes it into hook arguments before the process starts.
@@ -272,11 +285,11 @@ func residencyPath(client *conductor.Client) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	controlDir, err := cutover.Directory(client.Home)
+	directory, err := adapterDirectory(client.Home)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(controlDir, "adapters", "claude", agent+".json"), nil
+	return filepath.Join(directory, agent+".json"), nil
 }
 
 // writeResidency publishes the record by rename. Teardown rewrites this file
@@ -285,24 +298,14 @@ func residencyPath(client *conductor.Client) (string, error) {
 // live stream. Publishing atomically removes the window rather than leaving it
 // to the fact that only one writer happens to exist today.
 func writeResidency(path string, value residency) error {
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(directory, ".conductor-*.tmp")
+	data, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := json.NewEncoder(temp).Encode(value); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return platform.ReplaceFile(tempPath, path)
+	return writeAtomic(path, data)
 }
 
 func readResidency(path string) (residency, error) {

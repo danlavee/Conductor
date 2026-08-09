@@ -31,18 +31,31 @@ type Client struct {
 // touching the protocol root. Watches use it so a frozen process can wait on
 // the external cutover plane without opening the root it is replacing.
 func Open(home, agent string) (*Client, error) {
-	if home == "" {
-		userHome, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		home = filepath.Join(userHome, ".conductor")
-	}
-	home, err := filepath.Abs(home)
+	root, err := Root(home)
 	if err != nil {
 		return nil, err
 	}
-	return &Client{Home: filepath.Clean(home), Agent: agent, LockTimeout: defaultLockTimeout, PollInterval: 200 * time.Millisecond}, nil
+	return &Client{Home: root, Agent: agent, LockTimeout: defaultLockTimeout, PollInterval: 200 * time.Millisecond}, nil
+}
+
+// Root resolves a state root the same way opening a client does, without an
+// agent and without touching the filesystem. A caller that has to locate state
+// *before* it knows which identity it belongs to needs exactly this and nothing
+// else -- and passing a placeholder agent to Open to get at Home would make the
+// agent field a lie for as long as that client lived.
+func Root(home string) (string, error) {
+	if home == "" {
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		home = filepath.Join(userHome, ".conductor")
+	}
+	absolute, err := filepath.Abs(home)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(absolute), nil
 }
 
 // New opens and, when necessary, initializes a Conductor state root. Root

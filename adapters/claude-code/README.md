@@ -17,6 +17,14 @@ Two steps remain, and both are deliberately the user's:
 
 Without step 2 the adapter loads and does nothing, which is the intended behaviour for a project that has not opted in.
 
+For a second agent working in a project that is already bound to a different one, the project file cannot help — it names one identity for every session that opens there. That agent binds its own session instead, once, from inside it:
+
+```
+conductor adapter claude bind <agent>
+```
+
+The binding is recorded against the session, outranks the project file for that session alone, and is forgotten when the session ends. The identity has to be on the roster first.
+
 ## What it registers
 
 | Hook | Responsibility | Behaviour |

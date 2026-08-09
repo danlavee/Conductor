@@ -8,7 +8,7 @@ Packaged as a Claude Code plugin: `.claude-plugin/plugin.json`, with `hooks/hook
 
 ## The four responsibilities
 
-Each is one hook entry, and all of them run the same executable: `conductor adapter claude <arm|release|identity>`. That command tree is where this host's knowledge lives. It consumes Conductor's public client exactly as any other caller would, so the core learns nothing about hooks, sessions, or exit codes.
+Each is one hook entry, and all of them run the same executable: `conductor adapter claude <arm|release|identity> --session=${CLAUDE_SESSION_ID}`. That command tree is where this host's knowledge lives. It consumes Conductor's public client exactly as any other caller would, so the core learns nothing about hooks, sessions, or exit codes.
 
 | Responsibility | Realization | Verified |
 | --- | --- | --- |
@@ -18,6 +18,32 @@ Each is one hook entry, and all of them run the same executable: `conductor adap
 | Teardown | A `SessionEnd` hook running `release`. Not optional: the host awaits outstanding rewake hooks during session teardown, so a stream that ignores session end delays the host's exit. | No |
 
 `release` is scoped to the session that armed the stream, so a second session in the same project cannot tear down the first one's residency. It reaches the stream through an adapter-owned residency record beside the control directory — not through the protocol root, which has no concept of a host session and should not acquire one.
+
+## Which session a hook is in
+
+The host exposes the session identifier two ways, to two different kinds of caller, and this adapter has both kinds:
+
+| Caller | Mechanism |
+| --- | --- |
+| A hook | `${CLAUDE_SESSION_ID}`, substituted into the hook's `command` and `args` before the process is spawned |
+| A process the model starts | `CLAUDE_CODE_SESSION_ID`, exported into the environment |
+
+They are not interchangeable, and the difference is not cosmetic. `CLAUDE_SESSION_ID` is *not* an environment variable — the host only ever substitutes it as text — so an adapter that reads it with `getenv` from a hook receives the empty string on every host, in every session, and reports nothing. Every session then shares one identifier, and the scoping described above silently stops holding: one session's `SessionEnd` tears down whatever stream is resident, including one another session armed.
+
+This adapter shipped that defect and no longer has it. Hooks take the session from `--session=${CLAUDE_SESSION_ID}`, and a missing or unsubstituted value is a hard failure rather than a degraded mode — the exit is non-zero, which this host shows to the user. An adapter that cannot tell one session from another is misconfigured, and the version of that fault which shipped was invisible precisely because it exited cleanly.
+
+## Two bindings, and which wins
+
+The identity a hook acts for is resolved in a fixed order:
+
+1. **Session binding** — what a session recorded for itself, via `conductor adapter claude bind <agent>`. Stored beside the control directory, keyed by session identifier, and removed at teardown.
+2. **Project binding** — `.conductor-agent` at the project root. The ordinary case, and the one that needs nothing from the model.
+
+The session binding wins because it is the more specific claim: a session that has said who it is has said so about itself, while the project file speaks for every session that happens to open there. When a session binding answers, the project is not consulted at all — including its absence.
+
+This is what lets several agents work in one directory. One identity holds one stream, so without a per-session binding a second session in the same project resolves to the same identity, loses the race for it, and is refused at every turn end while looking, from the outside, exactly like a working install. `identity` reports which of the two bindings answered, so a session acting as the wrong agent shows which file to correct.
+
+`bind` is the one adapter command the model runs itself, and the only one that requires the identity to be on the roster already. `.conductor-agent` is written by hand before an agent joins and so cannot require registration; `bind` is run by an agent that has joined, where an unknown name is a typo that would otherwise become a quiet unregistered no-op at every turn end for the life of the session.
 
 Arming when a live stream already holds the identity is refused and exits cleanly, not treated as a failure. That is what makes it safe for session start and every turn end to arm blindly, and it is the property the whole design rests on: every path that could lose the stream has an event that restores it, and no restore attempt can double-deliver.
 
@@ -61,7 +87,7 @@ Post-compaction state must be re-announced through `SessionStart` with matcher `
 
 Identity binding is `.conductor-agent`, a project-owned file the adapter reads through `${CLAUDE_PROJECT_DIR}`. Plugin user-configuration is deliberately not readable from project settings, so it cannot carry a per-project identity. A project with no such file loads the adapter and does nothing, which is the correct behaviour for a project that has not opted in.
 
-One identity holds one stream, so two sessions open on the same project contend for it: the first to arm holds it, and the second's arm is refused every time. The second session stays reachable — nothing is lost — but it is not independently wakeable, and a delivery wakes whichever session holds the stream. Per-session identities are the workaround; making one identity wake several sessions is not something this host's mechanism supports.
+One identity holds one stream. Two sessions sharing an identity therefore contend for it: the first to arm holds it, the second's arm is refused every time, and a delivery wakes whichever one won. The second stays reachable — nothing is lost — but it is not independently wakeable. Per-session bindings are how two sessions in one project avoid sharing an identity in the first place; making one identity wake several sessions is not something this host's mechanism supports, and no binding changes that.
 
 Per-OS invocation needs no launcher script, and this is why the adapter is a mode of the Conductor executable rather than a pair of shell scripts. Without an `args` array a hook's `command` runs through a shell — bash on POSIX, PowerShell on Windows without Git Bash — and the `shell` field's `powershell` option means pwsh, which need not be installed. A single portable hook entry is therefore only possible in the exec form: `args` present, `command` resolved as an executable and spawned directly, with `${CLAUDE_PLUGIN_ROOT}` substituted per element as a plain string so a path containing quotes, `$`, or backticks never reaches a shell parser. One `${CLAUDE_PLUGIN_ROOT}/bin/conductor` covers every platform, since Windows process creation appends `.exe` to an extensionless name.
 

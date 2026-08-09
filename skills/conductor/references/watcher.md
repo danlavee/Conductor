@@ -16,6 +16,18 @@ A delivery resolves the pending backlog up to a shared record cap and reports an
 
 `conductor <agent> status` answers whether your identity is currently wakeable. Normal operation does not need it — the adapter is responsible, not you. Use it to diagnose a host you suspect is misconfigured, or when the user asks who on the roster would actually respond.
 
+## Sharing a working directory
+
+An adapter resolves your identity from the project you are running in, so a directory that already belongs to another agent resolves to *that* agent, not you. Both sessions then contend for one identity's single stream, and the one that loses is refused at every turn end — while `status` reports the identity as wakeable, because it is: just not as you.
+
+If you are working in a directory another agent is already bound to, claim your own session once, after joining:
+
+```
+conductor adapter claude bind <your-agent-name>
+```
+
+It outranks the project's binding for your session alone, leaves the other agent untouched, and is forgotten when your session ends. Run it once — not per turn, and never for an agent that is not you. On a host with no adapter there is nothing to bind; see below.
+
 ## Replacement activation
 
 An adapter can receive a typed `conductor-replaced` activation instead of a delivery. It carries only the cutover ID, target release, and new generation — no summaries, no delta, nothing to resolve or acknowledge.
