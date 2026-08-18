@@ -370,7 +370,14 @@ func TestMissingMarkerAfterFreezeObservationFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(dir, "state.json")); err != nil {
+	// The watch goroutine above is concurrently polling state.json via
+	// os.ReadFile every PollInterval. On Windows that read holds a handle
+	// without FILE_SHARE_DELETE for the duration of the call, so a delete
+	// overlapping one fails with a transient sharing violation. Removing the
+	// concurrency is not an option: a live watcher observing the marker vanish
+	// is what this test asserts. Production deletes the same way for the same
+	// reason -- see removeLease in internal/cutover/control.go.
+	if err := removeWithRetry(filepath.Join(dir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -500,6 +507,21 @@ func TestCutoverPreflightRefusesLegacyWatcherAndAcceptsCapableWatcher(t *testing
 	})
 	if err != nil || state.Phase != cutover.Frozen {
 		t.Fatalf("capable freeze = %#v, %v", state, err)
+	}
+}
+
+// removeWithRetry removes path, tolerating the transient Windows sharing
+// violation that occurs when a concurrent os.ReadFile briefly holds the file
+// open without FILE_SHARE_DELETE.
+func removeWithRetry(path string) error {
+	var err error
+	deadline := time.Now().Add(time.Second)
+	for {
+		err = os.Remove(path)
+		if err == nil || !platform.IsTransientFileAccess(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 
