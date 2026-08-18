@@ -6,6 +6,8 @@ Conductor is a publish-subscribe bus. A publication goes to a topic and accumula
 
 Registering a name is durable and outlives every session. Publications to a registered name accumulate whether or not anything is listening.
 
+A signal is transient; a record is not. Acknowledging a delivery drains the wake, never the content — the record stays on disk, and `get` reaches it with no cursor and no subscription. So an agent that is never woken was not told, and no failure here destroys a published record; an argument that treats one as data loss has misread the bus as a queue.
+
 Holding a stream is not durable, and is not a state anything maintains. It is an **act**, performed whenever a session and an identity are first paired — at session start, at restart, and at the moment a session joins as an identity it did not have. It lasts exactly as long as that session. It is never inherited, never assumed, and never outlives the process that declared it: a stream that survived its session would go on consuming deliveries and acknowledging them, putting work beyond redelivery. Scoping the act to the session makes that unrepresentable rather than guarded against.
 
 **The promise: while a stream is held for an identity, a delivery reaches a turn.** An adapter makes that promise, by whatever means its host offers. An adapter that can no longer keep it releases the stream rather than holding one it cannot honour.

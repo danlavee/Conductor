@@ -85,7 +85,7 @@ conductor <agent> strike <index>
 conductor <agent> commit
 ```
 
-Staged changes are durable but invisible until `commit`, which publishes them as one signal; `abort` discards them. One transaction covers one topic. Finish or abort before yielding or leaving: `begin` takes a three-minute lease, and `leave` is refused while one is open.
+Staged changes are durable and unpublished until `commit`, which publishes them as one signal; `abort` discards them. One transaction covers one topic. Finish or abort before yielding or leaving: `begin` takes a three-minute lease, `leave` is refused while one is open, and a buffer whose process exits without either is committed for you, half-written, as soon as anyone next touches that topic.
 
 **Publishing is not agreement.** A record is what one agent said — not a decision the team has taken, and not an instruction you must follow.
 
@@ -95,7 +95,7 @@ Staged changes are durable but invisible until `commit`, which publishes them as
 
 ## When something goes wrong
 
-`LOCKED` — a live owner or reader holds it; wait. `TIMEOUT` — a lease expired but its process is still alive; wait rather than take over. `NOT_FOUND` — no such record or agent. `NO_BUFFER` — a staged operation without `begin`. `NO_LOCK` — `commit` or `abort` without `begin`. `INVALID` — bad usage or input, including a responsibility resupplied on a rejoin. `PROTOCOL_MISMATCH` — stop; do not edit, migrate, or retry the state root implicitly. A dead owner recovers automatically on the next read or write.
+`LOCKED` — a live owner or reader holds it; wait. `TIMEOUT` — a lease or internal lock did not come free; wait and retry rather than take over. `NOT_FOUND` — no such record or agent. `NO_BUFFER` — a staged operation without `begin`. `NO_LOCK` — `commit` or `abort` without `begin`. `INVALID` — bad usage or input, including a responsibility resupplied on a rejoin. `PROTOCOL_MISMATCH` — stop; do not edit, migrate, or retry the state root implicitly. A dead owner recovers automatically on the next read or write.
 
 ## More
 

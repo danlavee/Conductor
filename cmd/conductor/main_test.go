@@ -481,7 +481,7 @@ func TestInvalidAgentCommandPreservesClientInitializationOrder(t *testing.T) {
 	}
 }
 
-func TestWatchDefaultsToContent(t *testing.T) {
+func TestWatchResolvesContentBeforeWaking(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
 	if _, _, err := runCLIHelper(os.Args[0], state, "", "a", "join", "dev"); err != nil {
 		t.Fatalf("join failed: %v", err)
@@ -499,9 +499,6 @@ func TestWatchDefaultsToContent(t *testing.T) {
 	}
 	foundContent := false
 	for _, delivery := range batch.Deliveries {
-		if delivery.Mode != conductor.DeliveryContent {
-			t.Fatalf("delivery = %#v", delivery)
-		}
 		if delivery.Delta != nil {
 			foundContent = true
 		}
@@ -520,7 +517,7 @@ func TestOneShotWatchReleasesOwnership(t *testing.T) {
 	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	if err := runWatch(context.Background(), client, conductor.DeliverySummary, true); err != nil {
+	if err := runWatch(context.Background(), client, true); err != nil {
 		t.Fatal(err)
 	}
 	second, err := conductor.New(state, "a")

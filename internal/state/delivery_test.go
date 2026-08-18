@@ -9,50 +9,6 @@ import (
 	"time"
 )
 
-func TestSummaryAcknowledgesReferencedTopicChange(t *testing.T) {
-	home := t.TempDir()
-	client := newTestClient(t, home, "")
-	if _, err := client.Join("reader", "review"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.SubscribeTopic("messages/team"); err != nil {
-		t.Fatal(err)
-	}
-	// Drain the collaboration/agents roster commit and the join signal
-	// registration itself produces before exercising the messages/team delta.
-	drainSummaries(t, client, 2)
-	if _, err := client.Put("messages/team", "hello"); err != nil {
-		t.Fatal(err)
-	}
-	summary := watchOne(t, client)
-	delivery, err := client.ResolveDelivery(summary, DeliverySummary)
-	if err != nil || delivery.Delta != nil {
-		t.Fatalf("delivery = %#v, error = %v", delivery, err)
-	}
-	cursorWrites := 0
-	client.saveCursorFn = func(agent string, cursor Cursor) error {
-		cursorWrites++
-		return writeJSONAtomic(filepath.Join(client.Home, "cursors", agent+".json"), cursor)
-	}
-	if err := client.AcknowledgeDelivery(delivery); err != nil {
-		t.Fatal(err)
-	}
-	if cursorWrites != 1 {
-		t.Fatalf("delivery cursor writes = %d, want 1", cursorWrites)
-	}
-	cursor, err := client.loadCursor("reader")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !indexAcknowledged(cursor.SummaryRanges, summary.Sequence) || cursor.Topics["messages/team"] != summary.Sequence {
-		t.Fatalf("delivery was not settled in one cursor state: %#v", cursor)
-	}
-	delta, err := client.Get(ReadRequest{Topic: "messages/team", Mode: ReadDelta})
-	if err != nil || len(delta.Publications) != 0 {
-		t.Fatalf("delta = %#v, error = %v", delta, err)
-	}
-}
-
 func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 	home := t.TempDir()
 	reader := newTestClient(t, home, "")
@@ -84,7 +40,7 @@ func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 		t.Fatal(err)
 	}
 	summary := watchOne(t, reader)
-	delivery, err := reader.ResolveDelivery(summary, DeliveryContent)
+	delivery, err := reader.ResolveDelivery(summary)
 	if err != nil || delivery.Delta == nil || len(delivery.Delta.Publications) != 1 || len(delivery.Delta.Publications[0].Records) != 2 {
 		t.Fatalf("delivery = %#v, error = %v", delivery, err)
 	}
@@ -112,7 +68,7 @@ func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 	}
 }
 
-func TestFailedSummaryDeliveryCursorWriteLeavesSummaryAndDeltaReplayable(t *testing.T) {
+func TestFailedDeliveryCursorWriteLeavesSummaryAndDeltaReplayable(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
 	if _, err := client.Join("reader", "review"); err != nil {
 		t.Fatal(err)
@@ -131,7 +87,7 @@ func TestFailedSummaryDeliveryCursorWriteLeavesSummaryAndDeltaReplayable(t *test
 	if len(summaries) != 1 {
 		t.Fatalf("summaries = %#v, want one", summaries)
 	}
-	delivery, err := client.ResolveDelivery(summaries[0], DeliverySummary)
+	delivery, err := client.ResolveDelivery(summaries[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +145,7 @@ func TestContentBroadcastReachesAnUnsubscribedAgentAndSettles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+		batch, err := reader.ResolveBatch(summaries)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -239,7 +195,7 @@ func TestContentJoinCarriesRoster(t *testing.T) {
 	// carries the roster follows it.
 	drainSummaries(t, client, 1)
 	summary := watchOne(t, client)
-	delivery, err := client.ResolveDelivery(summary, DeliveryContent)
+	delivery, err := client.ResolveDelivery(summary)
 	if err != nil || len(delivery.Roster) != 1 || delivery.Roster[0].Name != "a" {
 		t.Fatalf("delivery = %#v, error = %v", delivery, err)
 	}
@@ -277,7 +233,7 @@ func TestResolveBatchGroupsSameTopicSignalsAndCapsAtDefaultReadLimit(t *testing.
 		t.Fatalf("pending signals = %d, want %d", len(summaries), DefaultReadLimit+3)
 	}
 
-	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	batch, err := reader.ResolveBatch(summaries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +291,7 @@ func TestResolveBatchGroupsJoinAndLeaveSignalsAcrossTopics(t *testing.T) {
 		t.Fatalf("pending signals = %d, want 6", len(summaries))
 	}
 
-	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	batch, err := reader.ResolveBatch(summaries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +349,7 @@ func TestFailedGroupedBatchAcknowledgmentReplaysSummariesAndContent(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	batch, err := reader.ResolveBatch(summaries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +408,7 @@ func TestBatchDrainsSignalWhoseContentWasReadOutOfBand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	batch, err := reader.ResolveBatch(summaries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +474,7 @@ func TestBatchPersistsTopicOnlyProgressWithoutAcknowledgingRemainingSummary(t *t
 		t.Fatalf("pending summaries = %#v, want %#v", pending, all[1:])
 	}
 
-	firstBatch, err := reader.ResolveBatch(pending, DeliveryContent)
+	firstBatch, err := reader.ResolveBatch(pending)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,7 +498,7 @@ func TestBatchPersistsTopicOnlyProgressWithoutAcknowledgingRemainingSummary(t *t
 	if len(replayed) != 1 || replayed[0] != pending[0] {
 		t.Fatalf("remaining summary was acknowledged: %#v", replayed)
 	}
-	secondBatch, err := reader.ResolveBatch(replayed, DeliveryContent)
+	secondBatch, err := reader.ResolveBatch(replayed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -565,7 +521,7 @@ func TestAcknowledgeBatchSupportsDeliveryWithoutCoverageMetadata(t *testing.T) {
 	}
 	summary := summaries[0]
 
-	batch := BatchDelivery{Deliveries: []Delivery{{Summary: summary, Mode: DeliverySummary}}}
+	batch := BatchDelivery{Deliveries: []Delivery{{Summary: summary}}}
 	if err := client.AcknowledgeBatch(batch); err != nil {
 		t.Fatal(err)
 	}
@@ -615,7 +571,7 @@ func TestResolveBatchSpendsSharedBudgetAcrossDifferentTopics(t *testing.T) {
 		t.Fatalf("pending signals = %d, want %d", len(summaries), DefaultReadLimit-5+10)
 	}
 
-	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	batch, err := reader.ResolveBatch(summaries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -673,7 +629,7 @@ func TestResolveBatchAlwaysIncludesFirstDeliveryWhole(t *testing.T) {
 	if len(summaries) != 2 {
 		t.Fatalf("pending signals = %d, want 2", len(summaries))
 	}
-	batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+	batch, err := reader.ResolveBatch(summaries)
 	if err != nil {
 		t.Fatal(err)
 	}

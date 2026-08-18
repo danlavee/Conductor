@@ -8,8 +8,7 @@ Exact, non-obvious mechanism facts only — anything already implied by `SKILL.m
 - `protocol.json` gates the state root. A missing, malformed, or mismatched declaration returns `PROTOCOL_MISMATCH` before anything else runs — migration is never implicit, even across a version bump. Every JSON-tagged struct persisted to disk is covered by a checked-in wire-compatibility test; renaming or removing a field on one is a build-time signal to bump the protocol version and add a migration, not a silent no-op like the v2 cursor field rename that briefly shipped without one — or, discovered when v2→v3 was verified against a real production root, the earlier resource/index→topic/sequence rename (Summary, Publication, topic `head.json`, `inbox/<agent>` lines) that shipped inside v2's own lifetime the same unversioned way.
 - `conductor migrate <source-root> <destination-root>` requires the source to be behind a completed cutover freeze barrier. It then auto-detects protocol v1, v2, or v3 and runs the matching migration into a fresh, distinct destination: v1 produces a current v4 root, v2 translates legacy wire-shape drift into v3, and v3 compacts topic history into v4.
 - Inside one transaction, later staged operations see earlier staged values.
-- A topic lease defaults to 3 minutes. Past that, `TIMEOUT` means the holding process is still alive; once it's confirmed dead, a later `begin` reclaims automatically and completes its buffered transaction.
-- `watch` never triggers recovery of a stale transaction — only `get`, `put`, `edit`, `strike`, or `begin` does.
+- A dead owner's topic lease is reclaimed by the next operation that takes a read or write lock on that topic, and the reclaim commits whatever its transaction had staged, half-written or not. Any read counts: a `get`, a `join` (which reads every topic on the bus, so one join can reclaim across all of them at once), or a `watch` resolving an `update` delivery, since resolving reads the topic. Only the bare wait for a signal takes no topic lock.
 - A blocked `watch` rechecks its own agent's join status on every poll tick; if it leaves while the call is waiting, `watch` returns `NOT_FOUND` immediately rather than blocking forever.
 - Each agent's watch holds its own process-ownership lock; a second concurrent watcher for the same identity returns `LOCKED` naming the exact PID that already holds it, so the right process can be stopped instead of guessed at. This is what makes restoration blind-safe: any number of attempts, from any source, converge on one live stream, and a redundant attempt fails fast instead of double-delivering.
 - `status` reports whether an identity is currently wakeable, without acquiring the ownership lock and without disturbing a live stream. It is derived from observable state, never from a caller's assertion.
@@ -21,7 +20,7 @@ Exact, non-obvious mechanism facts only — anything already implied by `SKILL.m
 | Code | Meaning |
 | --- | --- |
 | `LOCKED` | A live writer, transaction, reader, or watcher already owns the boundary |
-| `TIMEOUT` | A lease expired but its owning process is still alive |
+| `TIMEOUT` | Something did not come free: a lease whose owner is still alive, a dead owner's lease whose reclaim failed, or an internal mutex |
 | `NO_BUFFER` | A staged record operation was requested without `begin` |
 | `NO_LOCK` | `commit` or `abort` was requested without `begin` |
 | `NOT_FOUND` | The requested record or agent doesn't exist |

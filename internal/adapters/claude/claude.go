@@ -249,7 +249,7 @@ func arm(ctx context.Context, client *conductor.Client, session string, out io.W
 	if result.Activation != nil {
 		return Replaced, conductor.WriteJSON(out, result.Activation)
 	}
-	batch, err := client.ResolveBatch(result.Summaries, conductor.DeliveryContent)
+	batch, err := client.ResolveBatch(result.Summaries)
 	if err != nil {
 		return "", err
 	}

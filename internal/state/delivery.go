@@ -2,18 +2,12 @@ package state
 
 import "fmt"
 
-// DeliveryMode selects how much data a watch caller receives with a summary.
-type DeliveryMode string
-
-const (
-	DeliverySummary DeliveryMode = "summary"
-	DeliveryContent DeliveryMode = "content"
-)
-
-// Delivery is a summary with its resolved content in content mode.
+// Delivery is a summary with its content already resolved. There is no mode:
+// a delivery that carried only a pointer would let its acknowledgment advance
+// the topic cursor past content the reader never received, silencing older
+// summaries on that topic. Resolving before waking removes that state.
 type Delivery struct {
 	Summary Summary       `json:"summary"`
-	Mode    DeliveryMode  `json:"mode"`
 	Roster  []RosterEntry `json:"roster,omitempty"`
 	Delta   *ReadResult   `json:"delta,omitempty"`
 	// coverageKnown distinguishes an intentionally empty coverage set produced
@@ -22,23 +16,20 @@ type Delivery struct {
 	coverageKnown    bool
 }
 
-func (c *Client) ResolveDelivery(summary Summary, mode DeliveryMode) (Delivery, error) {
+func (c *Client) ResolveDelivery(summary Summary) (Delivery, error) {
 	releaseOperation, err := c.beginOperation()
 	if err != nil {
 		return Delivery{}, err
 	}
 	defer releaseOperation()
-	return c.resolveDeliveryWithLimit(summary, mode, 0)
+	return c.resolveDeliveryWithLimit(summary, 0)
 }
 
 // resolveDeliveryWithLimit is ResolveDelivery with an explicit record-count
 // cap on the resolved delta. limit must be positive or zero; zero means
 // "unset, use Get's own default cap" -- the same convention Get itself uses.
-func (c *Client) resolveDeliveryWithLimit(summary Summary, mode DeliveryMode, limit int) (Delivery, error) {
-	delivery := Delivery{Summary: summary, Mode: mode}
-	if mode != DeliveryContent {
-		return delivery, nil
-	}
+func (c *Client) resolveDeliveryWithLimit(summary Summary, limit int) (Delivery, error) {
+	delivery := Delivery{Summary: summary}
 	switch summary.Type {
 	case "join", "leave":
 		roster, err := c.Roster()
@@ -79,22 +70,21 @@ func (c *Client) AcknowledgeDelivery(delivery Delivery) error {
 	})
 }
 
+// deliveryCursorAdvance reports how far the topic cursor may move for an
+// accepted delivery: never further than the content the delivery actually
+// carried, so an acknowledgment can only ever drain signals whose records the
+// reader now holds.
 func deliveryCursorAdvance(delivery Delivery) (cursorSlot string, throughSequence int64) {
-	if delivery.Delta != nil {
-		if delivery.Delta.Mode == "delta" && delivery.Delta.maxSequence > 0 {
-			return recordCursorSlot(delivery.Delta.Topic, delivery.Delta.record), delivery.Delta.maxSequence
-		}
-	} else if delivery.Mode == DeliverySummary && delivery.Summary.Type == "update" {
-		return delivery.Summary.Topic, delivery.Summary.Sequence
+	if delivery.Delta != nil && delivery.Delta.Mode == "delta" && delivery.Delta.maxSequence > 0 {
+		return recordCursorSlot(delivery.Delta.Topic, delivery.Delta.record), delivery.Delta.maxSequence
 	}
 	return "", 0
 }
 
 // BatchDelivery is every delivery one watch call resolved, capped at
-// DefaultReadLimit cumulative records across all included content
-// deliveries -- the same mechanics as a capped get. Join, leave, and
-// summary-mode deliveries never count against the budget; only resolved
-// update content does.
+// DefaultReadLimit cumulative records across all of them -- the same mechanics
+// as a capped get. Join and leave deliveries never count against the budget;
+// only resolved update content does.
 type BatchDelivery struct {
 	Deliveries   []Delivery `json:"deliveries"`
 	Remaining    int        `json:"remaining,omitempty"`
@@ -111,7 +101,7 @@ type BatchDelivery struct {
 // still-unacknowledged window and wildly over-count the budget. "join" and
 // "leave" summaries group the same way across every topic, since they all
 // resolve to the same current-roster read.
-func (c *Client) ResolveBatch(summaries []Summary, mode DeliveryMode) (BatchDelivery, error) {
+func (c *Client) ResolveBatch(summaries []Summary) (BatchDelivery, error) {
 	releaseOperation, err := c.beginOperation()
 	if err != nil {
 		return BatchDelivery{}, err
@@ -132,7 +122,7 @@ func (c *Client) ResolveBatch(summaries []Summary, mode DeliveryMode) (BatchDeli
 			break
 		}
 		target := highestSequenceSummary(group)
-		delivery, err := c.resolveDeliveryWithLimit(target, mode, budget)
+		delivery, err := c.resolveDeliveryWithLimit(target, budget)
 		if err != nil {
 			return BatchDelivery{}, err
 		}

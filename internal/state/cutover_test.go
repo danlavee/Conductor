@@ -47,7 +47,7 @@ func TestFrozenCutoverBlocksMutatorsAcknowledgmentsAndInitialization(t *testing.
 	if err := watch.Close(); err != nil {
 		t.Fatal(err)
 	}
-	delivery := Delivery{Summary: summary, Mode: DeliverySummary}
+	delivery := Delivery{Summary: summary}
 	batch := BatchDelivery{Deliveries: []Delivery{delivery}}
 	if _, err := cutover.Freeze(root, "cut-1", "v5", nil); err != nil {
 		t.Fatal(err)
@@ -88,8 +88,8 @@ func TestFrozenCutoverBlocksMutatorsAcknowledgmentsAndInitialization(t *testing.
 		{"summary ack", func() error { return client.AcknowledgeSummary(summary) }},
 		{"delivery ack", func() error { return client.AcknowledgeDelivery(delivery) }},
 		{"batch ack", func() error { return client.AcknowledgeBatch(batch) }},
-		{"resolve delivery", func() error { _, err := client.ResolveDelivery(summary, DeliveryContent); return err }},
-		{"resolve batch", func() error { _, err := client.ResolveBatch([]Summary{summary}, DeliveryContent); return err }},
+		{"resolve delivery", func() error { _, err := client.ResolveDelivery(summary); return err }},
+		{"resolve batch", func() error { _, err := client.ResolveBatch([]Summary{summary}); return err }},
 		{"list agents", func() error { _, err := client.ListAgents(); return err }},
 		{"list groups", func() error { _, err := client.ListTopicGroups(); return err }},
 		{"list topics", func() error { _, err := client.ListTopics("dev"); return err }},
@@ -535,7 +535,7 @@ func drainPending(t *testing.T, client *Client) {
 	if result.Activation != nil {
 		t.Fatalf("unexpected replacement while draining: %#v", result.Activation)
 	}
-	batch, err := client.ResolveBatch(result.Summaries, DeliverySummary)
+	batch, err := client.ResolveBatch(result.Summaries)
 	if err != nil {
 		t.Fatal(err)
 	}
