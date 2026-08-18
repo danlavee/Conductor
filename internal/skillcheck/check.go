@@ -21,6 +21,8 @@ import (
 var requiredRepositoryFiles = []string{
 	"README.md",
 	"go.mod",
+	"cmd/conductor/agent_commands.go",
+	"cmd/conductor/commands.go",
 	"cmd/conductor/main.go",
 	"cmd/skillcheck/main.go",
 	"internal/skillcheck/check.go",
@@ -34,7 +36,7 @@ var requiredSkillFiles = []string{
 	"references/limitations.md",
 }
 
-// supportedCommands is ValidateSkill's copy of cmd/conductor/main.go's
+// supportedCommands is ValidateSkill's copy of the conductor CLI's
 // command verbs. It exists only because ValidateSkill also runs at install
 // time against a bundled skill with no Go source available to read the real
 // dispatch from -- Validate cross-checks this against cliCommands so drift
@@ -95,7 +97,7 @@ func Validate(root string) []string {
 	}
 
 	// A cliCommands failure only removes the ability to check verbs against
-	// main.go's real dispatch -- it must not also cancel the _v2/.py/broken-
+	// the real dispatch -- it must not also cancel the _v2/.py/broken-
 	// link checks below, which don't depend on it.
 	commands, err := cliCommands(root)
 	if err != nil {
@@ -150,7 +152,7 @@ func Validate(root string) []string {
 
 // CheckCommandFreshness reports every way supportedCommands -- the verb list
 // ValidateSkill is stuck using, since it also runs at install time against a
-// bundled skill with no Go source available -- has drifted from main.go's
+// bundled skill with no Go source available -- has drifted from the CLI's
 // real dispatch. ValidateSkill itself can never call this (no source at
 // install time), so callers that exercise ValidateSkill against what
 // actually ships (e.g. an embedded-bundle test) should call this too,
@@ -172,57 +174,59 @@ func commandFreshnessProblems(commands map[string]bool) []string {
 	}
 	for verb := range supportedCommands {
 		if !commands[verb] {
-			problems = append(problems, "supportedCommands has a verb main.go no longer dispatches: "+verb)
+			problems = append(problems, "supportedCommands has a verb the CLI no longer dispatches: "+verb)
 		}
 	}
 	return problems
 }
 
-// cliCommands returns every command verb cmd/conductor/main.go actually
+// cliCommands returns every command verb the conductor CLI actually
 // dispatches on, read directly from its two top-level switch statements
 // (switch args[0] for standalone commands, switch command for agent-scoped
 // ones) rather than a hand-maintained copy -- so this list cannot silently
 // drift from what the CLI really accepts, the way a separate list did.
 func cliCommands(root string) (map[string]bool, error) {
-	mainPath := filepath.Join(root, "cmd", "conductor", "main.go")
 	fileSet := token.NewFileSet()
-	file, err := parser.ParseFile(fileSet, mainPath, nil, 0)
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", mainPath, err)
-	}
 	commands := map[string]bool{}
 	foundStandaloneSwitch := false
 	foundAgentScopedSwitch := false
-	ast.Inspect(file, func(node ast.Node) bool {
-		statement, ok := node.(*ast.SwitchStmt)
-		if !ok {
-			return true
+	for _, relativePath := range []string{"cmd/conductor/commands.go", "cmd/conductor/agent_commands.go"} {
+		dispatchPath := filepath.Join(root, filepath.FromSlash(relativePath))
+		file, err := parser.ParseFile(fileSet, dispatchPath, nil, 0)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", dispatchPath, err)
 		}
-		switch {
-		case isAgentScopedDispatchTag(statement.Tag):
-			foundAgentScopedSwitch = true
-		case isStandaloneDispatchTag(statement.Tag):
-			foundStandaloneSwitch = true
-		default:
-			return true
-		}
-		for _, clause := range statement.Body.List {
-			caseClause, ok := clause.(*ast.CaseClause)
+		ast.Inspect(file, func(node ast.Node) bool {
+			statement, ok := node.(*ast.SwitchStmt)
 			if !ok {
-				continue
+				return true
 			}
-			for _, expression := range caseClause.List {
-				literal, ok := expression.(*ast.BasicLit)
-				if !ok || literal.Kind != token.STRING {
+			switch {
+			case isAgentScopedDispatchTag(statement.Tag):
+				foundAgentScopedSwitch = true
+			case isStandaloneDispatchTag(statement.Tag):
+				foundStandaloneSwitch = true
+			default:
+				return true
+			}
+			for _, clause := range statement.Body.List {
+				caseClause, ok := clause.(*ast.CaseClause)
+				if !ok {
 					continue
 				}
-				if value, err := strconv.Unquote(literal.Value); err == nil {
-					commands[value] = true
+				for _, expression := range caseClause.List {
+					literal, ok := expression.(*ast.BasicLit)
+					if !ok || literal.Kind != token.STRING {
+						continue
+					}
+					if value, err := strconv.Unquote(literal.Value); err == nil {
+						commands[value] = true
+					}
 				}
 			}
-		}
-		return true
-	})
+			return true
+		})
+	}
 	// Require BOTH dispatch points, not just "found something" -- a single
 	// renamed switch would otherwise silently return a truncated set instead
 	// of failing loudly, and every verb it used to contribute would then be
@@ -235,7 +239,7 @@ func cliCommands(root string) (map[string]bool, error) {
 		if !foundAgentScopedSwitch {
 			missing = append(missing, `switch command { (agent-scoped commands)`)
 		}
-		return nil, fmt.Errorf("%s: dispatch switch shape changed, cliCommands needs updating -- missing: %s", mainPath, strings.Join(missing, "; "))
+		return nil, fmt.Errorf("conductor CLI dispatch switch shape changed, cliCommands needs updating -- missing: %s", strings.Join(missing, "; "))
 	}
 	return commands, nil
 }
