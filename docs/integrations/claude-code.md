@@ -25,6 +25,22 @@ Writing to stdout and waking are one decision, not two. On this host stdout reac
 
 An identity that has not joined is reported and exits cleanly, on the reasoning that arming again is harmless once it does join. The cost is worth naming: a `.conductor-agent` naming an agent that will *never* join — a typo, or a copied project — produces that same quiet no-op at every session start and turn end, indefinitely, and the report goes to stderr where a backgrounded hook's output is easy to miss. The adapter cannot distinguish "not yet" from "never", so `conductor <agent> status` is the way to tell them apart.
 
+## Reading a run's result
+
+Every non-waking run prints one JSON report to stderr carrying a stable `code`, so a run can be classified numerically instead of by matching prose:
+
+| Code | Outcome | Meaning |
+| --- | --- | --- |
+| 10 | `unbound` | The project names no identity. The adapter is installed and opted out. |
+| 11 | `delivered` | Work reached the model. Exits with the wake code. |
+| 12 | `replaced` | The conductor was cut over beneath the stream. Exits with the wake code. |
+| 13 | `refused` | Another stream already owns the identity. The ordinary result of a blind re-arm. |
+| 14 | `unregistered` | The identity has not joined, so there is nothing to hold a stream for. |
+| 15 | `released` | The stream this session was holding ended. Reported under `release` when teardown ends it, and under `arm` when a blocked stream is cancelled by the teardown of the session that armed it — so read the outcome, not the command it arrived under. |
+| 16 | `not-owned` | Teardown found no stream this session owned. |
+
+The codes start at ten to stay clear of the process exit statuses, which are a separate and much smaller vocabulary: `0` for nothing to say, `1` for a genuine failure, and `2` for a wake. The exit status deliberately does not distinguish the outcomes, because this host reads any status other than `0` and `2` as a hook failure and shows its stderr to the user — so giving `refused` or `unregistered` a status of its own would report an error at every turn end that armed correctly. The blind re-arm has to be able to decline without looking broken, which is exactly when it is working.
+
 ## Constraints that shape the implementation
 
 The two paths carry content differently, and conflating them is the easy mistake. A *blocking* `Stop` hook's `reason` is not shown to the model, so content there must travel in `hookSpecificOutput.additionalContext`. A *backgrounded* `asyncRewake` hook is not blocking anything: its own stdout is appended to the system reminder, so the delivery payload is simply what the stream prints before exiting 2.

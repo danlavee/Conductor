@@ -39,6 +39,12 @@ const (
 	// forget, or lose to a compaction.
 	IdentityFile = ".conductor-agent"
 
+	// byteOrderMark is U+FEFF, spelled as its UTF-8 bytes because Go rejects
+	// the character itself anywhere but the first position of a file -- and
+	// because a literal one here would read as an empty string to anyone
+	// reviewing the line that strips it.
+	byteOrderMark = "\xef\xbb\xbf"
+
 	// WakeExitCode is this host's wake primitive. A backgrounded hook that
 	// exits with it starts a turn in an otherwise idle session and appends its
 	// stdout to a system reminder the model reads.
@@ -64,7 +70,57 @@ const (
 	// Unregistered means the identity has not joined, so there is nothing to
 	// hold a stream for. Arming again is harmless once it does.
 	Unregistered Outcome = "unregistered"
+	// Unbound means the project names no identity, so the adapter is installed
+	// but opted out. It is the one outcome reached without touching the bus.
+	Unbound Outcome = "unbound"
+	// NotOwned means teardown found no stream this session was holding, which
+	// is the ordinary result for every session that never armed one.
+	NotOwned Outcome = "not-owned"
 )
+
+// Outcome codes are deliberately numbered from ten, clear of every process
+// exit status this adapter can produce -- 0 for nothing to say, 1 for a
+// genuine failure, WakeExitCode for a wake. The two numbering spaces answer
+// different questions, and overlapping them would invite reading a report code
+// as an exit status.
+//
+// The exit status cannot carry these itself. This host treats any code other
+// than 0 and WakeExitCode as a non-blocking error and shows its stderr to the
+// user, so giving Refused or Unregistered a status of its own would report an
+// error at every turn end that armed correctly -- the blind re-arm looking
+// broken precisely when it worked.
+const (
+	CodeUnbound = 10 + iota
+	CodeDelivered
+	CodeReplaced
+	CodeRefused
+	CodeUnregistered
+	CodeReleased
+	CodeNotOwned
+)
+
+// Code is the outcome's stable numeric identity, so a run can be classified
+// without matching on prose. Zero means the value is not one of the outcomes
+// above, which is a programming error rather than a result.
+func (o Outcome) Code() int {
+	switch o {
+	case Unbound:
+		return CodeUnbound
+	case Delivered:
+		return CodeDelivered
+	case Replaced:
+		return CodeReplaced
+	case Refused:
+		return CodeRefused
+	case Unregistered:
+		return CodeUnregistered
+	case Released:
+		return CodeReleased
+	case NotOwned:
+		return CodeNotOwned
+	}
+	return 0
+}
 
 // Wakes reports whether the outcome put something on the writer that the model
 // has to see. On this host stdout reaches the model only on a waking exit, so
@@ -96,7 +152,13 @@ func ResolveIdentity(projectDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(data)), nil
+	// The byte order mark is stripped because this file is written by hand on
+	// a host where the ordinary ways of doing that add one: Notepad and
+	// PowerShell's Set-Content -Encoding utf8 both do. TrimSpace does not
+	// consider it whitespace, so it would otherwise survive into the agent
+	// name and fail validation at every session start, reporting an identity
+	// that looks correct in every editor that hides the mark.
+	return strings.TrimSpace(strings.TrimPrefix(string(data), byteOrderMark)), nil
 }
 
 // Arm holds the identity's delivery stream and converts the first delivery
