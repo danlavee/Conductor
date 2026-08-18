@@ -40,7 +40,9 @@ sequenceDiagram
 
 Acceptance and acknowledgement are not atomic. If the handoff fails before acceptance, the signal stays unread. If acknowledgement is interrupted after acceptance, Conductor may replay it. Once acknowledgement persists, scheduling and execution are runtime-owned.
 
-By default, `--mode=content` resolves the resource delta or roster before delivery and acknowledges both the signal and that read after successful output. `--mode=summary` returns only the location and leaves the awakened agent to read it. Shared state stays authoritative either way; the mode changes who performs the read, not what is authoritative.
+Content delivery resolves the resource delta or roster before delivery and acknowledges both the signal and that read after successful output. Summary delivery returns only the location and leaves the awakened agent to read it. Shared state stays authoritative either way; the mode changes who performs the read, not what is authoritative.
+
+The choice belongs to whoever holds the stream, so it is a client-level argument rather than a CLI flag: an adapter picks it when it arms, and the CLI resolves content because an agent reading that output has no second step in which to follow a pointer.
 
 ## Identity across the boundary
 

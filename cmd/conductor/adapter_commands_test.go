@@ -272,8 +272,8 @@ func TestAdapterIdentityAnswersTheAgentThatRunsIt(t *testing.T) {
 	if err := json.Unmarshal(stdout, &report); err != nil {
 		t.Fatalf("identity report = %s: %v", stdout, err)
 	}
-	if report.Source != "session" || report.Status.Agent != "a" || !report.Status.Registered || report.Status.Wakeable {
-		t.Fatalf("bound-but-unheld session reported %+v", report)
+	if report.Source != "session" || report.Agent != "a" {
+		t.Fatalf("bound session reported %+v", report)
 	}
 }
 
@@ -297,31 +297,93 @@ func TestAdapterKeepsTheHardSessionGuardOnWhatItChanges(t *testing.T) {
 	}
 }
 
-// TestAdapterAsksForTheProjectOnlyWhereTheHostOwesIt covers the other half of
-// the same asymmetry. An agent runs identity to find out why nothing can reach
-// it, and having no project binding is one of the two answers -- so demanding a
-// project directory there fails the diagnostic in exactly the state it exists to
-// report. A hook is a different caller: the host owes it the variable, and a
-// missing one means the installation is wrong rather than that the project is
-// unbound.
-func TestAdapterAsksForTheProjectOnlyWhereTheHostOwesIt(t *testing.T) {
+// TestAdapterFindsTheProjectTheWayItsCallerCan covers the other half of the same
+// asymmetry, and the failure it replaced. This host substitutes the project
+// variable into hook arguments and does not export it, so a command the model
+// runs reads it as empty in every session -- and resolving identity from it
+// there answered "nothing names you" for a directory whose identity file named
+// exactly that agent. The two callers therefore read two sources: a hook is owed
+// the variable and fails without it, and a model-run identity walks up from its
+// own working directory.
+//
+// The subdirectory is the point of the walk, not decoration: an agent works from
+// wherever its task lives while the identity file sits at the project root.
+func TestAdapterFindsTheProjectTheWayItsCallerCan(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
-	stdout, stderr, err := runAdapterProcess(t, root, "", "session-1", "adapter", "claude", "identity")
-	if err != nil {
-		t.Fatalf("identity with no project: %v: %s", err, stderr)
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, claude.IdentityFile), []byte("a\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	var report identityReport
-	if err := json.Unmarshal(stdout, &report); err != nil {
-		t.Fatalf("identity report = %s: %v", stdout, err)
+	working := filepath.Join(project, "internal", "feature")
+	if err := os.MkdirAll(working, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if report.Source != string(claude.NoBinding) || report.Session != "session-1" {
-		t.Fatalf("projectless session reported %+v; want it answered as unbound", report)
+	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
+		t.Fatalf("join a: %v: %s", err, stderr)
 	}
+
+	report := readIdentity(t, root, "", working, "session-1")
+	if report.Source != string(claude.FromProject) || report.Agent != "a" {
+		t.Fatalf("identity from a subdirectory of the project reported %+v; want the project's own agent", report)
+	}
+	if report.Project != project || report.Root == "" {
+		t.Fatalf("identity reported %+v; want the directory it found and the root it read", report)
+	}
+
+	// Nothing above a temporary directory holds an identity file, so this is
+	// the answer "nothing names you" -- reported, now, over a stated search.
+	if report = readIdentity(t, root, "", t.TempDir(), "session-1"); report.Source != string(claude.NoBinding) || report.Project != "" {
+		t.Fatalf("identity outside any project reported %+v; want unbound over an empty project", report)
+	}
+
 	for _, command := range []string{"arm", "release", "identity"} {
 		if _, stderr, err := runAdapterHelper(t, root, "", "session-1", "adapter", "claude", command); err == nil {
 			t.Fatalf("hook %s ran without the project directory the host owes it; stderr = %s", command, stderr)
 		}
 	}
+}
+
+// TestAdapterIdentityKeepsTheProjectsNameAfterABindOverIt covers the act the
+// report exists to make visible. Binding displaces the project's identity for
+// the session, and reporting only the winner would hide exactly the case worth
+// seeing: an agent that bound over the name its project had already assigned,
+// with nothing left in the answer to show it did.
+func TestAdapterIdentityKeepsTheProjectsNameAfterABindOverIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, claude.IdentityFile), []byte("a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range []string{"a", "b"} {
+		if _, stderr, err := runCLIHelper(os.Args[0], root, "", agent, "join", "dev"); err != nil {
+			t.Fatalf("join %s: %v: %s", agent, err, stderr)
+		}
+	}
+	if _, stderr, err := runAdapterProcess(t, root, project, "session-1", "adapter", "claude", "bind", "b"); err != nil {
+		t.Fatalf("bind: %v: %s", err, stderr)
+	}
+	report := readIdentity(t, root, "", project, "session-1")
+	if report.Source != string(claude.FromSession) || report.Agent != "b" {
+		t.Fatalf("bound session reported %+v; want the session's own identity", report)
+	}
+	if report.ProjectAgent != "a" {
+		t.Fatalf("bound session reported project_agent %q; want the name it bound over", report.ProjectAgent)
+	}
+}
+
+// readIdentity runs identity the way the model does -- no session argument, and
+// the project reached through the working directory rather than the environment.
+func readIdentity(t *testing.T, root, project, working, session string) identityReport {
+	t.Helper()
+	stdout, stderr, err := runAdapterFrom(t, root, project, working, session, "adapter", "claude", "identity")
+	if err != nil {
+		t.Fatalf("identity from %s: %v: %s", working, err, stderr)
+	}
+	var report identityReport
+	if err := json.Unmarshal(stdout, &report); err != nil {
+		t.Fatalf("identity report = %s: %v", stdout, err)
+	}
+	return report
 }
 
 func assertIdentity(t *testing.T, root, project, session, agent, source string) {
@@ -334,7 +396,7 @@ func assertIdentity(t *testing.T, root, project, session, agent, source string) 
 	if err := json.Unmarshal(stdout, &report); err != nil {
 		t.Fatalf("identity report = %s: %v", stdout, err)
 	}
-	if report.Status.Agent != agent || report.Source != source || report.Session != session {
+	if report.Agent != agent || report.Source != source || report.Session != session {
 		t.Fatalf("%s resolved to %+v; want agent %q from the %s binding", session, report, agent, source)
 	}
 }
@@ -347,9 +409,31 @@ func runAdapterHelper(t *testing.T, root, project, session string, args ...strin
 	return runAdapterProcess(t, root, project, session, append(args, "--session="+session)...)
 }
 
+// runAdapterProcess spawns the adapter with the project supplied both ways at
+// once -- in the environment, where a hook reads it, and as the working
+// directory, where a model-run command finds it. That is the real arrangement:
+// the two callers read two sources and the sources agree. A test that needs
+// them to disagree, or needs one of them absent, passes "" and sets what it
+// means explicitly; the working directory then falls to a temporary one so no
+// identity file above the checkout can answer for it.
 func runAdapterProcess(t *testing.T, root, project, session string, args ...string) ([]byte, []byte, error) {
 	t.Helper()
+	working := project
+	if working == "" {
+		working = t.TempDir()
+	}
+	return runAdapterFrom(t, root, project, working, session, args...)
+}
+
+// runAdapterFrom is the general form, and the two directories are separate
+// arguments because the callers read them separately: project goes to the
+// environment a hook is given, working is where the process runs and so what a
+// model-run command resolves from. Tests that need the two to disagree, or one
+// to be absent, are testing the thing this asymmetry exists for.
+func runAdapterFrom(t *testing.T, root, project, working, session string, args ...string) ([]byte, []byte, error) {
+	t.Helper()
 	command := exec.Command(os.Args[0], args...)
+	command.Dir = working
 	command.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
 	command.Env = replaceEnvironment(command.Env, "CONDUCTOR_HOME", root)
 	command.Env = replaceEnvironment(command.Env, "CLAUDE_PROJECT_DIR", project)

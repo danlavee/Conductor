@@ -15,7 +15,7 @@ This is a conversation you carry out, not a CLI command. When asked to update or
    2. Run `conductor cutover freeze <absolute-active-root> --id=<id> --release=<release>`. This closes operation admission, drains in-flight calls, refuses active legacy watchers, and leaves writes blocked.
    3. If the protocol changes, run `conductor migrate <absolute-active-root> <absolute-staging-root>` and validate the staging root with real reads. Keep the old root as the rollback snapshot.
    4. Replace the root generation at the same logical path, binary, and skill while still frozen. Then run `conductor cutover replace <absolute-active-root> --id=<id>`.
-   Update the host adapter's tree in the same step. It carries its own copy of the executable, and an adapter left behind runs the outgoing CLI against the incoming generation — the hooks keep firing, so nothing reports an error.
+   Update the host adapter's tree in the same step. It carries its own copy of the executable, and an adapter left behind runs the outgoing CLI against the incoming generation — it keeps waking on schedule, so nothing reports an error.
    5. Let every old watcher fire its one no-delta `conductor-replaced` activation and exit. Reload the installed skill and binary; each host's adapter restores its own delivery stream against the new generation.
    6. Run `conductor cutover activate <absolute-active-root> --id=<id>`, then verify one fresh publication, delivery, and acknowledgment.
    Before the root is replaced, `conductor cutover abort <absolute-active-root> --id=<id>` safely returns to active admission. After replacement, never abort; resume the same `replace`/`activate` cutover identity. A timeout never unfreezes the system.
@@ -30,5 +30,3 @@ This is a conversation you carry out, not a CLI command. When asked to update or
 **Conflicts.** When a local edit and an incoming change touch the same content, there's no merge algorithm here — the installed copy isn't a git checkout. Present both versions plainly and let the decision be made explicitly; never silently prefer one side because it seems more likely to be "right."
 
 **Conversational flexibility.** This procedure has no rigid syntax to enforce — skip a step if told to, accept "just use this folder" without demanding a formal parameter, answer questions mid-flow. The one place that doesn't flex is step 4: get approval before the destructive step even if asked to move fast. Skipping exactly that is what caused a real outage once already.
-
-**Environment variances.** Avoid shell auto-formatters that truncate outputs, prefer native platform-neutral scripting properties, and verify exact CLI subcommand syntax before guessing flags.

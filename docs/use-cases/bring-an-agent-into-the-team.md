@@ -15,7 +15,7 @@ The agent should learn who is on the team, receive the information already share
 3. Every registered agent, including the new agent, is notified that it joined.
 4. The new agent reads the current collaboration rules and the shared material relevant to its work before acting.
 
-Joining is enough to receive future team activity. The agent does not need to subscribe to individual subjects or shared locations.
+Joining is enough to receive the team's own comings and goings and its shared rules — those broadcast to every registered agent with no subscription and no opt-out. Everything else reaches the agent only where it has subscribed, so picking those subscriptions is part of arriving, not a later refinement.
 
 ## Outcome
 

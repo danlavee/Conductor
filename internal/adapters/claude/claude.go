@@ -1,11 +1,9 @@
 // Package claude implements the Claude Code adapter: the host-specific half of
-// wake delivery, which Conductor's core deliberately does not contain.
+// wake delivery, which Conductor's core deliberately does not contain. It
+// reaches the bus through the same public client any other caller would use.
 //
-// The core exposes one host-neutral contract -- a delivery stream and a
-// wakeability query -- and knows nothing about hooks, sessions, or exit codes.
-// Everything in this package is the inverse: it knows only how this host
-// starts a turn, and reaches the bus through the same public client any other
-// caller would use.
+// See docs/integrations/claude-code.md for this host's mechanism and limits,
+// and docs/design/model.md for the invariants they serve.
 package claude
 
 import (
@@ -19,95 +17,62 @@ import (
 	"time"
 
 	conductor "github.com/danlavee/Conductor"
+	"github.com/danlavee/Conductor/internal/platform"
 )
 
 const (
-	// AdapterName is the directory this adapter installs into, and it is one
-	// name for both halves on purpose: the installed path and the plugin the
-	// host loads have to agree, and a second spelling is a second thing to
-	// keep in step.
+	// AdapterName is the install directory and the plugin name, deliberately one
+	// spelling for both.
 	AdapterName = "claude-code"
 
-	// The host exposes the same session identifier two ways, to two different
-	// kinds of caller, and this adapter has both kinds. Which one applies is
-	// decided by who started the process, never by preference: a hook cannot
-	// read SessionEnvironment and a command the model runs gets no argument
-	// substitution.
-
-	// SessionEnvironment is how a process the *model* starts learns which
-	// session it is in. The host exports it to child processes, which is what
-	// makes `bind` runnable by an agent from inside its own session.
+	// SessionEnvironment is exported to processes the model starts.
 	SessionEnvironment = "CLAUDE_CODE_SESSION_ID"
 
-	// SessionPlaceholder is how a *hook* learns the same thing: the host
-	// substitutes it into the hook's argument list before spawning it. It is
-	// named here only so an unsubstituted one can be recognized. A host that
-	// does not know the placeholder passes it through as text, and a session
-	// literally called "${CLAUDE_SESSION_ID}" would be accepted as real -- and
-	// then every session on the machine would share one identifier, which is
-	// precisely the condition session scoping exists to prevent.
+	// SessionPlaceholder is substituted into a hook's argument list, and is
+	// named here so an unsubstituted one can be rejected.
 	SessionPlaceholder = "${CLAUDE_SESSION_ID}"
 
-	// ProjectEnvironment locates the project a session is attached to. The
-	// host substitutes it into hook arguments before the process starts.
+	// ProjectEnvironment is substituted into a hook's argument list. Hooks only:
+	// a command the model starts uses ProjectDirectory instead.
 	ProjectEnvironment = "CLAUDE_PROJECT_DIR"
 
-	// IdentityFile binds a project to a Conductor identity. It is a file the
-	// adapter reads for itself rather than an argument the model supplies,
-	// because an identity the model can state is an identity it can get wrong,
-	// forget, or lose to a compaction.
+	// IdentityFile binds a project to a Conductor identity.
 	IdentityFile = ".conductor-agent"
 
-	// byteOrderMark is U+FEFF, spelled as its UTF-8 bytes because Go rejects
-	// the character itself anywhere but the first position of a file -- and
-	// because a literal one here would read as an empty string to anyone
-	// reviewing the line that strips it.
+	// byteOrderMark is U+FEFF, spelled as bytes because Go rejects the
+	// character outside a file's first position.
 	byteOrderMark = "\xef\xbb\xbf"
 
-	// WakeExitCode is this host's wake primitive. A backgrounded hook that
-	// exits with it starts a turn in an otherwise idle session and appends its
-	// stdout to a system reminder the model reads.
+	// WakeExitCode starts a turn in an idle session when a backgrounded hook
+	// exits with it.
 	WakeExitCode = 2
 )
 
-// Outcome is why an arm attempt ended. An outcome either has something for the
-// model or it does not; the ones that do wake the session, and the rest exit
-// cleanly, because a restore attempt that finds nothing to do is a no-op and
-// not a fault.
+// Outcome is why an arm attempt ended. Only the ones Wakes reports have
+// something for the model; every other is a no-op, not a fault.
 type Outcome string
 
 const (
-	// Delivered means work reached the model and the session must wake.
+	// Delivered means work reached the model.
 	Delivered Outcome = "delivered"
-	// Refused means another stream already owns this identity. Requirement 8:
-	// any number of blind restore attempts converge on exactly one stream.
+	// Refused means another stream already owns this identity.
 	Refused Outcome = "refused"
 	// Released means the session this stream belonged to ended.
 	Released Outcome = "released"
 	// Replaced means the conductor being watched was cut over beneath it.
 	Replaced Outcome = "replaced"
-	// Unregistered means the identity has not joined, so there is nothing to
-	// hold a stream for. Arming again is harmless once it does.
+	// Unregistered means the identity has not joined.
 	Unregistered Outcome = "unregistered"
-	// Unbound means the project names no identity, so the adapter is installed
-	// but opted out. It is the one outcome reached without touching the bus.
+	// Unbound means the project names no identity. Reached without the bus.
 	Unbound Outcome = "unbound"
-	// NotOwned means teardown found no stream this session was holding, which
-	// is the ordinary result for every session that never armed one.
+	// NotOwned means teardown found no stream this session was holding.
 	NotOwned Outcome = "not-owned"
+	// Orphaned means the session this stream exists to wake is gone.
+	Orphaned Outcome = "orphaned"
 )
 
-// Outcome codes are deliberately numbered from ten, clear of every process
-// exit status this adapter can produce -- 0 for nothing to say, 1 for a
-// genuine failure, WakeExitCode for a wake. The two numbering spaces answer
-// different questions, and overlapping them would invite reading a report code
-// as an exit status.
-//
-// The exit status cannot carry these itself. This host treats any code other
-// than 0 and WakeExitCode as a non-blocking error and shows its stderr to the
-// user, so giving Refused or Unregistered a status of its own would report an
-// error at every turn end that armed correctly -- the blind re-arm looking
-// broken precisely when it worked.
+// Outcome codes start at ten, clear of the exit statuses this adapter
+// produces: 0, 1, and WakeExitCode.
 const (
 	CodeUnbound = 10 + iota
 	CodeDelivered
@@ -116,11 +81,10 @@ const (
 	CodeUnregistered
 	CodeReleased
 	CodeNotOwned
+	CodeOrphaned
 )
 
-// Code is the outcome's stable numeric identity, so a run can be classified
-// without matching on prose. Zero means the value is not one of the outcomes
-// above, which is a programming error rather than a result.
+// Code is the outcome's stable numeric identity. Zero is not an outcome.
 func (o Outcome) Code() int {
 	switch o {
 	case Unbound:
@@ -137,35 +101,86 @@ func (o Outcome) Code() int {
 		return CodeReleased
 	case NotOwned:
 		return CodeNotOwned
+	case Orphaned:
+		return CodeOrphaned
 	}
 	return 0
 }
 
-// Wakes reports whether the outcome put something on the writer that the model
-// has to see. On this host stdout reaches the model only on a waking exit, so
-// an outcome that writes without waking is an outcome nobody hears -- the two
-// have to be decided together rather than separately.
+// Wakes reports whether the outcome wrote something the model has to see.
+// Writing and waking are one decision: stdout reaches the model only on a
+// waking exit.
 func (o Outcome) Wakes() bool { return o == Delivered || o == Replaced }
 
-// residency records which session's stream currently holds an identity, and
-// is the channel teardown speaks through. It is adapter-owned state kept out
-// of the protocol root: the core has no concept of a host session, and giving
-// it one would put back the vendor knowledge this design removed.
+// residency records which session's stream holds an identity, and is the
+// channel teardown speaks through.
 type residency struct {
-	Session  string `json:"session"`
-	PID      int    `json:"pid"`
-	Released bool   `json:"released"`
+	Session  string     `json:"session"`
+	PID      int        `json:"pid"`
+	Target   wakeTarget `json:"target"`
+	Released bool       `json:"released"`
+}
+
+// wakeTarget is the process this stream exists to wake. Persisted so an
+// outlived stream is diagnosable from outside the process.
+type wakeTarget struct {
+	PID   int    `json:"pid"`
+	Start string `json:"start,omitempty"`
+}
+
+// currentWakeTarget is the session process: the host spawns hooks in exec
+// form, with no shell in between, so it is this process's parent.
+func currentWakeTarget() wakeTarget {
+	pid := os.Getppid()
+	start, _ := platform.ProcessStartToken(pid)
+	return wakeTarget{PID: pid, Start: start}
+}
+
+// alive reports whether the stream can still reach what it exists to wake. An
+// unreadable start token counts as dead, not as absent evidence: a dropped
+// stream is restored at the next turn boundary, an orphan destroys work.
+func (t wakeTarget) alive() bool {
+	if t.PID <= 0 || !platform.ProcessAlive(t.PID) {
+		return false
+	}
+	if t.Start == "" {
+		return true
+	}
+	start, ok := platform.ProcessStartToken(t.PID)
+	return ok && start == t.Start
+}
+
+// ProjectDirectory walks up from startDir to the nearest ancestor holding an
+// IdentityFile, reporting the empty string when none does. It is how a
+// model-started command finds what this host tells only its hooks.
+func ProjectDirectory(startDir string) (string, error) {
+	directory, err := filepath.Abs(startDir)
+	if err != nil {
+		return "", err
+	}
+	for {
+		_, err := os.Stat(filepath.Join(directory, IdentityFile))
+		if err == nil {
+			return directory, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return "", nil
+		}
+		directory = parent
+	}
 }
 
 // ResolveIdentity reads the Conductor identity bound to a project. An absent
-// binding is not an error: a project that has not opted in should install the
-// adapter and stay silent, not fail every session start. No project directory
-// at all is one way to be absent, and is answered the same way -- whether the
-// host owed one is a question about the caller, and is asked where the caller
-// is known.
+// file is silence, not an error -- a project may simply not have opted in --
+// while an empty projectDir is an error, being a caller that never established
+// which project it is in rather than a project without an identity.
 func ResolveIdentity(projectDir string) (string, error) {
 	if strings.TrimSpace(projectDir) == "" {
-		return "", nil
+		return "", errors.New("no project directory to resolve an identity from")
 	}
 	data, err := os.ReadFile(filepath.Join(projectDir, IdentityFile))
 	if errors.Is(err, os.ErrNotExist) {
@@ -174,24 +189,20 @@ func ResolveIdentity(projectDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// The byte order mark is stripped because this file is written by hand on
-	// a host where the ordinary ways of doing that add one: Notepad and
-	// PowerShell's Set-Content -Encoding utf8 both do. TrimSpace does not
-	// consider it whitespace, so it would otherwise survive into the agent
-	// name and fail validation at every session start, reporting an identity
-	// that looks correct in every editor that hides the mark.
+	// Notepad and PowerShell's Set-Content -Encoding utf8 both add a byte order
+	// mark, and TrimSpace does not consider it whitespace.
 	return strings.TrimSpace(strings.TrimPrefix(string(data), byteOrderMark)), nil
 }
 
 // Arm holds the identity's delivery stream and converts the first delivery
-// into a wake. It is the resident component and the turn-boundary trigger at
-// once: the host backgrounds it, and it exits the moment it has something to
-// say, which is exactly what wakes the session.
-//
-// One process therefore wakes at most once. That is not a limitation to work
-// around -- the event that ends the woken turn arms the successor, so the
-// cycle closes without the model participating in it.
+// into a wake, exiting on it. One process therefore wakes at most once; the
+// event ending the woken turn arms the successor.
 func Arm(ctx context.Context, client *conductor.Client, session string, out io.Writer) (Outcome, error) {
+	return arm(ctx, client, session, out, currentWakeTarget())
+}
+
+// arm takes the target explicitly so a test can reach the orphaned path.
+func arm(ctx context.Context, client *conductor.Client, session string, out io.Writer, target wakeTarget) (Outcome, error) {
 	release, err := client.AcquireWatchOwnership()
 	if err != nil {
 		var protocol *conductor.ProtocolError
@@ -211,23 +222,30 @@ func Arm(ctx context.Context, client *conductor.Client, session string, out io.W
 	if err != nil {
 		return "", err
 	}
-	if err := writeResidency(path, residency{Session: session, PID: os.Getpid()}); err != nil {
+	if err := writeResidency(path, residency{Session: session, PID: os.Getpid(), Target: target}); err != nil {
 		return "", err
 	}
 	defer func() { _ = os.Remove(path) }()
 
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go awaitRelease(streamCtx, path, session, client.PollInterval, cancel)
+	go awaitStreamEnd(streamCtx, path, session, target, client.PollInterval, cancel)
 
 	result, err := client.WatchResultContext(streamCtx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) && ctx.Err() == nil {
+			if !target.alive() {
+				return Orphaned, nil
+			}
 			return Released, nil
 		}
 		return "", err
 	}
 	defer result.Close()
+	// Closes the window between the poller's last check and this delivery.
+	if !target.alive() {
+		return Orphaned, nil
+	}
 	if result.Activation != nil {
 		return Replaced, conductor.WriteJSON(out, result.Activation)
 	}
@@ -241,9 +259,7 @@ func Arm(ctx context.Context, client *conductor.Client, session string, out io.W
 	return Delivered, client.AcknowledgeBatch(batch)
 }
 
-// Release ends the stream a session owns. It is scoped to the caller's session
-// so that a second session in the same project cannot tear down the first
-// one's residency, and it is a no-op when this session owns nothing.
+// Release ends the stream this session owns, and is a no-op when it owns none.
 func Release(client *conductor.Client, session string) (bool, error) {
 	path, err := residencyPath(client)
 	if err != nil {
@@ -263,10 +279,11 @@ func Release(client *conductor.Client, session string) (bool, error) {
 	return true, writeResidency(path, current)
 }
 
-// awaitRelease cancels the stream once teardown marks this session's residency
-// released. Polling is what the watch loop already does, so this adds a file
-// stat per interval and no new waiting machinery.
-func awaitRelease(ctx context.Context, path, session string, interval time.Duration, cancel context.CancelFunc) {
+// awaitStreamEnd cancels the stream when teardown releases this session's
+// residency, or when the session it wakes is gone. The second is not a safety
+// net for the first: teardown fires only on an orderly exit, and the hook's
+// timeout is a day.
+func awaitStreamEnd(ctx context.Context, path, session string, target wakeTarget, interval time.Duration, cancel context.CancelFunc) {
 	for {
 		timer := time.NewTimer(interval)
 		select {
@@ -277,6 +294,10 @@ func awaitRelease(ctx context.Context, path, session string, interval time.Durat
 		}
 		current, err := readResidency(path)
 		if err != nil || current.Session != session || current.Released {
+			cancel()
+			return
+		}
+		if !target.alive() {
 			cancel()
 			return
 		}
@@ -295,11 +316,8 @@ func residencyPath(client *conductor.Client) (string, error) {
 	return filepath.Join(directory, agent+".json"), nil
 }
 
-// writeResidency publishes the record by rename. Teardown rewrites this file
-// from a different process than the one polling it, and a reader that catches
-// a truncated write cannot tell it apart from a release -- it would cancel a
-// live stream. Publishing atomically removes the window rather than leaving it
-// to the fact that only one writer happens to exist today.
+// writeResidency publishes by rename, so the poller never reads a partial
+// record and mistakes it for a release.
 func writeResidency(path string, value residency) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

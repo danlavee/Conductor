@@ -1,8 +1,8 @@
 # Adapter registry
 
-An adapter is one installable unit per host. It owns four responsibilities — a resident component that holds the delivery stream, a turn-boundary trigger that prevents an idle turn while deliveries pend, a lifecycle trigger that binds identity and restores the stream, and teardown that ends the stream with its session. See [wake adapters](../design/wake-adapters.md) for the requirements those satisfy.
+An adapter is one installable unit per host. It owns four responsibilities — a resident component that holds the delivery stream, a turn-boundary trigger that prevents an idle turn while deliveries pend, a lifecycle trigger that binds identity and restores the stream, and teardown that ends the stream with its session. See [the model](../design/model.md) for what they exist to guarantee and [wake adapters](../design/wake-adapters.md) for the requirements they satisfy.
 
-Conductor's core is host-neutral. `watch` is one continuous delivery stream with identical semantics everywhere, and `status` answers whether an identity is wakeable right now; nothing vendor-specific lives in either.
+Conductor's core is host-neutral. `watch` is one continuous delivery stream with identical semantics everywhere, and `status` answers whether a stream is held for an identity; nothing vendor-specific lives in either.
 
 | Host | Adapter | Status |
 | --- | --- | --- |
@@ -11,7 +11,7 @@ Conductor's core is host-neutral. `watch` is one continuous delivery stream with
 | [Antigravity](agy.md) | Not yet built | Interim fallback |
 | Any other host | — | Interim fallback |
 
-`--mode=summary` leaves a delivery's data for the woken turn to read itself instead of resolving and acknowledging it inline. It is adapter configuration, not an agent choice. See [runtime boundaries](../design/runtime-boundaries.md#the-acceptance-boundary).
+Summary delivery leaves a delivery's data for the woken turn to read itself instead of resolving and acknowledging it inline. An adapter chooses it when it arms; there is no flag, because the CLI is not how an adapter holds a stream. See [runtime boundaries](../design/runtime-boundaries.md#the-acceptance-boundary).
 
 ## Interim fallback
 

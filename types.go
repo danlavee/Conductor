@@ -32,12 +32,10 @@ const (
 // request more explicitly; full reads always use this cap.
 const DefaultReadLimit = state.DefaultReadLimit
 
+// Delivery mode is chosen by whoever holds the stream, as a typed argument.
+// There is no parser, because there is no flag to parse: the CLI resolves
+// content, and an adapter names one of these when it arms.
 const (
 	DeliverySummary = state.DeliverySummary
 	DeliveryContent = state.DeliveryContent
 )
-
-// ParseDeliveryMode validates a --mode flag value. An empty value defaults to content.
-func ParseDeliveryMode(value string) (DeliveryMode, error) {
-	return state.ParseDeliveryMode(value)
-}

@@ -110,7 +110,55 @@ func TestRecordOperationProcessContract(t *testing.T) {
 	}
 }
 
-func TestPutFileBulkLoadsAsOneTransaction(t *testing.T) {
+// A body given as a file is published verbatim, so nothing an agent writes
+// has to survive shell quoting to reach a record intact.
+func TestFileOperandCarriesTextVerbatim(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
+		t.Fatal(err)
+	}
+	body := "line one\n  \"quoted\" $HOME `backtick`\nline three"
+	bodyPath := filepath.Join(t.TempDir(), "body.txt")
+	if err := os.WriteFile(bodyPath, []byte(body+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "--file="+bodyPath)
+	if err != nil || len(stderr) != 0 {
+		t.Fatalf("put --file error = %v, stderr = %q", err, stderr)
+	}
+	var record conductor.Record
+	if err := json.Unmarshal(stdout, &record); err != nil {
+		t.Fatalf("stdout is not a record: %q: %v", stdout, err)
+	}
+	if record.Index != 1 || record.Text != body {
+		t.Fatalf("record = %#v, want index 1 text %q", record, body)
+	}
+
+	editPath := filepath.Join(t.TempDir(), "edit.txt")
+	if err := os.WriteFile(editPath, []byte("replaced\nstill multi-line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "edit", "messages/team", "1", "--file="+editPath)
+	if err != nil || len(stderr) != 0 {
+		t.Fatalf("edit --file error = %v, stderr = %q", err, stderr)
+	}
+	if err := json.Unmarshal(stdout, &record); err != nil {
+		t.Fatalf("stdout is not a record: %q: %v", stdout, err)
+	}
+	if record.Text != "replaced\nstill multi-line" {
+		t.Fatalf("edited record = %#v", record)
+	}
+
+	empty := filepath.Join(t.TempDir(), "empty.txt")
+	if err := os.WriteFile(empty, []byte("\n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "--file="+empty); err == nil {
+		t.Fatal("a file with no text published a record")
+	}
+}
+
+func TestPutJSONLBulkLoadsAsOneTransaction(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
 	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
 		t.Fatal(err)
@@ -120,7 +168,7 @@ func TestPutFileBulkLoadsAsOneTransaction(t *testing.T) {
 	if err := os.WriteFile(jsonlPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "--file="+jsonlPath)
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "--jsonl="+jsonlPath)
 	if err != nil || len(stderr) != 0 || len(stdout) == 0 {
 		t.Fatalf("bulk put error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
 	}
@@ -150,7 +198,7 @@ func TestPutFileBulkLoadsAsOneTransaction(t *testing.T) {
 	}
 }
 
-func TestPutFileMalformedLineAbortsWithoutPartialRecords(t *testing.T) {
+func TestPutJSONLMalformedLineAbortsWithoutPartialRecords(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
 	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
 		t.Fatal(err)
@@ -160,7 +208,7 @@ func TestPutFileMalformedLineAbortsWithoutPartialRecords(t *testing.T) {
 	if err := os.WriteFile(jsonlPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "--file="+jsonlPath)
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "--jsonl="+jsonlPath)
 	if err == nil || len(stdout) != 0 || len(stderr) == 0 {
 		t.Fatalf("malformed bulk put error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
 	}
@@ -375,7 +423,7 @@ func TestUsageExposesNoVendorWatchTransports(t *testing.T) {
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] [--mode=summary|content] | conductor <agent> status"
+	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> put (<text> | --file=<path>) | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> edit <index> (<text> | --file=<path>) | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> redact <group/topic> (<index> | --start=N --end=M) | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}
@@ -498,11 +546,11 @@ func TestCutoverFreezeReplaceFireAndRearm(t *testing.T) {
 	if _, _, err := runCLIHelper(executable, root, "", "a", "subscribe", "--topic=dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := runCLIHelper(executable, root, "", "a", "watch", "--once", "--mode=summary"); err != nil {
+	if _, _, err := runCLIHelper(executable, root, "", "a", "watch", "--once"); err != nil {
 		t.Fatalf("drain join: %v", err)
 	}
 
-	watch := exec.Command(executable, "a", "watch", "--mode=summary")
+	watch := exec.Command(executable, "a", "watch")
 	watch.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
 	watch.Env = replaceEnvironment(watch.Env, "CONDUCTOR_HOME", root)
 	var watchOut, watchErr bytes.Buffer
@@ -565,7 +613,7 @@ func TestCutoverFreezeReplaceFireAndRearm(t *testing.T) {
 	if _, _, err := runCLIHelper(executable, root, "", "a", "put", "dev/tasks", "fresh"); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err := runCLIHelper(executable, root, "", "a", "watch", "--once", "--mode=summary")
+	stdout, stderr, err := runCLIHelper(executable, root, "", "a", "watch", "--once")
 	if err != nil {
 		t.Fatalf("rearm: %v: %s", err, stderr)
 	}
@@ -584,6 +632,11 @@ func TestRemovedWatchModesReturnUsage(t *testing.T) {
 		{"a", "watch", "--codex-cli"},
 		{"a", "watch", "--codex-desktop"},
 		{"a", "watch", "--claude-cli"},
+		// --mode went the same way as the vendor flags, and for the same
+		// reason: it was adapter configuration on a surface no adapter reaches.
+		// An adapter holds the stream through the client and chooses there.
+		{"a", "watch", "--mode=summary"},
+		{"a", "watch", "--mode=content"},
 		{"a", "watch", "--once", "--once"},
 		{"a", "status", "extra"},
 	} {

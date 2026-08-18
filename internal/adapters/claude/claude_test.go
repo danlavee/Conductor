@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	conductor "github.com/danlavee/Conductor"
+	"github.com/danlavee/Conductor/internal/platform"
 )
 
 func TestResolveIdentityReadsProjectBinding(t *testing.T) {
@@ -24,8 +26,37 @@ func TestResolveIdentityReadsProjectBinding(t *testing.T) {
 	if err != nil || agent != "planner" {
 		t.Fatalf("bound project = %q, %v", agent, err)
 	}
-	if agent, err := ResolveIdentity(" "); err != nil || agent != "" {
-		t.Fatalf("no project directory = %q, %v; want silence, since whether the host owed one is the caller's question", agent, err)
+	// A project without an identity file is silence; no project at all is a
+	// caller that never established which project it is in, and answering that
+	// with the same silence is what turned a misconfiguration into a confident
+	// wrong answer about who the agent is.
+	if agent, err := ResolveIdentity(" "); err == nil {
+		t.Fatalf("no project directory = %q, nil; want the caller's own failure, not an answer", agent)
+	}
+}
+
+// TestProjectDirectoryWalksUpFromWhereTheAgentIsWorking covers what a model-run
+// command has instead of the variable the host gives only its hooks. The
+// identity file sits at the project root and the agent works wherever its task
+// lives, so finding one from the other is the whole mechanism.
+func TestProjectDirectoryWalksUpFromWhereTheAgentIsWorking(t *testing.T) {
+	project := t.TempDir()
+	working := filepath.Join(project, "internal", "feature")
+	if err := os.MkdirAll(working, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := ProjectDirectory(working); err != nil || found != "" {
+		t.Fatalf("directory under a project with no identity file = %q, %v; want no project", found, err)
+	}
+	if err := os.WriteFile(filepath.Join(project, IdentityFile), []byte("planner\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	found, err := ProjectDirectory(working)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != project {
+		t.Fatalf("project for %s = %q; want %q", working, found, project)
 	}
 }
 
@@ -54,7 +85,7 @@ func TestResolveIdentityIgnoresAByteOrderMark(t *testing.T) {
 func TestOutcomeCodesAreStableDistinctAndClearOfExitStatuses(t *testing.T) {
 	expected := map[Outcome]int{
 		Unbound: 10, Delivered: 11, Replaced: 12, Refused: 13,
-		Unregistered: 14, Released: 15, NotOwned: 16,
+		Unregistered: 14, Released: 15, NotOwned: 16, Orphaned: 17,
 	}
 	seen := map[int]Outcome{}
 	for outcome, want := range expected {
@@ -101,6 +132,64 @@ func TestArmDeliversPendingWorkAndReleasesOwnership(t *testing.T) {
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// A stream whose session is gone must not consume what it cannot deliver. The
+// wake on this host is stdout plus an exit code, so an orphan writes into
+// nothing -- and acknowledging there destroys the publication permanently,
+// because redelivery only covers what was never acknowledged.
+func TestArmLeavesWorkUndeliveredWhenTheSessionItWakesIsGone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+	client := joined(t, root)
+
+	var payload bytes.Buffer
+	outcome, err := arm(context.Background(), client, "session-1", &payload, exitedProcess(t))
+	if err != nil || outcome != Orphaned {
+		t.Fatalf("outcome = %q, %v", outcome, err)
+	}
+	if payload.Len() != 0 {
+		t.Errorf("wrote %q into a session that cannot read it", payload.String())
+	}
+
+	// The publication survived, so the next stream to hold this identity still
+	// receives it. That is the whole point of not acknowledging.
+	successor := open(t, root)
+	if outcome, err := Arm(context.Background(), successor, "session-2", &payload); err != nil || outcome != Delivered {
+		t.Fatalf("successor outcome = %q, %v; the orphan consumed the work", outcome, err)
+	}
+}
+
+// A live PID is not enough, because the operating system reuses them. A target
+// recorded before its process exited must stay dead even if its number comes
+// back, which is what the start token settles.
+func TestAWakeTargetIsDeadOnceItsProcessExits(t *testing.T) {
+	target := exitedProcess(t)
+	if target.alive() {
+		t.Error("an exited process reported as a reachable wake target")
+	}
+	live := currentWakeTarget()
+	if !live.alive() {
+		t.Fatal("this test's own parent reported as gone")
+	}
+	if (wakeTarget{PID: live.PID, Start: "a-different-process"}).alive() {
+		t.Error("a reused PID reported as the original wake target")
+	}
+}
+
+// exitedProcess returns a target naming a process that has certainly run and
+// certainly finished, recorded the way arming records one.
+func exitedProcess(t *testing.T) wakeTarget {
+	t.Helper()
+	command := exec.Command(os.Args[0], "-test.run=TestAWakeTargetIsDeadOnceItsProcessExits", "-test.list=^$")
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	target := wakeTarget{PID: command.Process.Pid}
+	target.Start, _ = platform.ProcessStartToken(target.PID)
+	if err := command.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	return target
 }
 
 func TestArmRefusesWhenAnotherStreamOwnsTheIdentity(t *testing.T) {

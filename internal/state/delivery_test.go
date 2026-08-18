@@ -9,18 +9,6 @@ import (
 	"time"
 )
 
-func TestParseDeliveryMode(t *testing.T) {
-	if mode, err := ParseDeliveryMode(""); err != nil || mode != DeliveryContent {
-		t.Fatalf("default mode = %v, %v", mode, err)
-	}
-	if mode, err := ParseDeliveryMode("summary"); err != nil || mode != DeliverySummary {
-		t.Fatalf("summary mode = %v, %v", mode, err)
-	}
-	if _, err := ParseDeliveryMode("bogus"); err == nil {
-		t.Fatal("expected error for unknown mode")
-	}
-}
-
 func TestSummaryAcknowledgesReferencedTopicChange(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
@@ -431,7 +419,11 @@ func TestFailedGroupedBatchAcknowledgmentReplaysSummariesAndContent(t *testing.T
 	}
 }
 
-func TestBatchDoesNotAcknowledgeSummaryReportedAsRemaining(t *testing.T) {
+// A reader that drained a topic out of band still holds a pending signal for
+// it. That signal must drain, not resurface: its delta is empty forever, and
+// under an adapter that turns a delivery into a turn an undrainable signal is
+// an endless wake loop.
+func TestBatchDrainsSignalWhoseContentWasReadOutOfBand(t *testing.T) {
 	home := t.TempDir()
 	writer := newTestClient(t, home, "")
 	if _, err := writer.Join("writer", "dev"); err != nil {
@@ -464,18 +456,17 @@ func TestBatchDoesNotAcknowledgeSummaryReportedAsRemaining(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if batch.Remaining != len(summaries) {
-		t.Fatalf("remaining = %d, want %d", batch.Remaining, len(summaries))
+	if batch.Remaining != 0 {
+		t.Fatalf("remaining = %d, want 0: content already read leaves nothing to redeliver", batch.Remaining)
 	}
 	if err := reader.AcknowledgeBatch(batch); err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := reader.Watch()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(replayed, summaries) {
-		t.Fatalf("remaining summaries were acknowledged: got %#v, want %#v", replayed, summaries)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	replayed, err := reader.WatchContext(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("signal resurfaced after its content was read and acknowledged: %#v (err %v)", replayed, err)
 	}
 }
 

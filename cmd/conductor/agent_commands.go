@@ -120,45 +120,49 @@ func runAgentCommand(agent, command string, rest []string) error {
 		}
 		return conductor.WriteJSON(os.Stdout, map[string]bool{"aborted": true})
 	case "put":
+		if len(rest) != 1 && len(rest) != 2 {
+			return usageError()
+		}
 		if len(rest) == 2 {
-			if path, ok := strings.CutPrefix(rest[1], "--file="); ok {
+			if path, ok := strings.CutPrefix(rest[1], jsonlPrefix); ok {
 				if path == "" {
 					return usageError()
 				}
-				publication, err := putFile(client, rest[0], path)
+				publication, err := putJSONL(client, rest[0], path)
 				if err != nil {
 					return err
 				}
 				return conductor.WriteJSON(os.Stdout, publication)
 			}
 		}
+		text, err := resolveText(rest[len(rest)-1])
+		if err != nil {
+			return err
+		}
 		var record conductor.Record
-		var err error
 		if len(rest) == 1 {
-			record, err = client.StagePut(rest[0])
-		} else if len(rest) == 2 {
-			record, err = client.Put(rest[0], rest[1])
+			record, err = client.StagePut(text)
 		} else {
-			return usageError()
+			record, err = client.Put(rest[0], text)
 		}
 		return writeRecordResult(record, err)
 	case "edit":
-		var record conductor.Record
-		var err error
-		if len(rest) == 2 {
-			index, parseErr := parseRecordIndex(rest[0])
-			if parseErr != nil {
-				return parseErr
-			}
-			record, err = client.StageEdit(index, rest[1])
-		} else if len(rest) == 3 {
-			index, parseErr := parseRecordIndex(rest[1])
-			if parseErr != nil {
-				return parseErr
-			}
-			record, err = client.Edit(rest[0], index, rest[2])
-		} else {
+		if len(rest) != 2 && len(rest) != 3 {
 			return usageError()
+		}
+		text, err := resolveText(rest[len(rest)-1])
+		if err != nil {
+			return err
+		}
+		index, parseErr := parseRecordIndex(rest[len(rest)-2])
+		if parseErr != nil {
+			return parseErr
+		}
+		var record conductor.Record
+		if len(rest) == 2 {
+			record, err = client.StageEdit(index, text)
+		} else {
+			record, err = client.Edit(rest[0], index, text)
 		}
 		return writeRecordResult(record, err)
 	case "strike":

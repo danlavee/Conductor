@@ -8,22 +8,14 @@ import (
 )
 
 func runWatchCommand(client *conductor.Client, args []string) error {
-	watchArgs, modeValue, err := extractMode(args)
-	if err != nil {
-		return err
-	}
-	mode, err := conductor.ParseDeliveryMode(modeValue)
-	if err != nil {
-		return err
-	}
 	once := false
-	for _, argument := range watchArgs {
+	for _, argument := range args {
 		if argument != "--once" || once {
 			return usageError()
 		}
 		once = true
 	}
-	return runWatch(context.Background(), client, mode, once)
+	return runWatch(context.Background(), client, conductor.DeliveryContent, once)
 }
 
 // runWatch owns the identity's delivery stream for as long as the process
@@ -31,10 +23,14 @@ func runWatchCommand(client *conductor.Client, args []string) error {
 // between draining a batch and the next signal is not a window in which a
 // second watcher can arm for the same identity.
 //
+// This is the lifecycle an agent owns only on a host whose adapter has not
+// landed; an adapter holds the stream through the client instead, and picks its
+// own delivery mode there. The CLI resolves content because the agent reading
+// this output has no second step in which to resolve a pointer.
+//
 // --once returns after the first delivery. That is not a lesser mode: on a
 // host whose wake primitive is process exit, exiting is how the delivery
-// reaches a turn, and the adapter arms the successor from the event that ends
-// the woken turn.
+// reaches a turn.
 func runWatch(ctx context.Context, client *conductor.Client, mode conductor.DeliveryMode, once bool) error {
 	release, err := client.AcquireWatchOwnership()
 	if err != nil {

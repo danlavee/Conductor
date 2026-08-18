@@ -2,19 +2,19 @@
 
 ## The problem this solves
 
-Reachability and wakeability are different properties, and Conductor currently defends them as one.
+Reachability and wakeability are different properties, and Conductor defended them as one.
 
-**Reachable** means a publication addressed to an agent is not lost: it lands, it persists, and the agent receives it whenever it next looks. **Wakeable** means the arrival of that publication can cause the agent to start a turn, now, with no human involved.
+**Reachable** means a publication addressed to an agent is not lost: it lands, it persists, and the agent receives it whenever it next looks. **Wakeable** means that arrival can cause the agent to start a turn, now, with no human involved.
 
-Reachability is sound today. Durable state, persistent cursors, backlog draining, and at-least-once replay all hold. Nothing is lost.
-
-Wakeability is what fails. An agent must start its own watcher, hold the handle in conversational context, and restart it after every signal — and the handle is exactly what a restart, resume, or compaction destroys. The agent is made the guardian of its own reachability, which is the one thing it cannot reliably be. The failure is silent: work arrives, sits correctly, and produces no turn.
+Reachability was already sound — durable state, persistent cursors, backlog draining, at-least-once replay. Wakeability is what failed. An agent had to start its own watcher, hold the handle in conversational context, and restart it after every signal — and the handle is exactly what a restart, resume, or compaction destroys. The agent was made the guardian of its own reachability, the one thing it cannot reliably be, and the failure is silent: work arrives, sits correctly, and produces no turn.
 
 ## The shape
 
 `watch` becomes a single host-neutral contract: one continuous delivery stream, identical on every host, with no vendor variants and no one-shot semantics.
 
 Everything host-specific — how a delivery becomes a turn, how the connection restores itself — moves out of the core into a per-harness **adapter**. The core stops knowing that vendors exist.
+
+The invariants this rests on are in [the model](model.md); the requirements below are what they demand of an implementation.
 
 ## Requirements
 
@@ -23,7 +23,7 @@ Everything host-specific — how a delivery becomes a turn, how the connection r
 1. **One watch contract.** `watch` blocks, emits one delivery, acknowledges it as accepted, and continues. It carries no vendor flags; host differences are expressible only in adapters. `--once` ends the stream after one delivery, which is a lifecycle choice belonging to the caller: on a host whose wake primitive is process completion, exiting is how the delivery reaches a turn. The core still cannot tell which host is asking.
 2. **Wakeability is queryable.** A cheap, authoritative answer to "is this identity wakeable right now" exists, derived from observable state and never from an agent's recollection.
 3. **The roster reports wakeability.** What an operator or agent sees is who would respond to a publication, not who once registered.
-4. **The core never decides how a host starts a turn.** That boundary stays outside Conductor.
+4. **The core never decides how a host starts a turn, and never learns what a stream would wake.** This is a publish-subscribe bus: a publication goes to a topic and accumulates for its subscribers, so there is no addressee and no wake mechanism expressible in that vocabulary at all. The core knows a stream is held for an identity. What holds it, and what it would wake, stay outside Conductor.
 
 ### Every adapter
 
@@ -33,11 +33,11 @@ Everything host-specific — how a delivery becomes a turn, how the connection r
 8. **Restoration is blind-safe.** Any number of restore attempts, from any source, converge on exactly one live stream. A redundant attempt is a no-op, never a fault.
 9. **Identity binds without the agent.** The adapter resolves which Conductor identity a session represents from configuration, not from a model-supplied argument.
 10. **Failure degrades to latency, not loss.** If the immediate-wake path fails, deliveries are still consumed at the next turn boundary.
-11. **Residency ends with its session.** When a session ends, its stream ends. An orphaned stream still holds the identity's ownership lock, so leaking one does not merely waste a process — it blocks the next session from arming.
+11. **Residency ends with its session, and the adapter observes that rather than waiting to be told.** Holding a stream is the promise to deliver through it, so a stream that outlives the session it wakes must end. Leaking one does not merely waste a process or block the next session from arming: it keeps consuming. It resolves each delivery, writes it where nothing is reading, and acknowledges it — putting the publication beyond the reach of redelivery, which only ever covers what was never acknowledged. Teardown events do not cover this, because a crash, a kill, or a one-shot process that simply exits fires none of them. The adapter therefore ends its own stream from the observed liveness of what it wakes, and acknowledges nothing once that is gone.
 
 ### The agent
 
-12. **Obligations end at joining.** No handle to retain, no re-arm to perform, no vigilance to maintain.
+12. **Obligations end at joining.** No handle to retain, no re-arm to perform, no vigilance to maintain — and no reachability to confirm. An adapter announces itself into the session it serves, so an agent observes its absence rather than going to check a status. Owning the lifecycle is the explicit exception on a host whose adapter has not landed, and it is the only case where any of this is the agent's business.
 
 ## Responsibilities
 
@@ -91,17 +91,17 @@ Requirement 10 is what makes the resident component and the turn-boundary trigge
 
 ## What the core exposes
 
-`watch` is the stream. `status` is the wakeability query: it reports whether an identity is on the roster and whether a live process currently holds its ownership guard, derived from the guard's owner record and the operating system's own view of that process. It never acquires the guard, because a status check that could momentarily block a live stream would be a way to cause the failure it exists to detect; and it never trusts a claim to be watching, because that claim is exactly what goes stale when a stream dies silently.
+`watch` is the stream. `status` reports whether an identity is on the roster and whether a live process holds its ownership guard, derived from the guard's owner record and the operating system's view of that process. It never acquires the guard — a check that could momentarily block a live stream would be a way to cause the failure it exists to detect — and never trusts a claim to be watching, since that claim is exactly what goes stale when a stream dies silently.
 
-`list-agents` asks the same question of everyone at once. Each entry carries `wakeable`, and the pid of the stream when there is one, so choosing whom to address is a matter of reading the roster rather than publishing and hoping. `ListAgents` remains the bare membership answer underneath it, because delivery resolves recipients on every publication and must not pay for a process probe per agent to do it.
+`list-agents` asks the same of everyone at once: each entry carries `wakeable` and the stream's pid, so choosing whom to address is reading the roster rather than publishing and hoping. `ListAgents` remains the bare membership answer underneath, because delivery resolves recipients on every publication and must not pay a process probe per agent.
 
-Wakeability is reported beside the registration record, never stored in it. Registration is durable and self-declared; wakeability is observed at the moment of asking and is false the instant a stream dies. Persisting it would recreate the failure this design removes — a record asserting that someone is listening, outliving the listener.
+It is reported beside the registration record, never stored in it. Registration is durable and self-declared; a held stream is observed at the moment of asking and is false the instant one dies. Persisting it would recreate the failure this design removes — a record asserting someone is listening, outliving the listener.
 
-Because `status` answers from outside the bus, it takes no operation lease and reads no protocol version. It stays answerable against a root that was never initialized, and during a cutover freeze, which is when an operator most needs it; asking must never create the thing being asked about. `list-agents` is a genuine roster read and is admitted to the bus like any other.
+Because `status` answers from outside the bus, it takes no operation lease and reads no protocol version, staying answerable against an uninitialized root and during a cutover freeze — which is when an operator most needs it; asking must never create the thing being asked about. `list-agents` is a genuine roster read and is admitted like any other.
 
-That tolerance has one edge, and it lands on the field that matters least. Wakeability reads from the control directory, which sits beside the versioned root and outlives its replacement. Registration stats the root, and replacement swaps the root's generation at the same path while the bus is still frozen — so inside that window an agent that is registered can report as not registered, indistinguishable from one that never joined. Answering during a freeze is worth that price, because the half the query exists for stays sound throughout.
+That tolerance has one edge, and it lands on the field that matters least. The guard reads from the control directory, which outlives a root replacement; registration stats the root, and replacement swaps its generation at the same path while the bus is still frozen — so inside that window a registered agent can report as not registered. Answering during a freeze is worth that price, because the half the query exists for stays sound throughout.
 
-All three are host-neutral. The adapter subtree is where host knowledge lives, and it reaches the bus through the same public client any other caller would use — the direction of the dependency is the whole point, and it is the inverse of the vendor `watch` flags this design replaced.
+All three are host-neutral. Host knowledge lives in the adapter subtree, which reaches the bus through the same public client any other caller would use — the inverse of the vendor `watch` flags this design replaced.
 
 ## First instance: Claude
 
@@ -112,7 +112,7 @@ Packaged as a plugin — `.claude-plugin/plugin.json` with `hooks/hooks.json` be
 | Resident component | A background hook running `watch`, marked `asyncRewake`. It blocks on the stream and exits 2 when a delivery arrives; its output reaches the model as a system reminder, and this wakes an idle session with no active turn. |
 | Turn-boundary trigger | A `Stop` hook, itself `asyncRewake`, so arming and residency are one hook: it backgrounds without blocking the turn, and every turn end re-arms. |
 | Lifecycle trigger | A `SessionStart` hook matching `startup`, `resume`, `clear`, `compact`, and `fork`. Arms the resident component and re-announces state. |
-| Teardown | A `SessionEnd` hook. The host awaits outstanding rewake hooks while tearing a session down, so a stream that ignores session end delays the host's own exit. |
+| Teardown | A `SessionEnd` hook, plus the stream watching the process that spawned it. The host awaits outstanding rewake hooks while tearing a session down, so a stream that ignores session end delays the host's own exit — but `SessionEnd` covers only the orderly exit, and the hook's timeout is deliberately a day, so the stream must also end itself when the session process is gone. |
 
 Three findings shape this:
 
@@ -122,27 +122,25 @@ Three findings shape this:
 
 **Wake and re-arm form a closed cycle.** A delivery wakes the session; the resulting turn ends; the turn-boundary trigger arms the next watcher. Session start, resume, and compaction enter the same cycle. Every path that loses a watcher has an event that restores it.
 
-Where a host offers a first-class push channel, the resident component can adopt it in place of the exit-code wake without disturbing the other two responsibilities. Treat it as a swappable accelerator, not a dependency: on this host that path is a research preview requiring a launch flag, an allowlist, and a specific authentication backend, so it cannot carry a production guarantee.
+Where a host offers a first-class push channel, the resident component can adopt it in place of the exit-code wake without disturbing the other three responsibilities. Treat it as a swappable accelerator, not a dependency: on this host that path is a research preview requiring a launch flag, an allowlist, and a specific authentication backend, so it cannot carry a production guarantee.
 
 ### Verified
 
-The capability the design stands on — that exiting 2 from a backgrounded hook starts a turn in a session sitting idle — has been observed, in isolation with no Conductor in the loop. An idle session woke, took a real turn, and read the hook's output; the `Stop` hook armed the successor at turn end; a second delivery woke it again. Three arms, two wakes, no human input. The run is recorded in [verified wake methods](../integrations/verified-wake-methods.md).
+The capability the design stands on — that exiting 2 from a backgrounded hook starts a turn in a session sitting idle — has been observed in isolation, with no Conductor in the loop. Three arms, two wakes, no human input, the successor armed by the `Stop` hook at each turn end. The run is recorded in [verified wake methods](../integrations/verified-wake-methods.md).
 
-That result also confirms the arrangement rather than just the mechanism. Because one process wakes at most once, and because outstanding hooks are drained at session teardown rather than at turn end, the resident component and the turn-boundary trigger collapse into a single `asyncRewake` `Stop` hook — the successor is armed by the event that ends the woken turn, not by the process that fired.
+That confirms the arrangement and not only the mechanism. Because one process wakes at most once, and outstanding hooks are drained at session teardown rather than at turn end, the resident component and the turn-boundary trigger collapse into a single `asyncRewake` `Stop` hook — the successor is armed by the event that ends the woken turn, not by the process that fired.
 
-A third finding was not anticipated and matters more than either: **a resident component may have a lifetime imposed by its host, and may lose it silently.** On this host the stream is killed at its hook's configured timeout, running no exit path, emitting no wake, while the session sits idle with no event due to re-arm it. A resident component is therefore not something an adapter starts and forgets; its lifetime is a property the adapter must know, extend where the host allows, and survive the loss of where it does not.
+A third finding was not anticipated and matters more than either: **a resident component may have a lifetime imposed by its host, and may lose it silently.** Here the stream is killed at its hook's configured timeout, running no exit path, emitting no wake, while the session sits idle with no event due to re-arm it. Its lifetime is therefore a property the adapter must know, extend where the host allows, and survive the loss of where it does not — which is what requirement 10 is for. The turn-boundary trigger is not a backstop for a flaky wake path; the wake path is reliable. It is the backstop for a resident component that can vanish without saying so.
 
-This is what requirement 10 is for, and the run turned it from prudence into necessity. The turn-boundary trigger is not a backstop for a flaky wake path — the wake path is reliable. It is the backstop for a resident component that can vanish without saying so.
+A fourth finding is its mirror: **a resident component can also outlive its host, and nothing the bus can see distinguishes that from a healthy one.** An orphan holds the guard, wakes into a stdout nobody reads, and acknowledges — so the identity reports as reachable while every publication to it is destroyed on arrival. One-shot invocations reach this most easily, exiting without firing teardown, and the day-long timeout above is what makes it expensive. Requirement 11 closes it; teardown events alone do not satisfy it.
 
 Still open: the consecutive-block cap on turn-boundary blocking and how the adapter reports work it cannot drain within it; whether the lifecycle trigger behaves the same on `resume`, `clear`, `compact`, and `fork` as it does on `startup`; and whether a wake can land in a session other than the one that armed it.
 
 ## Not yet built
 
-Installation places host configuration but does not enable it. `conductor adapter claude install <dir>` writes the plugin tree and puts the executable at the path its hooks name, with the same staging, hashing and atomic publication the skill gets — so the placement is no longer a manual copy that can be done half-right.
+Installation places host configuration but does not enable it. `conductor adapter claude install <dir>` writes the plugin tree and puts the executable at the path its hooks name, with the same staging, hashing and atomic publication the skill gets, so the placement is no longer a manual copy that can be done half-right.
 
-Enabling it is still a host command the user runs. That boundary is deliberate rather than unfinished work: this host discovers plugins through private state of its own — an install registry and a marketplace index, both undocumented and both versioned on the host's schedule — and writing into them would make Conductor's correctness depend on a format nobody promised to keep. The payload therefore ships a marketplace manifest so the remaining step is one documented command against a local directory, and Conductor asserts nothing about what the host does with it.
-
-The same reasoning rules out writing the hook registrations into the user's settings file. It would work, and it would mean Conductor editing a hand-maintained file it does not own, with no way to merge safely or to know what it overwrote.
+Enabling stays a host command the user runs — deliberate, not unfinished. This host discovers plugins through private state of its own, an install registry and a marketplace index, both undocumented and versioned on the host's schedule; writing into them would make Conductor's correctness depend on a format nobody promised to keep. The payload ships a marketplace manifest so the remaining step is one documented command against a local directory. The same reasoning rules out writing hook registrations into the user's settings file: it would work, and it would mean Conductor editing a hand-maintained file it does not own, with no way to merge safely or to know what it overwrote.
 
 ## Consequences
 

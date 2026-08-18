@@ -54,7 +54,7 @@ type Event struct {
 }
 
 type Snapshot struct {
-	Agents []Agent             `json:"agents"`
+	Agents []RosterEntry       `json:"agents"`
 	Topics map[string][]Record `json:"topics"`
 	heads  map[string]int64
 }

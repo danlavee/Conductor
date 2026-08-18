@@ -4,7 +4,7 @@ Status: not yet built. Codex uses the [interim fallback](README.md#interim-fallb
 
 ## What the adapter must own
 
-The same three responsibilities as every adapter: a resident component holding the delivery stream, a turn-boundary trigger, and a lifecycle trigger. Two host facilities are the likely realizations, both previously exercised:
+The same four responsibilities as every adapter: a resident component holding the delivery stream, a turn-boundary trigger, a lifecycle trigger, and teardown. Two host facilities are the likely realizations, both previously exercised:
 
 - A managed background terminal that reports completion into the attended conversation. This was the basis of the old one-shot watch and is a working wake, but as used it required the agent to rearm after every delivery.
 - A task-attached heartbeat automation, which Codex Desktop already provides and which can start a new turn on a schedule. The old `--codex-desktop` mode drove one nonblocking check per minute from it. Its wake is proven; its latency is bounded by the heartbeat interval.

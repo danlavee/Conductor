@@ -9,26 +9,6 @@ import (
 	conductor "github.com/danlavee/Conductor"
 )
 
-func extractMode(args []string) ([]string, string, error) {
-	rest := make([]string, 0, len(args))
-	mode := ""
-	for _, argument := range args {
-		value, found := strings.CutPrefix(argument, "--mode=")
-		if !found {
-			rest = append(rest, argument)
-			continue
-		}
-		if mode != "" {
-			return nil, "", errors.New("--mode may only be given once")
-		}
-		if value == "" {
-			return nil, "", errors.New("--mode requires a value")
-		}
-		mode = value
-	}
-	return rest, mode, nil
-}
-
 func parseRecordIndex(raw string) (int64, error) {
 	index, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || index <= 0 {
@@ -137,7 +117,7 @@ func parseGet(args []string) (conductor.ReadRequest, error) {
 }
 
 func usageError() error {
-	return errors.New("usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] [--mode=summary|content] | conductor <agent> status")
+	return errors.New("usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> put (<text> | --file=<path>) | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> edit <index> (<text> | --file=<path>) | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> redact <group/topic> (<index> | --start=N --end=M) | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status")
 }
 
 func installUsageError() error {

@@ -10,24 +10,12 @@ const (
 	DeliveryContent DeliveryMode = "content"
 )
 
-// ParseDeliveryMode validates a --mode flag value. Empty defaults to content.
-func ParseDeliveryMode(value string) (DeliveryMode, error) {
-	switch DeliveryMode(value) {
-	case "":
-		return DeliveryContent, nil
-	case DeliverySummary, DeliveryContent:
-		return DeliveryMode(value), nil
-	default:
-		return "", fmt.Errorf("unknown watch mode %q; use summary or content", value)
-	}
-}
-
 // Delivery is a summary with its resolved content in content mode.
 type Delivery struct {
-	Summary Summary      `json:"summary"`
-	Mode    DeliveryMode `json:"mode"`
-	Roster  []Agent      `json:"roster,omitempty"`
-	Delta   *ReadResult  `json:"delta,omitempty"`
+	Summary Summary       `json:"summary"`
+	Mode    DeliveryMode  `json:"mode"`
+	Roster  []RosterEntry `json:"roster,omitempty"`
+	Delta   *ReadResult   `json:"delta,omitempty"`
 	// coverageKnown distinguishes an intentionally empty coverage set produced
 	// by ResolveBatch from a delivery constructed outside batch resolution.
 	coveredSummaries []Summary
@@ -53,7 +41,7 @@ func (c *Client) resolveDeliveryWithLimit(summary Summary, mode DeliveryMode, li
 	}
 	switch summary.Type {
 	case "join", "leave":
-		roster, err := c.ListAgents()
+		roster, err := c.Roster()
 		if err != nil {
 			return Delivery{}, err
 		}
@@ -129,6 +117,10 @@ func (c *Client) ResolveBatch(summaries []Summary, mode DeliveryMode) (BatchDeli
 		return BatchDelivery{}, err
 	}
 	defer releaseOperation()
+	cursor, err := c.loadCursor(c.Agent)
+	if err != nil {
+		return BatchDelivery{}, err
+	}
 	groups := groupSummariesByTopic(summaries)
 	budget := DefaultReadLimit
 	batch := BatchDelivery{Deliveries: make([]Delivery, 0, len(groups))}
@@ -144,7 +136,7 @@ func (c *Client) ResolveBatch(summaries []Summary, mode DeliveryMode) (BatchDeli
 		if err != nil {
 			return BatchDelivery{}, err
 		}
-		delivery, uncovered := finalizeGroupDelivery(delivery, group, c.Agent)
+		delivery, uncovered := finalizeGroupDelivery(delivery, group, c.Agent, cursor)
 		batch.Deliveries = append(batch.Deliveries, delivery)
 		batch.Remaining += len(uncovered)
 		budget -= deliveryRecordCount(delivery)
@@ -162,8 +154,8 @@ func (c *Client) ResolveBatch(summaries []Summary, mode DeliveryMode) (BatchDeli
 // highest -- so AcknowledgeDelivery can never mark a sequence read whose
 // content wasn't actually included, and records the covered set on the
 // delivery for AcknowledgeBatch. It returns the summaries left uncovered.
-func finalizeGroupDelivery(delivery Delivery, group []Summary, reader string) (Delivery, []Summary) {
-	covered, uncovered := splitCoveredSummaries(group, delivery, reader)
+func finalizeGroupDelivery(delivery Delivery, group []Summary, reader string, cursor Cursor) (Delivery, []Summary) {
+	covered, uncovered := splitCoveredSummaries(group, delivery, reader, cursor)
 	if delivery.Delta != nil && len(covered) > 0 {
 		delivery.Summary = covered[len(covered)-1]
 	}
@@ -268,27 +260,32 @@ func highestSequenceSummary(group []Summary) Summary {
 	return highest
 }
 
-// splitCoveredSummaries partitions group by whether Get actually delivered
-// their content. A join or leave has no sequence scope, so the whole group
-// is always covered. An update is covered only up through the delta's last
-// included publication -- Get's own cap may have stopped short of the
-// group's highest sequence. The one exception is the summary ResolveBatch
-// actually requested (delivery.Summary, the group's highest) when its own
-// publisher is the one now reading it: Get never reports a self-published
-// write as unread, so its delta legitimately comes back empty with
-// Remaining zero, and without this exception that summary could never be
-// acknowledged and would resurface on every later watch. A summary published
-// by someone else stays governed strictly by maxSequence, so a reader who
-// drained the same content out-of-band (e.g. a direct Get) before this batch
-// resolved still leaves it uncovered rather than silently swallowed.
-func splitCoveredSummaries(group []Summary, delivery Delivery, reader string) (covered, uncovered []Summary) {
+// splitCoveredSummaries partitions group by whether the reader now holds
+// their content. A join or leave has no sequence scope, so the whole group is
+// always covered. An update is covered up through the delta's last included
+// publication -- Get's own cap may have stopped short of the group's highest
+// sequence -- and equally by the reader's own cursor, which is already past
+// anything read out of band or acknowledged by an earlier snapshot.
+//
+// A summary whose content the reader already has must be covered, or it can
+// never be acknowledged: its delta comes back empty, empty means maxSequence
+// zero, and zero covers nothing, so the same signal is redelivered on every
+// watch forever. Under an adapter that turns a delivery into a turn, that is
+// an endless wake loop. Coverage here is not swallowing anything -- the
+// content was read, and only the spent signal is being drained.
+//
+// The self-published case is the same rule reached differently: Get never
+// reports an agent its own write as unread, so the delta is legitimately
+// empty with Remaining zero.
+func splitCoveredSummaries(group []Summary, delivery Delivery, reader string, cursor Cursor) (covered, uncovered []Summary) {
 	if delivery.Delta == nil {
 		return group, nil
 	}
+	alreadyRead := cursor.Topics[recordCursorSlot(delivery.Delta.Topic, delivery.Delta.record)]
 	selfPublishedComplete := delivery.Delta.Remaining == 0 && delivery.Summary.Agent == reader
 	for _, summary := range group {
 		requested := selfPublishedComplete && summary.Sequence == delivery.Summary.Sequence
-		if requested || summary.Sequence <= delivery.Delta.maxSequence {
+		if requested || summary.Sequence <= delivery.Delta.maxSequence || summary.Sequence <= alreadyRead {
 			covered = append(covered, summary)
 		} else {
 			uncovered = append(uncovered, summary)

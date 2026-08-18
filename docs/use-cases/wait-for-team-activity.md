@@ -10,14 +10,14 @@ The agent should receive relevant team activity without checking for it, and wit
 
 ## What happens
 
-1. The host's adapter holds one delivery stream for the joined identity. It established that stream when the session started and restores it after anything that interrupts it.
+1. One delivery stream is held for the joined identity, established when the session started and re-established after anything that interrupts it. Where the host has an adapter, the adapter holds it and the agent does nothing; where none has landed yet, the agent holds it itself with `watch --once` and starts it again after each delivery.
 2. An unread notification is delivered immediately; otherwise the stream waits for the next one.
 3. One delivery identifies what happened and where, resolving the pending backlog up to the shared cap and reporting the surplus in `remaining`.
-4. The adapter delivers it through the host's activation input and completes delivery only after the host accepts it.
-5. The agent reads the named resource for shared work, or refreshes the team list for a join or leave.
-6. The adapter continues the stream. The agent does nothing to resume it.
+4. It reaches the agent through the host's activation input, and delivery completes only after the host accepts it.
+5. The agent acts on the delivered content, or refreshes the team list for a join or leave.
+6. The stream continues.
 
-A notification points to the published work; it does not contain that work unless the adapter is configured to resolve content inline.
+A delivery carries the resolved content, not just a pointer to it: the publications behind a notification are read before the recipient is woken.
 
 Delivery can restore a team notification that was recorded but not delivered. It cannot recover an unfinished publication — a read or write must encounter that work first.
 
@@ -25,4 +25,4 @@ An adapter may deliberately discard notifications through a known publication nu
 
 ## Outcome
 
-Every agent follows the same skill, and the environment owns waiting in every case.
+Every agent follows the same skill. Where the host has an adapter, the environment owns waiting entirely; where none has landed, the agent owns it explicitly, and that difference is how far the work has got rather than a different kind of host.

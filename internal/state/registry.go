@@ -199,9 +199,12 @@ type RosterEntry struct {
 }
 
 // Roster lists the registry the way an agent choosing whom to address needs to
-// see it -- not who signed up, but who would answer. ListAgents remains the
-// bare membership answer because delivery resolves recipients on every
-// publication and must not pay for a process probe per agent to do it.
+// see it -- not who signed up, but who would answer. Every roster an agent is
+// shown goes through here: list-agents, the join snapshot, and the roster
+// carried by a join or leave delivery. Those are once per event.
+//
+// ListAgents remains the bare membership answer for recipient resolution,
+// which runs on every publication and must not pay a process probe per agent.
 //
 // One unreadable guard record fails the whole listing rather than marking that
 // agent not wakeable. Reporting a corrupt record as a quiet false is the one
@@ -238,7 +241,7 @@ func (c *Client) FullSnapshot() (Snapshot, error) {
 	if _, err := c.requireAgent(); err != nil {
 		return Snapshot{}, err
 	}
-	agents, err := c.ListAgents()
+	agents, err := c.Roster()
 	if err != nil {
 		return Snapshot{}, err
 	}
