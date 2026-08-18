@@ -67,24 +67,29 @@ func (c *Client) resolveDeliveryWithLimit(summary Summary, mode DeliveryMode, li
 // AcknowledgeDelivery advances both the summary and content cursors after the
 // downstream consumer accepts the delivery.
 func (c *Client) AcknowledgeDelivery(delivery Delivery) error {
-	if err := c.AcknowledgeSummary(delivery.Summary); err != nil {
+	agent, offset, err := c.prepareSummaryAcknowledgment(delivery.Summary)
+	if err != nil {
 		return err
 	}
+
+	slot := ""
+	var sequence int64
 	if delivery.Delta != nil {
-		return c.AcknowledgeRead(*delivery.Delta)
-	}
-	if delivery.Mode == DeliverySummary && delivery.Summary.Type == "update" {
-		agent, err := c.requireAgent()
-		if err != nil {
-			return err
+		if delivery.Delta.Mode == "delta" && delivery.Delta.maxSequence > 0 {
+			slot = recordCursorSlot(delivery.Delta.Topic, delivery.Delta.record)
+			sequence = delivery.Delta.maxSequence
 		}
-		return c.updateCursor(agent, func(cursor *Cursor) {
-			if delivery.Summary.Sequence > cursor.Topics[delivery.Summary.Topic] {
-				cursor.Topics[delivery.Summary.Topic] = delivery.Summary.Sequence
-			}
-		})
+	} else if delivery.Mode == DeliverySummary && delivery.Summary.Type == "update" {
+		slot = delivery.Summary.Topic
+		sequence = delivery.Summary.Sequence
 	}
-	return nil
+
+	return c.updateCursor(agent, func(cursor *Cursor) {
+		applySummaryAcknowledgment(cursor, delivery.Summary, offset)
+		if sequence > cursor.Topics[slot] {
+			cursor.Topics[slot] = sequence
+		}
+	})
 }
 
 // BatchDelivery is every delivery one watch call resolved, capped at
