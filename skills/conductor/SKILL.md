@@ -125,7 +125,7 @@ Inside a transaction, `put`, `edit`, and `strike` only stage changes. `commit` p
 
 ## Read
 
-- `conductor <agent> list-agents` returns the current roster.
+- `conductor <agent> list-agents` returns the current roster. Each entry carries `wakeable`: true means a live stream currently holds that identity, so a publication would reach it. Publishing to an agent that is not wakeable still records the publication — it is never lost — but nothing will start a turn to read it until that agent arms a stream again. Prefer a wakeable agent when the work needs an answer, and say so plainly when you address one that is not.
 - `conductor <agent> get <topic-group>/<topic> --full` returns current records without moving a cursor.
 - `conductor <agent> get <topic-group>/<topic> --delta [--limit=N]` returns unread publications and advances the read cursor after successful output.
 - `conductor <agent> get <topic-group>/<topic> [<index>] [--start=N] [--end=N] [--limit=N]` returns an immediate inclusive range of current record indexes without moving a cursor. Omitted start means zero; omitted end means the current end.

@@ -11,7 +11,11 @@ import (
 
 func runAgentCommand(agent, command string, rest []string) error {
 	open := conductor.New
-	if command == "watch" {
+	// Neither may bring a protocol root into being as a side effect of being
+	// asked: watch attaches to a bus that must already exist, and status
+	// answers about one that may never have. Written as a condition rather
+	// than a switch on command, which skillcheck reads as a dispatch point.
+	if command == "watch" || command == "status" {
 		open = conductor.Open
 	}
 	client, err := open(os.Getenv("CONDUCTOR_HOME"), agent)
@@ -47,11 +51,11 @@ func runAgentCommand(agent, command string, rest []string) error {
 		if len(rest) != 0 {
 			return usageError()
 		}
-		agents, err := client.ListAgents()
+		roster, err := client.Roster()
 		if err != nil {
 			return err
 		}
-		return conductor.WriteJSON(os.Stdout, agents)
+		return conductor.WriteJSON(os.Stdout, roster)
 	case "subscribe":
 		if len(rest) != 1 {
 			return usageError()

@@ -93,7 +93,15 @@ Requirement 10 is what makes the resident component and the turn-boundary trigge
 
 `watch` is the stream. `status` is the wakeability query: it reports whether an identity is on the roster and whether a live process currently holds its ownership guard, derived from the guard's owner record and the operating system's own view of that process. It never acquires the guard, because a status check that could momentarily block a live stream would be a way to cause the failure it exists to detect; and it never trusts a claim to be watching, because that claim is exactly what goes stale when a stream dies silently.
 
-Both are host-neutral. The adapter subtree is where host knowledge lives, and it reaches the bus through the same public client any other caller would use — the direction of the dependency is the whole point, and it is the inverse of the vendor `watch` flags this design replaced.
+`list-agents` asks the same question of everyone at once. Each entry carries `wakeable`, and the pid of the stream when there is one, so choosing whom to address is a matter of reading the roster rather than publishing and hoping. `ListAgents` remains the bare membership answer underneath it, because delivery resolves recipients on every publication and must not pay for a process probe per agent to do it.
+
+Wakeability is reported beside the registration record, never stored in it. Registration is durable and self-declared; wakeability is observed at the moment of asking and is false the instant a stream dies. Persisting it would recreate the failure this design removes — a record asserting that someone is listening, outliving the listener.
+
+Because `status` answers from outside the bus, it takes no operation lease and reads no protocol version. It stays answerable against a root that was never initialized, and during a cutover freeze, which is when an operator most needs it; asking must never create the thing being asked about. `list-agents` is a genuine roster read and is admitted to the bus like any other.
+
+That tolerance has one edge, and it lands on the field that matters least. Wakeability reads from the control directory, which sits beside the versioned root and outlives its replacement. Registration stats the root, and replacement swaps the root's generation at the same path while the bus is still frozen — so inside that window an agent that is registered can report as not registered, indistinguishable from one that never joined. Answering during a freeze is worth that price, because the half the query exists for stays sound throughout.
+
+All three are host-neutral. The adapter subtree is where host knowledge lives, and it reaches the bus through the same public client any other caller would use — the direction of the dependency is the whole point, and it is the inverse of the vendor `watch` flags this design replaced.
 
 ## First instance: Claude
 
@@ -129,8 +137,6 @@ This is what requirement 10 is for, and the run turned it from prudence into nec
 Still open: the consecutive-block cap on turn-boundary blocking and how the adapter reports work it cannot drain within it; whether the lifecycle trigger behaves the same on `resume`, `clear`, `compact`, and `fork` as it does on `startup`; and whether a wake can land in a session other than the one that armed it.
 
 ## Not yet built
-
-Requirement 3 — the roster reporting wakeability — is not implemented. `status` answers for one identity; `list-agents` still reports who registered, not who would respond. Closing the gap means resolving each roster entry's guard at listing time, and deciding whether wakeability belongs on the wire type or beside it.
 
 Installation does not yet register host configuration. `conductor install` places the skill and the executable; putting the plugin where the host loads it, and the executable inside the plugin, is a documented manual step in [the adapter's README](../../adapters/claude-code/README.md).
 

@@ -187,6 +187,44 @@ func (c *Client) ListAgents() ([]Agent, error) {
 	return agents, nil
 }
 
+// RosterEntry is a registered agent together with whether a signal addressed
+// to it would reach a turn right now. Wakeability is not a field on the
+// persisted Agent record and must not become one: registration is durable and
+// self-declared, while wakeability is observed at the moment of asking and
+// goes stale the instant a stream dies.
+type RosterEntry struct {
+	Agent
+	Wakeable bool `json:"wakeable"`
+	PID      int  `json:"pid,omitempty"`
+}
+
+// Roster lists the registry the way an agent choosing whom to address needs to
+// see it -- not who signed up, but who would answer. ListAgents remains the
+// bare membership answer because delivery resolves recipients on every
+// publication and must not pay for a process probe per agent to do it.
+//
+// One unreadable guard record fails the whole listing rather than marking that
+// agent not wakeable. Reporting a corrupt record as a quiet false is the one
+// answer that must never be invented here: it is indistinguishable from the
+// truth, and it is the exact claim -- "nobody is listening" -- that would send
+// a caller past a teammate who is. Failing loud costs visibility into the
+// other entries, which is recoverable; a fabricated false is not.
+func (c *Client) Roster() ([]RosterEntry, error) {
+	agents, err := c.ListAgents()
+	if err != nil {
+		return nil, err
+	}
+	roster := make([]RosterEntry, 0, len(agents))
+	for _, agent := range agents {
+		pid, err := c.liveWatchOwner(agent.Name)
+		if err != nil {
+			return nil, err
+		}
+		roster = append(roster, RosterEntry{Agent: agent, Wakeable: pid > 0, PID: pid})
+	}
+	return roster, nil
+}
+
 // FullSnapshot returns all agents and every current record.
 func (c *Client) FullSnapshot() (Snapshot, error) {
 	releaseOperation, err := c.beginOperation()
