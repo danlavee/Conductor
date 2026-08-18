@@ -24,8 +24,8 @@ func TestResolveIdentityReadsProjectBinding(t *testing.T) {
 	if err != nil || agent != "planner" {
 		t.Fatalf("bound project = %q, %v", agent, err)
 	}
-	if _, err := ResolveIdentity(" "); err == nil {
-		t.Fatal("a missing project directory is a misconfiguration, not silence")
+	if agent, err := ResolveIdentity(" "); err != nil || agent != "" {
+		t.Fatalf("no project directory = %q, %v; want silence, since whether the host owed one is the caller's question", agent, err)
 	}
 }
 

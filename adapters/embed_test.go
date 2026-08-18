@@ -58,9 +58,19 @@ func TestEmbeddedHooksNameTheInstalledExecutable(t *testing.T) {
 				// Args present means the host spawns the command directly
 				// rather than through a shell, which is the property that
 				// lets one registration cover every platform.
-				if len(hook.Args) < 3 || hook.Args[0] != "adapter" || hook.Args[1] != "claude" {
+				if len(hook.Args) != 4 || hook.Args[0] != "adapter" || hook.Args[1] != "claude" {
 					t.Errorf("%s hook args = %v", event, hook.Args)
 					continue
+				}
+				// The session is a substituted argument because it is the only
+				// way a hook can learn one: the host exports
+				// CLAUDE_CODE_SESSION_ID to processes the model starts, and
+				// substitutes ${CLAUDE_SESSION_ID} into a hook's arguments. A
+				// registration that drops this makes every session on the
+				// machine indistinguishable, and one session's teardown then
+				// ends another's stream -- silently, which is how it shipped.
+				if hook.Args[3] != "--session="+claude.SessionPlaceholder {
+					t.Errorf("%s hook does not ask the host which session it is in: %v", event, hook.Args)
 				}
 				commands[hook.Args[2]] = true
 			}

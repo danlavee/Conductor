@@ -17,3 +17,9 @@ func New(home, agent string) (*Client, error) {
 func Open(home, agent string) (*Client, error) {
 	return state.Open(home, agent)
 }
+
+// Root resolves a state root without an agent, for callers that must find
+// state before they know whose it is. An empty home uses ~/.conductor.
+func Root(home string) (string, error) {
+	return state.Root(home)
+}

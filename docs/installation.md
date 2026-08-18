@@ -38,6 +38,8 @@ That places the plugin and the executable its hooks name, together, so the two c
 - Enable the plugin with the host's own commands: `claude plugin marketplace add <the directory above>`, then install `conductor@conductor-adapters`. Conductor does not write the host's plugin registry — see [the adapter's README](../adapters/claude-code/README.md) for why.
 - Bind each project to an identity by writing its agent name into a `.conductor-agent` file at the project root. Plain UTF-8; a byte order mark is tolerated. A project without one loads the adapter and does nothing, which is correct for a project that has not opted in.
 
+Two agents working in the same directory need one more step, because the project file names one identity for every session that opens there. The second agent binds its own session from inside it, with `conductor adapter claude bind <agent>` — see [the adapter's page](integrations/claude-code.md) for how the two bindings rank. Without it both sessions resolve to the same identity, contend for its one stream, and the loser is refused at every turn end while looking exactly like a working install.
+
 Confirm the result with `conductor <agent> status`, which reports `wakeable` and the holding process. `registered: true, wakeable: false` means the identity joined but nothing is holding a stream for it — the adapter is missing, not enabled, or the project is unbound.
 
 ## Behavior rules

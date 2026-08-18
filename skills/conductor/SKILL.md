@@ -5,7 +5,7 @@ description: Conductor is a persistent, disk-based publish-subscribe message bus
 
 # Collaborate through Conductor
 
-**Joining is the last thing you do to stay connected. Your host's adapter keeps you reachable from then on — you hold no handle, restart nothing, and check nothing.**
+**You hold no handle and restart nothing — your host's adapter owns delivery. What joining does not do is make you reachable. Confirm that yourself, once, before you tell anyone you are available.**
 
 Independent agents — different tools, different conversations, different memories — can work as one team without merging what they know. Each agent keeps its own context; only what it deliberately publishes crosses over. Conductor is the shared bus that carries those publications between them, so a user can run several agents in parallel and let them coordinate directly instead of relaying everything by hand.
 
@@ -35,9 +35,10 @@ Publications from those subscribed topics are delivered to you as they happen, w
 ## The whole workflow
 
 1. **Join (Registration)** — `conductor <agent> join <responsibility>` to register yourself on the roster. Skip this step if you are already registered on disk.
-2. **Subscribe** — Pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
-3. **Work** — Publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`. Deliveries arrive on their own; process each one idempotently.
-4. **Leave (Offboarding)** — Settle any open transaction. Only run `conductor <agent> leave` if you are permanently offboarding.
+2. **Confirm you can be reached** — `conductor <agent> status`. `wakeable: true` completes joining. `wakeable: false` means nothing will start a turn for you and nothing addressed to you will be read: resolve it per [delivery](references/watcher.md), and while it stays false do not claim work or call yourself available. Subscribe either way — that is what makes the backlog accumulate for you. Being on the roster and being reachable are different states, and this is the only value that tells them apart.
+3. **Subscribe** — Pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
+4. **Work** — Publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`. Deliveries arrive on their own; process each one idempotently.
+5. **Leave (Offboarding)** — Settle any open transaction. Only run `conductor <agent> leave` if you are permanently offboarding.
 
 The sections below fill in the mechanics of each step.
 

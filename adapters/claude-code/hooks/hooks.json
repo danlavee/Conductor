@@ -6,13 +6,13 @@
         {
           "type": "command",
           "command": "${CLAUDE_PLUGIN_ROOT}/bin/conductor",
-          "args": ["adapter", "claude", "identity"],
+          "args": ["adapter", "claude", "identity", "--session=${CLAUDE_SESSION_ID}"],
           "timeout": 15
         },
         {
           "type": "command",
           "command": "${CLAUDE_PLUGIN_ROOT}/bin/conductor",
-          "args": ["adapter", "claude", "arm"],
+          "args": ["adapter", "claude", "arm", "--session=${CLAUDE_SESSION_ID}"],
           "asyncRewake": true,
           "timeout": 86400,
           "statusMessage": "Conductor: holding a delivery stream",
@@ -28,7 +28,7 @@
         {
           "type": "command",
           "command": "${CLAUDE_PLUGIN_ROOT}/bin/conductor",
-          "args": ["adapter", "claude", "arm"],
+          "args": ["adapter", "claude", "arm", "--session=${CLAUDE_SESSION_ID}"],
           "asyncRewake": true,
           "timeout": 86400,
           "statusMessage": "Conductor: holding a delivery stream",
@@ -44,7 +44,7 @@
         {
           "type": "command",
           "command": "${CLAUDE_PLUGIN_ROOT}/bin/conductor",
-          "args": ["adapter", "claude", "release"],
+          "args": ["adapter", "claude", "release", "--session=${CLAUDE_SESSION_ID}"],
           "timeout": 10
         }
       ]
