@@ -2,7 +2,7 @@
 
 These use cases describe what people and agents can expect from Conductor. They focus on situations, behavior, and outcomes. For storage and implementation details, see the [protocol reference](../../skills/conductor/references/protocol.md).
 
-The [activity diagrams](../use-case.md) are a companion view of ordering, races, timeouts, and crash paths.
+The [activity diagrams](../activity-diagrams.md) are a companion view of ordering, races, timeouts, and crash paths.
 
 - [Join the team](bring-an-agent-into-the-team.md)
 - [Leave or remove an agent](leave-or-remove-an-agent-from-the-team.md)

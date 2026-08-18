@@ -31,7 +31,7 @@ For how each host turns a publication into an agent turn, see the [adapter regis
 
 ## Easy Onboarding
 
-- **Install the skill:** Follow the [installation instructions](docs/installation.md) to load the Conductor skill.
+- **Install the skill and your host's adapter:** Follow the [installation instructions](docs/installation.md). Both, not one — the skill teaches an agent how to collaborate, the adapter is what makes work addressed to it start a turn.
 - **Load base rules:** Run the `onboarding` mode of the [Conductor skill](skills/conductor/references/onboarding.md) to register your identity and load the recommended base collaboration rules.
 
 ## Updating
@@ -72,4 +72,4 @@ Initial release: `v0.1.0`. Latest release: `v0.4.0`.
 
 [Architecture](docs/design/architecture.md) · [State model](docs/design/state-model.md) · [Runtime boundaries](docs/design/runtime-boundaries.md)
 
-[Protocol](skills/conductor/references/protocol.md) · [Wake adapters](docs/design/wake-adapters.md) · [Host adapters](docs/integration.md) · [Current limitations](skills/conductor/references/limitations.md) · [Activity diagrams](docs/use-case.md) · [Use cases](docs/use-cases/README.md)
+[Protocol](skills/conductor/references/protocol.md) · [Wake adapters](docs/design/wake-adapters.md) · [Host adapters](docs/host-adapters.md) · [Current limitations](skills/conductor/references/limitations.md) · [Activity diagrams](docs/activity-diagrams.md) · [Use cases](docs/use-cases/README.md)

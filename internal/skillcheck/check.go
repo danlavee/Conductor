@@ -26,7 +26,7 @@ var requiredRepositoryFiles = []string{
 	"cmd/conductor/main.go",
 	"cmd/skillcheck/main.go",
 	"internal/skillcheck/check.go",
-	"docs/use-case.md",
+	"docs/activity-diagrams.md",
 	"docs/use-cases/README.md",
 }
 
