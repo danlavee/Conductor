@@ -1,13 +1,24 @@
-# Codex integration
+# Codex adapter
 
-Codex uses Conductor's generic one-shot watch:
+Status: not yet built. Codex uses the [interim fallback](README.md#interim-fallback) until its adapter lands.
 
-```text
-conductor <agent> watch
-```
+## What the adapter must own
 
-Start it through Codex's managed background-terminal tool, not directly, and retain its handle. The command blocks for one unread publication, writes the resolved delivery to stdout, acknowledges successful output, and exits. When Codex reports that completion, process stdout idempotently and immediately rearm the watch.
+The same three responsibilities as every adapter: a resident component holding the delivery stream, a turn-boundary trigger, and a lifecycle trigger. Two host facilities are the likely realizations, both previously exercised:
 
-Keep exactly one watch active for the identity and stop it only through the retained handle. No Codex process, thread identifier, sandbox setting, app-server, or session-resume launcher is involved.
+- A managed background terminal that reports completion into the attended conversation. This was the basis of the old one-shot watch and is a working wake, but as used it required the agent to rearm after every delivery.
+- A task-attached heartbeat automation, which Codex Desktop already provides and which can start a new turn on a schedule. The old `--codex-desktop` mode drove one nonblocking check per minute from it. Its wake is proven; its latency is bounded by the heartbeat interval.
 
-This mechanism requires an attended Codex host that reports managed terminal completion to the conversation. It does not start a closed or fully headless Codex process.
+Neither is yet wired as a resident component that restores itself without the agent's participation, which is what the adapter has to add.
+
+## Established for this host
+
+Desktop wake requires the heartbeat. These were tried and failed to start a Desktop turn:
+
+| Method | Observed result | Why it is not a wake |
+| --- | --- | --- |
+| A blocking watch in a background tool call | The process received a publication and produced output, but its completion did not start a new Desktop turn. | Background-process completion is not a Desktop activation primitive. |
+| `send_message_to_thread` | The input became visible in the conversation but did not consistently start a model turn. | Message visibility does not prove turn activation. |
+| Separate app-server bridge | The external process did not bind itself to or wake the already-open Desktop task. | A separately started server does not own the live Desktop task. |
+
+Permanently leaving Conductor from a Desktop task also requires deleting that task's heartbeat automation.

@@ -2,28 +2,27 @@
 
 ## Situation
 
-An agent has no useful work until another agent publishes something, joins, or leaves. Its environment may or may not deliver Conductor signals to it.
+An agent has no useful work until another agent publishes something, joins, or leaves.
 
 ## Goal
 
-The agent should receive one relevant piece of team activity without continuously checking for changes.
+The agent should receive relevant team activity without checking for it, and without holding anything open itself.
 
 ## What happens
 
-1. One wake owner keeps a wait active:
-   - If the environment has an activation input, its [harness adapter](../integration.md) owns the wait.
-   - Otherwise, the agent owns the wait, running it in the background when completion can be reported or blocking when idle.
-2. By default, an unread notification returns immediately; otherwise, the request waits for the next one.
-3. An integration may deliberately ignore notifications through a known publication number and wait only for something newer. Older notifications, including any that arrive late, then remain skipped.
-4. One wait returns one notification identifying what happened and where.
-5. Harness-owned wake delivers it through the environment's activation input and completes delivery only after the environment accepts it. Agent-owned wake returns it directly.
-6. The agent reads the named resource for shared work or refreshes the team list for a join or leave.
-7. After the activity is handled, the wake owner waits again.
+1. The host's adapter holds one delivery stream for the joined identity. It established that stream when the session started and restores it after anything that interrupts it.
+2. An unread notification is delivered immediately; otherwise the stream waits for the next one.
+3. One delivery identifies what happened and where, resolving the pending backlog up to the shared cap and reporting the surplus in `remaining`.
+4. The adapter delivers it through the host's activation input and completes delivery only after the host accepts it.
+5. The agent reads the named resource for shared work, or refreshes the team list for a join or leave.
+6. The adapter continues the stream. The agent does nothing to resume it.
 
-A notification points to the published work; it does not contain that work. Skipping older notifications is an explicit discard choice, so the normal wait should be used when every notification matters.
+A notification points to the published work; it does not contain that work unless the adapter is configured to resolve content inline.
 
-Waiting can restore a team notification that was recorded but not delivered, but it cannot recover an unfinished publication; a read or write must encounter that work first.
+Delivery can restore a team notification that was recorded but not delivered. It cannot recover an unfinished publication — a read or write must encounter that work first.
+
+An adapter may deliberately discard notifications through a known publication number and wait only for something newer. Older notifications, including any that arrive late, then stay skipped. This is an explicit choice and is not the normal path.
 
 ## Outcome
 
-Every agent follows the same skill while either the agent or its environment owns waiting for the next applicable team activity.
+Every agent follows the same skill, and the environment owns waiting in every case.

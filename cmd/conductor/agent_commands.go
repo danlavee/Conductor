@@ -207,7 +207,16 @@ func runAgentCommand(agent, command string, rest []string) error {
 		}
 		return nil
 	case "watch":
-		return runWatchCommand(client, agent, rest)
+		return runWatchCommand(client, rest)
+	case "status":
+		if len(rest) != 0 {
+			return usageError()
+		}
+		status, err := client.WatchStatus()
+		if err != nil {
+			return err
+		}
+		return conductor.WriteJSON(os.Stdout, status)
 	default:
 		return usageError()
 	}

@@ -15,7 +15,7 @@ This is a conversation you carry out, not a CLI command. When asked to update or
    2. Run `conductor cutover freeze <absolute-active-root> --id=<id> --release=<release>`. This closes operation admission, drains in-flight calls, refuses active legacy watchers, and leaves writes blocked.
    3. If the protocol changes, run `conductor migrate <absolute-active-root> <absolute-staging-root>` and validate the staging root with real reads. Keep the old root as the rollback snapshot.
    4. Replace the root generation at the same logical path, binary, and skill while still frozen. Then run `conductor cutover replace <absolute-active-root> --id=<id>`.
-   5. Let every old watcher fire its one no-delta `conductor-replaced` activation and exit. Reload the installed skill and binary, and re-arm the replacement watchers.
+   5. Let every old watcher fire its one no-delta `conductor-replaced` activation and exit. Reload the installed skill and binary; each host's adapter restores its own delivery stream against the new generation.
    6. Run `conductor cutover activate <absolute-active-root> --id=<id>`, then verify one fresh publication, delivery, and acknowledgment.
    Before the root is replaced, `conductor cutover abort <absolute-active-root> --id=<id>` safely returns to active admission. After replacement, never abort; resume the same `replace`/`activate` cutover identity. A timeout never unfreezes the system.
 6. **Sync** the repo and installed skill copies afterward.

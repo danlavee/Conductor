@@ -11,6 +11,7 @@ type Publication = protocol.Publication
 type Summary = protocol.Summary
 type ReplacementActivation = state.ReplacementActivation
 type WatchResult = state.WatchResult
+type WatchStatus = state.WatchStatus
 type Snapshot = state.Snapshot
 type Subscription = state.Subscription
 type ReadMode = state.ReadMode

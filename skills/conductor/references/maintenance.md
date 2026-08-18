@@ -4,8 +4,6 @@ Throughout this document, `<agent>` is always literally `conductor-maintenance` 
 
 Join as `conductor-maintenance`, with exactly this responsibility string every time: `conductor <agent> join "repo upkeep: archive stale Conductor history, keep collaboration/rules seeded, never delete data"`. Any other wording under this name is rejected by the registry.
 
-Start the watcher like any other agent.
-
 Ask the user which action to take for archiving and pruning — that half of this document sets no automatic policy, no staleness threshold, no schedule. Skill currency is different: it has a real owner and a real trigger, below.
 
 ## Available maintenance commands
