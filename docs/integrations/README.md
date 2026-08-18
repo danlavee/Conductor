@@ -6,7 +6,7 @@ Conductor's core is host-neutral. `watch` is one continuous delivery stream with
 
 | Host | Adapter | Status |
 | --- | --- | --- |
-| [Claude Code](claude-code.md) | Plugin: `SessionStart`, `Stop`, and `SessionEnd` hooks | Designed, not built |
+| [Claude Code](claude-code.md) | Plugin at [`adapters/claude-code/`](../../adapters/claude-code/README.md): `SessionStart`, `Stop`, and `SessionEnd` hooks over `conductor adapter claude` | Built, coverage unverified |
 | [Codex](codex.md) | Not yet built | Interim fallback |
 | [Antigravity](agy.md) | Not yet built | Interim fallback |
 | Any other host | — | Interim fallback |
