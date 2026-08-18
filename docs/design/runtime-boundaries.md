@@ -14,7 +14,7 @@ Native agents and hosted agents use the same signal and acknowledgement contract
 | Acceptance point | Successful stdout output or adapter delivery | The host accepts the trigger input |
 | Next wait | The agent rearms a one-shot wait; a persistent adapter continues itself | The adapter starts it after delivery is accepted |
 
-On the native path, the skill invokes the CLI installed beside it by absolute path. Codex uses the generic one-shot watch: it blocks for one delivery, writes it, acknowledges successful output, and exits. The agent starts it through Codex's managed background-terminal tool, retains the handle, and rearms only after handling the completed delivery. Other runtimes may use the explicit adapters listed in the integration matrix.
+On the native path, the skill invokes the CLI installed beside it by absolute path. Codex uses the generic one-shot watch: it blocks until at least one signal is pending, resolves the current backlog up to the shared record cap, reports unresolved summaries in `remaining`, acknowledges successful output, and exits. The agent starts it through Codex's managed background-terminal tool, retains the handle, and rearms after handling the completed delivery while work remains. Other runtimes may use the explicit adapters listed in the integration matrix.
 
 A hosted agent does not call `watch`. The adapter waits, maps the Conductor identity to a host session, submits the signal through the host's normal trigger path, acknowledges acceptance, and waits again. The agent still uses the skill to join, read, publish, and leave. Conductor supplies the wait and acknowledgement primitives; it does not ship a universal harness adapter.
 
@@ -51,7 +51,7 @@ The runtime owns the mapping from Conductor identity to host session. Conductor 
 
 "No resident Conductor process" does not mean nothing may block. A native watch call or hosted adapter may remain active while waiting; the core has no independent daemon once that caller exits.
 
-Cancellation ends the current wait without acknowledging a signal. `watch --since` is not a retry tool: it deliberately discards signals through a chosen index. Transaction recovery is also outside the wake path; only a later resource read or write can recover an expired dead owner.
+Cancellation ends the current wait without acknowledging a signal. The SDK-only `WatchSinceContext` operation is not a retry tool: it deliberately discards signals through a chosen index. Transaction recovery is also outside the wake path; only a later resource read or write can recover an expired dead owner.
 
 Host-specific policy remains outside this repository: adapter lifetime, durable session mapping, retry after host acceptance, and behavior when an accepted trigger never reaches an agent.
 

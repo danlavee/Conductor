@@ -24,7 +24,7 @@ Default: follow the workflow below as an ordinary agent. Two invocation argument
 
 ## The operating model
 
-Conductor is a publish-subscribe message bus with one variant: records are mutable. A topic group holds topics (channels); each topic holds records, identified by index, holding text. A publication is one atomic addition or change of one or more records in one topic. Each publication produces one signal for its subscribers; content delivery carries the changed records and their indexes.
+Conductor is a publish-subscribe message bus with one variant: records are mutable. A topic group holds topics (channels); each topic holds records, identified by index, holding text. A publication is one atomic addition or change of one or more records in one topic. Each publication produces one signal for its subscribers; one `watch` call resolves the current backlog up to the shared cap, reports unresolved summaries in `remaining`, and does not limit later rearmed calls.
 
 Joining puts an agent's `<agent>` name and responsibility on the `collaboration/agents` topic. Agents subscribe to whichever topics and topic groups they choose. One topic group is special: `collaboration` always broadcasts its `rules` and `agents` topics to every registered agent, with no subscription and no opt-out — everything else requires an explicit subscription.
 
@@ -35,7 +35,7 @@ The watcher streams publications from those subscribed topics to you: run it con
 ## The whole workflow
 
 1. **Join (Registration)** — `conductor <agent> join <responsibility>` to register yourself on the roster. Skip this step if you are already registered on disk.
-2. **Start watching** — Start exactly one background watcher (`conductor <agent> watch`) through the host method in [watcher.md](references/watcher.md) and retain its handle. Restart it only if it exits; never start a second watcher process when executing a turn, maintaining exactly one active watcher at all times.
+2. **Start watching** - Start exactly one background watcher (`conductor <agent> watch`) through the host method in [watcher.md](references/watcher.md) and retain its handle. Restart it only if it exits; never start a second watcher process when executing a turn, maintaining exactly one active watcher at all times. Bare `watch` resolves the current backlog up to its shared cap, reports unresolved summaries in `remaining`, then exits - still one-shot per call, and still must be rearmed for whatever remains or arrives next.
 3. **Subscribe** — Pick the topics and topic groups your work needs, beyond the `collaboration` broadcasts you already get.
 4. **Work** — Publish with `put`, revise with `edit`, mark with `strike`; pull anything you need on demand with `get`.
 5. **Leave (Offboarding)** — Settle any open transaction and stop your watcher. Only run `conductor <agent> leave` if you are permanently offboarding.
@@ -51,7 +51,7 @@ Resolve the directory containing this loaded `SKILL.md`. Invoke `scripts/conduct
 If you are a brand-new agent, or need to reconnect, follow this ordered procedure exactly:
 1. **Register**: Run `conductor <agent> join <responsibility>` once to register yourself. (Omit the responsibility if you are already registered on disk).
 2. **Watch**: Start exactly one background watcher (`conductor <agent> watch`) using your harness's background terminal tool.
-3. **Process & Rearm**: Watching will return collaboration information. Rearm the watcher repeatedly until there is no more data (meaning the watch command blocks, indicating that all pending signals have been drained and acknowledged), or re-arm once with `--limit=N` to get more info per batch.
+3. **Process & Rearm**: Watching will return collaboration information. Rearm the watcher normally while `remaining` is nonzero, then leave one watcher blocked for the next signal.
 4. **Execute**: Follow collaboration instructions emitted from the bus.
 5. **Reconcile**: Apply any instructions already given by the user together with the join instruction.
 
@@ -133,7 +133,7 @@ Inside a transaction, `put`, `edit`, and `strike` only stage changes. `commit` p
 
 Records nested in history still contain only `index` and `text`. Publication metadata and delta delivery are separate from record operations. Delivery can replay after a crash, so process publications idempotently.
 
-Any `get`, and everything bare `watch` resolves in one call, is capped at 20 records by default when you don't pass an explicit `--limit`; a capped response carries `remaining` (how much was left out) and `default_read_limit` (the cap applied), so you always know whether you're seeing everything or need to ask again with a bigger `--limit`. Nothing is ever silently truncated without telling you.
+Any `get`, and everything bare `watch` resolves in one call, is capped at 20 records by default. A capped response carries `remaining` (how much was left out) and `default_read_limit` (the cap applied). Rearm `watch` while work remains; range and delta reads may use a larger explicit `--limit`, while a capped full read continues through indexed range reads. Nothing is ever silently truncated without telling you.
 
 ## Recover and leave
 

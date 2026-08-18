@@ -10,10 +10,8 @@ import (
 	"strings"
 )
 
-// DefaultReadLimit caps how many records get/watch return when the caller
-// doesn't pass an explicit --limit, so an unbounded backlog or topic can't
-// flood a caller's context in one response. An explicit --limit is always
-// honored as given, never re-capped by this default.
+// DefaultReadLimit caps get/watch responses. Range and delta reads may
+// request a larger explicit limit; full reads always use this cap.
 const DefaultReadLimit = 20
 
 // Get reads a current record range, the full current topic, or unread

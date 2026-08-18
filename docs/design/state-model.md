@@ -56,9 +56,9 @@ Three read views share the same published history:
 - **Historical** returns an inclusive index range without moving that cursor.
 - **Full** reconstructs the current records through the head without moving that cursor.
 
-A signal is a location hint outside the record model. One watch returns one unread signal or its resolved payload. Explicit acknowledgement advances the signal cursor. Compact acknowledged ranges preserve a late lower publication index even when a higher one finished first.
+A signal is a location hint outside the record model. One watch discovers the current unread summaries and resolves them into a delivery batch up to the shared record cap; `remaining` counts summaries left pending for the next call. Explicit acknowledgement advances only the summaries and topic content actually delivered. Compact acknowledged ranges preserve a late lower publication index even when a higher one finished first.
 
-`watch --since N` is different. It records an intentional discard floor through `N`; a late signal at or below that index remains discarded.
+The SDK-only `WatchSinceContext(ctx, N)` operation is different. It records an intentional discard floor through `N`; a late signal at or below that index remains discarded.
 
 ## Ownership and recovery
 
