@@ -18,7 +18,6 @@ Conversation and session IDs are never CLI arguments or something you supply. Th
 | --- | --- | --- | --- |
 | Antigravity | Attended (CLI/TUI/Desktop/IDE) | `conductor <agent> watch` | Start through Antigravity's managed background-terminal tool; retain its handle, then process stdout and rearm when it completes. |
 | Codex | Attended | `conductor <agent> watch` | Start through Codex’s managed background-terminal tool, not directly; retain its handle, then process stdout and rearm when it completes. |
-| Claude Code CLI | Attended, Channel configured | `conductor <agent> channel claude` (as an MCP stdio server) | Sends a `notifications/claude/channel` MCP notification into the live session |
 | Any harness | Attended, no native push available | `conductor <agent> watch` | Blocks until at least one signal is pending, then resolves and delivers what's currently pending (capped like `get`) using your own stored cursor; run as a backgrounded task so the live turn stays free |
 | Claude Code CLI | Idle, a different session | `conductor <agent> watch --claude-cli` | Spawns `claude --print --resume` fresh per signal |
 | Claude Code Desktop | Any | none | No verified external wake path — registration stays valid, but the user or host must start the next turn |

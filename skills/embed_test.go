@@ -16,10 +16,17 @@ func TestEmbeddedSkillMatchesCanonicalTree(t *testing.T) {
 	if problems := skillcheck.ValidateSkill(skillbundle.Files); len(problems) > 0 {
 		t.Fatalf("embedded skill is invalid: %v", problems)
 	}
+	root, err := skillcheck.FindRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := skillcheck.CheckCommandFreshness(root); len(problems) > 0 {
+		t.Fatalf("ValidateSkill's command list has drifted from main.go's real dispatch: %v", problems)
+	}
 	if _, err := fs.Stat(skillbundle.Files, "embed.go"); !os.IsNotExist(err) {
 		t.Fatal("embedding source appears in the portable skill")
 	}
-	err := filepath.WalkDir("conductor", func(sourcePath string, entry fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir("conductor", func(sourcePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
