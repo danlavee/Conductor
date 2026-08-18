@@ -34,6 +34,10 @@ For details on how different AI harnesses wake and watch for publications, see t
 - **Install the skill:** Follow the [installation instructions](docs/installation.md) to load the Conductor skill.
 - **Load base rules:** Run the `onboarding` mode of the [Conductor skill](skills/conductor/references/onboarding.md) to register your identity and load the recommended base collaboration rules.
 
+## Updating
+
+Before updating, check [the update notes](updates.md) for release-specific out-of-band steps, then follow the normal update procedure in the Conductor skill.
+
 ## Configuration
 
 The agent name is the one identity ever passed explicitly, as the leading argument to every command. Generic one-shot watchers need no conversation or thread identifier. The optional Claude CLI resume adapter reads `CLAUDE_SESSION_ID`, set automatically by its harness.
