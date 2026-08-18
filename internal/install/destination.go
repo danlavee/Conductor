@@ -18,7 +18,7 @@ import (
 // never guess one in.
 var vendorSkillDirs = []string{".agents", ".claude"}
 
-func validateDestination(destination, goos string) (string, error) {
+func validateDestination(destination string, payload Payload, goos string) (string, error) {
 	if goos != "windows" && goos != "linux" {
 		return "", fmt.Errorf("unsupported operating system %q", goos)
 	}
@@ -38,20 +38,47 @@ func validateDestination(destination, goos string) (string, error) {
 		}
 		return a == b
 	}
-	vendorDir := filepath.Base(filepath.Dir(filepath.Dir(clean)))
-	skillsDir := filepath.Base(filepath.Dir(clean))
-	conductorDir := filepath.Base(clean)
-	vendorMatches := false
-	for _, candidate := range vendorSkillDirs {
-		if equal(vendorDir, candidate) {
-			vendorMatches = true
-			break
+	if !equal(filepath.Base(clean), payload.directory) || !equal(filepath.Base(filepath.Dir(clean)), payload.parent) {
+		return "", payload.destinationError()
+	}
+	// An empty grandparent set is not a laxer check by accident. It says the
+	// payload's outer directory is Conductor's to choose, because no vendor
+	// convention governs it -- so there is nothing to validate against and
+	// inventing one would only reject legitimate placements.
+	if len(payload.grandparents) > 0 {
+		grandparent := filepath.Base(filepath.Dir(filepath.Dir(clean)))
+		matched := false
+		for _, candidate := range payload.grandparents {
+			if equal(grandparent, candidate) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return "", payload.destinationError()
 		}
 	}
-	if !vendorMatches || !equal(skillsDir, "skills") || !equal(conductorDir, "conductor") {
-		return "", fmt.Errorf("destination must end in <vendor-dir>/skills/conductor (vendor-dir one of %s)", strings.Join(vendorSkillDirs, ", "))
-	}
 	return clean, nil
+}
+
+func (p Payload) destinationError() error {
+	suffix := p.parent + "/" + p.directory
+	if len(p.grandparents) == 0 {
+		return fmt.Errorf("destination must end in %s", suffix)
+	}
+	return fmt.Errorf("destination must end in <vendor-dir>/%s (vendor-dir one of %s)", suffix, strings.Join(p.grandparents, ", "))
+}
+
+// executableRelativePath is where this payload's copy of the Conductor binary
+// lives inside the installed tree. The adapter's is named by its hook
+// registrations, which resolve `${CLAUDE_PLUGIN_ROOT}/bin/conductor`; the
+// skill's is named by the skill's own instructions.
+func (p Payload) executableRelativePath(goos string) string {
+	name := "/conductor"
+	if goos == "windows" {
+		name += ".exe"
+	}
+	return p.executableDir + name
 }
 
 func isUNCVolume(volume string) bool {
@@ -76,7 +103,7 @@ func prepareDestination(destination string, expected manifest) (*Result, error) 
 	if !info.IsDir() {
 		return nil, errors.New("install conflict: destination is not a directory")
 	}
-	existing, manifestData, err := verifyInstallation(destination)
+	existing, manifestData, err := verifyInstallation(destination, expected.Executable)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			empty, emptyErr := isDirEmpty(destination)
@@ -85,7 +112,11 @@ func prepareDestination(destination string, expected manifest) (*Result, error) 
 				if homeErr != nil {
 					return nil, fmt.Errorf("install preflight: failed to get user home directory for backup: %w", homeErr)
 				}
-				backupDirectory := filepath.Join(userHome, ".conductor", "backups", "skills")
+				// Grouped by the directory the payload was being installed
+				// into -- "skills", "adapters" -- rather than by a fixed name,
+				// so a backup taken during an adapter install is not filed
+				// under a word that describes something else.
+				backupDirectory := filepath.Join(userHome, ".conductor", "backups", filepath.Base(filepath.Dir(destination)))
 				if err := os.MkdirAll(backupDirectory, 0o700); err != nil {
 					return nil, fmt.Errorf("install preflight: failed to create backup directory: %w", err)
 				}

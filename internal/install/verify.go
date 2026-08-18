@@ -14,7 +14,13 @@ import (
 	"sort"
 )
 
-func verifyInstallation(root string) (manifest, []byte, error) {
+// verifyInstallation checks a tree against its own manifest, and the manifest
+// against the one path it cannot derive: where this payload's executable
+// belongs. That is passed in rather than looked up, because the manifest
+// records which file is the executable but not which payload it came from, and
+// accepting whichever path the manifest happens to name would let a manifest
+// vouch for itself on the one field that decides what the tree is.
+func verifyInstallation(root, expectedExecutable string) (manifest, []byte, error) {
 	manifestPath := filepath.Join(root, manifestName)
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -36,7 +42,7 @@ func verifyInstallation(root string) (manifest, []byte, error) {
 	if installedManifest.Format != manifestFormat || installedManifest.Version == "" || installedManifest.Protocol <= 0 || installedManifest.GOOS == "" || installedManifest.GOARCH == "" || installedManifest.BundleSHA256 == "" || installedManifest.DistributionID == "" {
 		return manifest{}, nil, errors.New("manifest metadata is incomplete")
 	}
-	if installedManifest.Executable != executableRelativePath(installedManifest.GOOS) {
+	if installedManifest.Executable != expectedExecutable {
 		return manifest{}, nil, errors.New("manifest executable path is invalid")
 	}
 

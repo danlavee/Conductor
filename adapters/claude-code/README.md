@@ -4,11 +4,18 @@ The [wake adapter](../../docs/design/wake-adapters.md) for Claude Code, packaged
 
 ## Installing
 
-1. Copy this directory to wherever the host loads plugins from.
-2. Place the Conductor executable at `bin/conductor` inside it (`bin/conductor.exe` on Windows). The hooks are exec-form and name no shell, so this one path is all the wiring there is.
-3. Bind the project to an identity by writing its agent name into a `.conductor-agent` file at the project root.
+```
+conductor adapter claude install <absolute-directory>/adapters/claude-code
+```
 
-Without step 3 the adapter loads and does nothing, which is the intended behaviour for a project that has not opted in.
+That places this tree and puts the executable at `bin/conductor` inside it (`bin/conductor.exe` on Windows) — the exact path the hooks name, since they are exec-form and name no shell. Staging, hashing, verification and re-running are the same as for the skill: installing twice reports `already-installed` and changes nothing.
+
+Two steps remain, and both are deliberately the user's:
+
+1. Point the host at it, once: `claude plugin marketplace add <the directory above>`, then install `conductor@conductor-adapters`. Conductor does not write the host's plugin registry — that is private, undocumented state, and the [design note](../../docs/design/wake-adapters.md) says why depending on it would be a mistake.
+2. Bind each project to an identity by writing its agent name into a `.conductor-agent` file at the project root. Plain UTF-8 with no byte order mark is easiest, though one is tolerated.
+
+Without step 2 the adapter loads and does nothing, which is the intended behaviour for a project that has not opted in.
 
 ## What it registers
 

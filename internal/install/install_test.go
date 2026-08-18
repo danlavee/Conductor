@@ -68,13 +68,72 @@ func TestValidateDestinationAcceptsKnownVendorDirsOnly(t *testing.T) {
 	for _, vendorDir := range vendorSkillDirs {
 		t.Run(vendorDir, func(t *testing.T) {
 			destination := filepath.Join(base, vendorDir, "skills", "conductor")
-			if err := ValidateDestination(destination); err != nil {
+			if err := ValidateDestination(destination, SkillPayload()); err != nil {
 				t.Fatalf("known vendor dir %s rejected: %v", vendorDir, err)
 			}
 		})
 	}
-	if err := ValidateDestination(filepath.Join(base, ".codex", "skills", "conductor")); err == nil {
+	if err := ValidateDestination(filepath.Join(base, ".codex", "skills", "conductor"), SkillPayload()); err == nil {
 		t.Fatal("unknown vendor dir was accepted")
+	}
+}
+
+// TestAdapterDestinationFixesOnlyItsOwnTwoSegments records the deliberate
+// asymmetry between the payloads. A skill's outer directory belongs to the
+// vendor that looks for it, so it is checked; an adapter's does not, because
+// the host is pointed at the result rather than discovering it -- and checking
+// a convention nobody defined would only reject legitimate placements.
+func TestAdapterDestinationFixesOnlyItsOwnTwoSegments(t *testing.T) {
+	base := t.TempDir()
+	payload := AdapterPayload("claude-code")
+	for _, outer := range []string{".conductor", "tools", filepath.Join("deeply", "nested")} {
+		if err := ValidateDestination(filepath.Join(base, outer, "adapters", "claude-code"), payload); err != nil {
+			t.Errorf("%s rejected: %v", outer, err)
+		}
+	}
+	for name, destination := range map[string]string{
+		"wrong parent":  filepath.Join(base, "plugins", "claude-code"),
+		"wrong adapter": filepath.Join(base, "adapters", "other-host"),
+		"skill's shape": filepath.Join(base, ".agents", "skills", "conductor"),
+	} {
+		if err := ValidateDestination(destination, payload); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}
+
+// TestInstallPlacesAnAdapterWhereItsHooksLookForTheExecutable covers the one
+// thing the adapter payload exists to guarantee. The hook registrations name
+// `bin/conductor` and are spawned directly with no shell to fall back on, so a
+// binary placed anywhere else yields an adapter that installs and verifies
+// cleanly and cannot run at all.
+func TestInstallPlacesAnAdapterWhereItsHooksLookForTheExecutable(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), ".conductor", "adapters", "claude-code")
+	source := testSource(t)
+	source.Payload = AdapterPayload("claude-code")
+	source.Bundle = fstest.MapFS{
+		".claude-plugin/plugin.json": &fstest.MapFile{Data: []byte("{\"name\":\"conductor\"}\n")},
+		"hooks/hooks.json":           &fstest.MapFile{Data: []byte("{}\n")},
+	}
+	result, err := Install(destination, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executable := SkillPayload().executableRelativePath(runtime.GOOS)
+	if result.BinaryPath == filepath.Join(destination, filepath.FromSlash(executable)) {
+		t.Fatalf("adapter took the skill's executable path: %s", result.BinaryPath)
+	}
+	if _, err := os.Stat(result.BinaryPath); err != nil {
+		t.Fatalf("executable missing at %s: %v", result.BinaryPath, err)
+	}
+	// The dotted directory is the point: it is the one the host reads, and the
+	// one a careless copy drops.
+	if _, err := os.Stat(filepath.Join(destination, ".claude-plugin", "plugin.json")); err != nil {
+		t.Errorf("plugin manifest missing: %v", err)
+	}
+	second, err := Install(destination, source)
+	if err != nil || second.Status != "already-installed" || second.ManifestHash != result.ManifestHash {
+		t.Fatalf("re-install = %+v, %v", second, err)
 	}
 }
 
@@ -83,10 +142,10 @@ func TestWindowsDestinationDistinguishesExtendedLocalAndUNC(t *testing.T) {
 		t.Skip("Windows path semantics")
 	}
 	extendedLocal := `\\?\` + testDestination(t)
-	if err := ValidateDestination(extendedLocal); err != nil {
+	if err := ValidateDestination(extendedLocal, SkillPayload()); err != nil {
 		t.Fatalf("extended local path rejected: %v", err)
 	}
-	if err := ValidateDestination(`\\server\share\.agents\skills\conductor`); err == nil {
+	if err := ValidateDestination(`\\server\share\.agents\skills\conductor`, SkillPayload()); err == nil {
 		t.Fatal("UNC destination was accepted")
 	}
 }
@@ -98,7 +157,7 @@ func TestInstallPublishesCompleteIdempotentSkill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "installed" || result.Protocol != 1 || result.SkillPath != destination || result.FileCount != 12 {
+	if result.Status != "installed" || result.Protocol != 1 || result.InstallPath != destination || result.FileCount != 12 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	for _, relative := range []string{
@@ -113,7 +172,7 @@ func TestInstallPublishesCompleteIdempotentSkill(t *testing.T) {
 		"references/integrations/claude-channel.md",
 		"references/integrations/claude-desktop.md",
 		"assets/nested/example.txt",
-		executableRelativePath(runtime.GOOS),
+		SkillPayload().executableRelativePath(runtime.GOOS),
 		manifestName,
 	} {
 		if _, err := os.Stat(filepath.Join(destination, filepath.FromSlash(relative))); err != nil {
@@ -422,7 +481,7 @@ func TestLinuxIdempotencyRequiresOwnerExecute(t *testing.T) {
 	if _, err := Install(destination, source); err != nil {
 		t.Fatal(err)
 	}
-	executable := filepath.Join(destination, filepath.FromSlash(executableRelativePath(runtime.GOOS)))
+	executable := filepath.Join(destination, filepath.FromSlash(SkillPayload().executableRelativePath(runtime.GOOS)))
 	if err := os.Chmod(executable, 0o001); err != nil {
 		t.Fatal(err)
 	}
@@ -560,6 +619,7 @@ func testSource(t *testing.T) Source {
 		t.Fatal(err)
 	}
 	return Source{
+		Payload:        SkillPayload(),
 		Bundle:         testBundle(),
 		ExecutablePath: executable,
 		Version:        "v1.2.3",

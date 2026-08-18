@@ -24,6 +24,12 @@ import (
 )
 
 const (
+	// AdapterName is the directory this adapter installs into, and it is one
+	// name for both halves on purpose: the installed path and the plugin the
+	// host loads have to agree, and a second spelling is a second thing to
+	// keep in step.
+	AdapterName = "claude-code"
+
 	// SessionEnvironment carries the host's own identifier for the session a
 	// hook was fired from. Teardown is scoped by it so one session ending
 	// cannot silence a stream another session owns.

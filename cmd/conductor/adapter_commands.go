@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	conductor "github.com/danlavee/Conductor"
+	adapterbundle "github.com/danlavee/Conductor/adapters"
 	"github.com/danlavee/Conductor/internal/adapters/claude"
+	"github.com/danlavee/Conductor/internal/install"
 )
 
 // wakeSignal is not a failure. On this host a delivery reaches the model by
@@ -35,11 +38,16 @@ type adapterReport struct {
 }
 
 func runAdapterCommand(args []string) error {
-	if len(args) != 2 || args[0] != "claude" {
+	if len(args) < 2 || args[0] != "claude" {
 		return adapterUsageError()
 	}
 	command := args[1]
-	if command != "arm" && command != "release" && command != "identity" {
+	// Placement is answered before identity is, because it is the only adapter
+	// command that runs before there is an installation to bind an identity to.
+	if command == "install" {
+		return runAdapterInstall(args[2:])
+	}
+	if len(args) != 2 || (command != "arm" && command != "release" && command != "identity") {
 		return adapterUsageError()
 	}
 	agent, err := claude.ResolveIdentity(os.Getenv(claude.ProjectEnvironment))
@@ -99,6 +107,33 @@ func runAdapterArm(client *conductor.Client, session, agent string) error {
 	return reportAdapter("arm", outcome, agent, nil)
 }
 
+// runAdapterInstall places the plugin tree and the executable its hooks name,
+// with the same staging, hashing and atomic publication the skill gets. It
+// stops there, and the boundary is deliberate: the host discovers plugins
+// through private state of its own -- an install registry and a marketplace
+// index this command has no documented contract with -- so pointing the host
+// at what was placed stays a host command the user runs. Guessing at that
+// state would make Conductor's correctness depend on a format nobody promised
+// to keep.
+func runAdapterInstall(args []string) error {
+	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+		return adapterInstallUsageError()
+	}
+	payload := install.AdapterPayload(claude.AdapterName)
+	if err := install.ValidateDestination(args[0], payload); err != nil {
+		return err
+	}
+	source, err := installationSource(payload, adapterbundle.ClaudeCode, true)
+	if err != nil {
+		return err
+	}
+	result, err := install.Install(args[0], source)
+	if err != nil {
+		return err
+	}
+	return conductor.WriteJSON(os.Stdout, result)
+}
+
 func releaseOutcome(released bool) claude.Outcome {
 	if released {
 		return claude.Released
@@ -118,5 +153,9 @@ func reportAdapter(command string, outcome claude.Outcome, agent string, detail 
 }
 
 func adapterUsageError() error {
-	return errors.New("usage: conductor adapter claude <arm|release|identity>")
+	return errors.New("usage: conductor adapter claude <arm|release|identity|install>")
+}
+
+func adapterInstallUsageError() error {
+	return errors.New("usage: conductor adapter claude install <absolute-adapter-directory>")
 }

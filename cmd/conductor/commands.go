@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"runtime"
 	"runtime/debug"
@@ -22,10 +23,10 @@ func run(args []string) error {
 		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
 			return installUsageError()
 		}
-		if err := install.ValidateDestination(args[1]); err != nil {
+		if err := install.ValidateDestination(args[1], install.SkillPayload()); err != nil {
 			return installUsageError()
 		}
-		source, err := installationSource(true)
+		source, err := installationSource(install.SkillPayload(), skillbundle.Files, true)
 		if err != nil {
 			return err
 		}
@@ -38,10 +39,10 @@ func run(args []string) error {
 		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
 			return errors.New("usage: conductor verify <absolute-skill-directory>")
 		}
-		if err := install.ValidateDestination(args[1]); err != nil {
+		if err := install.ValidateDestination(args[1], install.SkillPayload()); err != nil {
 			return err
 		}
-		source, err := installationSource(false)
+		source, err := installationSource(install.SkillPayload(), skillbundle.Files, false)
 		if err != nil {
 			return err
 		}
@@ -75,13 +76,14 @@ func run(args []string) error {
 	return runAgentCommand(args[0], args[1], args[2:])
 }
 
-func installationSource(smokeCheck bool) (install.Source, error) {
+func installationSource(payload install.Payload, bundle fs.FS, smokeCheck bool) (install.Source, error) {
 	executablePath, err := os.Executable()
 	if err != nil {
 		return install.Source{}, err
 	}
 	return install.Source{
-		Bundle:         skillbundle.Files,
+		Payload:        payload,
+		Bundle:         bundle,
 		ExecutablePath: executablePath,
 		Version:        currentVersion(),
 		Protocol:       conductor.CurrentProtocolVersion,
