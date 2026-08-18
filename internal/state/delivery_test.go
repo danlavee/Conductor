@@ -168,6 +168,79 @@ func TestFailedSummaryDeliveryCursorWriteLeavesSummaryAndDeltaReplayable(t *test
 	}
 }
 
+// TestContentBroadcastReachesAnUnsubscribedAgentAndSettles covers the one
+// delivery an agent never asked for and cannot decline. The reader subscribes
+// to nothing, so the collaboration/agents update another agent's join produces
+// is the whole of its backlog.
+//
+// The loop is bounded because the defect it guards is not: a broadcast the
+// reader could not read resolved to an empty delta, which covered no summary
+// and advanced no cursor, so watch returned the same signal forever. Settling
+// is only half the assertion -- the roster line has to actually arrive, since a
+// rule that let an empty delta acknowledge its summary would also terminate,
+// by discarding the content instead of delivering it.
+func TestContentBroadcastReachesAnUnsubscribedAgentAndSettles(t *testing.T) {
+	home := t.TempDir()
+	reader := newTestClient(t, home, "")
+	if _, err := reader.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, reader)
+
+	writer := newTestClient(t, home, "")
+	if _, err := writer.Join("writer", "dev"); err != nil {
+		t.Fatal(err)
+	}
+
+	delivered := false
+	for round := 0; !isQuiescent(t, reader); round++ {
+		if round == 10 {
+			t.Fatal("broadcast is still pending after 10 acknowledged rounds")
+		}
+		summaries, err := reader.Watch()
+		if err != nil {
+			t.Fatal(err)
+		}
+		batch, err := reader.ResolveBatch(summaries, DeliveryContent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, delivery := range batch.Deliveries {
+			if delivery.Delta == nil || delivery.Delta.Topic != collaborationAgentsTopic {
+				continue
+			}
+			for _, publication := range delivery.Delta.Publications {
+				for _, record := range publication.Records {
+					if record.Text == "writer: dev" {
+						delivered = true
+					}
+				}
+			}
+		}
+		if err := reader.AcknowledgeBatch(batch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !delivered {
+		t.Fatal("the broadcast settled without ever delivering the roster line it announced")
+	}
+}
+
+// isQuiescent reports whether nothing is pending, by asking for a delivery and
+// treating the wait running out as the answer.
+func isQuiescent(t *testing.T, client *Client) bool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := client.WatchContext(ctx); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return true
+		}
+		t.Fatal(err)
+	}
+	return false
+}
+
 func TestContentJoinCarriesRoster(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
 	if _, err := client.Join("a", "dev"); err != nil {

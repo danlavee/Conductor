@@ -127,7 +127,18 @@ func (c *Client) loadSubscription(agent string) (Subscription, error) {
 	return subscription, err
 }
 
+// isSubscribed answers whether a topic's content is the agent's to read. The
+// forced-broadcast topics are, unconditionally, because publication already
+// addressed them to every registered agent -- and the two decisions have to
+// agree. When they disagreed, a broadcast was delivered to an agent that could
+// not then read it: the delta came back empty, so it covered no summary and
+// advanced no cursor, and the same signal was redelivered on every watch
+// forever. Under an adapter that turns a delivery into a turn, that is an
+// endless wake loop rather than a merely redundant signal.
 func (c *Client) isSubscribed(agent, topic string) (bool, error) {
+	if forcedBroadcastTopic(topic) {
+		return true, nil
+	}
 	subscription, err := c.loadSubscription(agent)
 	if err != nil {
 		return false, err
