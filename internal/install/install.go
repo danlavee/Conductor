@@ -125,6 +125,39 @@ func ValidateDestination(destination string) error {
 	return err
 }
 
+// CurrencyResult reports whether destination's installed content matches
+// what Install(destination, source) would produce, without writing anything.
+type CurrencyResult struct {
+	Status           string `json:"status"` // "current" | "outdated" | "unknown" | "not-installed"
+	InstalledVersion string `json:"installed_version,omitempty"`
+	SourceVersion    string `json:"source_version"`
+	Detail           string `json:"detail,omitempty"`
+}
+
+// CheckCurrency compares destination's installed manifest against source
+// without touching disk at destination -- the read-only counterpart to
+// Install, so any agent holding a candidate source can cheaply ask "is this
+// installation still current" without a destructive swap, a backup, or even
+// a write. Reuses preflight and verifyInstallation rather than recomputing
+// either comparison side.
+func CheckCurrency(destination string, source Source) (CurrencyResult, error) {
+	cleanDestination, _, expected, _, err := preflight(destination, source)
+	if err != nil {
+		return CurrencyResult{}, fmt.Errorf("check currency preflight: %w", err)
+	}
+	if _, err := os.Stat(cleanDestination); errors.Is(err, os.ErrNotExist) {
+		return CurrencyResult{Status: "not-installed", SourceVersion: expected.Version}, nil
+	}
+	existing, _, err := verifyInstallation(cleanDestination)
+	if err != nil {
+		return CurrencyResult{Status: "unknown", SourceVersion: expected.Version, Detail: err.Error()}, nil
+	}
+	if existing.DistributionID == expected.DistributionID {
+		return CurrencyResult{Status: "current", InstalledVersion: existing.Version, SourceVersion: expected.Version}, nil
+	}
+	return CurrencyResult{Status: "outdated", InstalledVersion: existing.Version, SourceVersion: expected.Version, Detail: "installed content differs from source"}, nil
+}
+
 func preflight(destination string, source Source) (string, []payloadFile, manifest, []byte, error) {
 	cleanDestination, err := validateDestination(destination, source.GOOS)
 	if err != nil {
@@ -197,6 +230,13 @@ func preflight(destination string, source Source) (string, []payloadFile, manife
 	return cleanDestination, files, expected, manifestData, nil
 }
 
+// vendorSkillDirs lists every known vendor skills root Conductor may be
+// installed under. .agents is Conductor's own cross-vendor convention (see
+// docs/installation.md); .claude is Claude Code's actual one, which doesn't
+// follow it. Extend this as other vendors' real conventions are confirmed --
+// never guess one in.
+var vendorSkillDirs = []string{".agents", ".claude"}
+
 func validateDestination(destination, goos string) (string, error) {
 	if goos != "windows" && goos != "linux" {
 		return "", fmt.Errorf("unsupported operating system %q", goos)
@@ -211,16 +251,24 @@ func validateDestination(destination, goos string) (string, error) {
 	if goos == "windows" && isUNCVolume(filepath.VolumeName(clean)) {
 		return "", errors.New("UNC destinations are unsupported")
 	}
-	components := []string{filepath.Base(filepath.Dir(filepath.Dir(clean))), filepath.Base(filepath.Dir(clean)), filepath.Base(clean)}
-	want := []string{".agents", "skills", "conductor"}
-	for index := range components {
-		matches := components[index] == want[index]
+	equal := func(a, b string) bool {
 		if goos == "windows" {
-			matches = strings.EqualFold(components[index], want[index])
+			return strings.EqualFold(a, b)
 		}
-		if !matches {
-			return "", errors.New("destination must end in .agents/skills/conductor")
+		return a == b
+	}
+	vendorDir := filepath.Base(filepath.Dir(filepath.Dir(clean)))
+	skillsDir := filepath.Base(filepath.Dir(clean))
+	conductorDir := filepath.Base(clean)
+	vendorMatches := false
+	for _, candidate := range vendorSkillDirs {
+		if equal(vendorDir, candidate) {
+			vendorMatches = true
+			break
 		}
+	}
+	if !vendorMatches || !equal(skillsDir, "skills") || !equal(conductorDir, "conductor") {
+		return "", fmt.Errorf("destination must end in <vendor-dir>/skills/conductor (vendor-dir one of %s)", strings.Join(vendorSkillDirs, ", "))
 	}
 	return clean, nil
 }
@@ -359,7 +407,15 @@ func inspectExisting(destination string, expected manifest) (Result, bool, error
 		if errors.Is(err, os.ErrNotExist) {
 			empty, emptyErr := isDirEmpty(destination)
 			if emptyErr == nil && !empty {
-				backupPath := destination + ".pre-upgrade-" + time.Now().Format("20060102150405")
+				userHome, homeErr := os.UserHomeDir()
+				if homeErr != nil {
+					return Result{}, true, fmt.Errorf("install preflight: failed to get user home directory for backup: %w", homeErr)
+				}
+				backupDir := filepath.Join(userHome, ".conductor", "backups", "skills")
+				if err := os.MkdirAll(backupDir, 0o700); err != nil {
+					return Result{}, true, fmt.Errorf("install preflight: failed to create backup directory: %w", err)
+				}
+				backupPath := filepath.Join(backupDir, filepath.Base(destination)+".pre-upgrade-"+time.Now().Format("20060102150405"))
 				log.Printf("Warning: Destination %s has no install manifest. Creating a safety-net backup at %s and overwriting...", destination, backupPath)
 				if renameErr := os.Rename(destination, backupPath); renameErr != nil {
 					return Result{}, true, fmt.Errorf("install preflight: failed to backup conflicting destination: %w", renameErr)

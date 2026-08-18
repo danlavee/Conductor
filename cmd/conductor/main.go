@@ -59,6 +59,29 @@ func run(args []string) error {
 			return err
 		}
 		return conductor.WriteJSON(os.Stdout, result)
+	case "verify":
+		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
+			return errors.New("usage: conductor verify <absolute-skill-directory>")
+		}
+		if err := install.ValidateDestination(args[1]); err != nil {
+			return err
+		}
+		executablePath, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		result, err := install.CheckCurrency(args[1], install.Source{
+			Bundle:         skillbundle.Files,
+			ExecutablePath: executablePath,
+			Version:        currentVersion(),
+			Protocol:       conductor.CurrentProtocolVersion,
+			GOOS:           runtime.GOOS,
+			GOARCH:         runtime.GOARCH,
+		})
+		if err != nil {
+			return err
+		}
+		return conductor.WriteJSON(os.Stdout, result)
 	case "version":
 		if len(args) != 1 {
 			return errors.New("usage: conductor version")
@@ -526,7 +549,7 @@ func parseGet(args []string) (conductor.ReadRequest, error) {
 }
 
 func usageError() error {
-	return errors.New("usage: conductor install <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--claude-cli] [--mode=summary|content]")
+	return errors.New("usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> <text> | conductor <agent> put <group/topic> --file=<path> | conductor <agent> put <text> | conductor <agent> edit <group/topic> <index> <text> | conductor <agent> edit <index> <text> | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--claude-cli] [--mode=summary|content]")
 }
 
 func installUsageError() error {

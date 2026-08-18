@@ -46,6 +46,21 @@ func TestInstallRequiresExactAbsoluteSkillDirectory(t *testing.T) {
 	}
 }
 
+func TestValidateDestinationAcceptsKnownVendorDirsOnly(t *testing.T) {
+	base := t.TempDir()
+	for _, vendorDir := range vendorSkillDirs {
+		t.Run(vendorDir, func(t *testing.T) {
+			destination := filepath.Join(base, vendorDir, "skills", "conductor")
+			if err := ValidateDestination(destination); err != nil {
+				t.Fatalf("known vendor dir %s rejected: %v", vendorDir, err)
+			}
+		})
+	}
+	if err := ValidateDestination(filepath.Join(base, ".codex", "skills", "conductor")); err == nil {
+		t.Fatal("unknown vendor dir was accepted")
+	}
+}
+
 func TestWindowsDestinationDistinguishesExtendedLocalAndUNC(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows path semantics")
@@ -377,6 +392,81 @@ func testSource(t *testing.T) Source {
 		GOOS:           runtime.GOOS,
 		GOARCH:         runtime.GOARCH,
 		SmokeCheck:     false,
+	}
+}
+
+func TestCheckCurrencyReportsNotInstalledWithoutWriting(t *testing.T) {
+	destination := testDestination(t)
+	source := testSource(t)
+	result, err := CheckCurrency(destination, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "not-installed" || result.SourceVersion != source.Version {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatal("CheckCurrency wrote to destination")
+	}
+}
+
+func TestCheckCurrencyReportsCurrentAfterMatchingInstall(t *testing.T) {
+	destination := testDestination(t)
+	source := testSource(t)
+	if _, err := Install(destination, source); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(destination, manifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := CheckCurrency(destination, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "current" || result.InstalledVersion != source.Version || result.SourceVersion != source.Version {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	after, err := os.ReadFile(filepath.Join(destination, manifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("CheckCurrency modified the installed manifest")
+	}
+}
+
+func TestCheckCurrencyReportsOutdatedForDifferentSource(t *testing.T) {
+	destination := testDestination(t)
+	original := testSource(t)
+	if _, err := Install(destination, original); err != nil {
+		t.Fatal(err)
+	}
+	newer := original
+	newer.Version = "v9.9.9"
+	result, err := CheckCurrency(destination, newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "outdated" || result.InstalledVersion != original.Version || result.SourceVersion != newer.Version {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestCheckCurrencyReportsUnknownForMissingManifest(t *testing.T) {
+	destination := testDestination(t)
+	if err := os.MkdirAll(destination, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "stray.txt"), []byte("hand-copied"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := CheckCurrency(destination, testSource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "unknown" || result.Detail == "" {
+		t.Fatalf("unexpected result: %+v", result)
 	}
 }
 

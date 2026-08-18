@@ -42,7 +42,7 @@ var requiredSkillFiles = []string{
 var supportedCommands = map[string]bool{
 	"join": true, "leave": true, "list-agents": true, "subscribe": true, "list": true,
 	"begin": true, "commit": true, "abort": true, "put": true, "edit": true, "strike": true,
-	"redact": true, "get": true, "watch": true, "install": true, "version": true, "migrate": true,
+	"redact": true, "get": true, "watch": true, "install": true, "verify": true, "version": true, "migrate": true,
 }
 
 var (
