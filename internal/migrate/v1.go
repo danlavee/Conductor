@@ -35,6 +35,7 @@ type legacyPublication struct {
 type v1TopicMigration struct {
 	topics         []string
 	mappings       []Mapping
+	currentRecords map[string]map[int64]string
 	records        int
 	discardedKinds int
 	skippedScratch int
@@ -83,6 +84,9 @@ func runV1ToV4(source, destination string) (report Report, resultErr error) {
 	if err := writeJSON(filepath.Join(preparation.stage, "migration-report.json"), report); err != nil {
 		return report, err
 	}
+	if err := validateV1Stage(preparation.stage, agents, topicMigration, report); err != nil {
+		return report, fmt.Errorf("validate direct v1 migration: %w", err)
+	}
 	if err := publishStage(preparation.stage, preparation.destination, preparation.destinationExists); err != nil {
 		return report, err
 	}
@@ -119,8 +123,8 @@ func migrateV1Topics(source, destination string) (v1TopicMigration, error) {
 	}
 	topicKeys := map[string]map[string]int64{}
 	current := map[string]map[string]string{}
-	topicHeads := map[string]int64{}
-	var result v1TopicMigration
+	migratedTopics := map[string]struct{}{}
+	result := v1TopicMigration{currentRecords: map[string]map[int64]string{}}
 	for _, publication := range publications {
 		if publication.Index > result.highSequence {
 			result.highSequence = publication.Index
@@ -184,16 +188,17 @@ func migrateV1Topics(source, destination string) (v1TopicMigration, error) {
 		if err := appendJSONLine(filepath.Join(topicDir, "history.jsonl"), entry); err != nil {
 			return v1TopicMigration{}, err
 		}
-		topicHeads[publication.Resource] = publication.Index
+		migratedTopics[publication.Resource] = struct{}{}
 	}
-	result.topics = make([]string, 0, len(topicHeads))
-	for topic, head := range topicHeads {
+	result.topics = make([]string, 0, len(migratedTopics))
+	for topic := range migratedTopics {
 		topicDir, _ := topicPath(destination, topic)
-		if err := writeJSON(filepath.Join(topicDir, "head.json"), map[string]int64{"sequence": head}); err != nil {
-			return v1TopicMigration{}, err
-		}
 		if err := writeJSON(filepath.Join(topicDir, "record-index.json"), map[string]int64{"index": int64(len(topicKeys[topic]))}); err != nil {
 			return v1TopicMigration{}, err
+		}
+		result.currentRecords[topic] = map[int64]string{}
+		for key, text := range current[topic] {
+			result.currentRecords[topic][topicKeys[topic][key]] = text
 		}
 		result.topics = append(result.topics, topic)
 	}
@@ -203,6 +208,114 @@ func migrateV1Topics(source, destination string) (v1TopicMigration, error) {
 			result.mappings[i].Topic == result.mappings[j].Topic && result.mappings[i].Index < result.mappings[j].Index
 	})
 	return result, nil
+}
+
+func validateV1Stage(root string, agents []protocol.Agent, migration v1TopicMigration, report Report) error {
+	if report.ToVersion != protocolVersion4 {
+		return fmt.Errorf("report targets protocol v%d; staged migration requires v%d", report.ToVersion, protocolVersion4)
+	}
+	if report.Agents != len(agents) {
+		return fmt.Errorf("report contains %d agents; staged migration expects %d", report.Agents, len(agents))
+	}
+	if report.Topics != len(migration.topics) {
+		return fmt.Errorf("report contains %d topics; staged migration expects %d", report.Topics, len(migration.topics))
+	}
+	if report.Records != migration.records {
+		return fmt.Errorf("report contains %d records; staged migration expects %d", report.Records, migration.records)
+	}
+	if report.Records != len(report.Mappings) {
+		return fmt.Errorf("report contains %d records but %d mappings", report.Records, len(report.Mappings))
+	}
+	if len(report.Mappings) != len(migration.mappings) {
+		return fmt.Errorf("report contains %d mappings; staged migration expects %d", len(report.Mappings), len(migration.mappings))
+	}
+	for i, mapping := range report.Mappings {
+		if mapping != migration.mappings[i] {
+			return fmt.Errorf("report mapping %d is %+v; staged migration expects %+v", i, mapping, migration.mappings[i])
+		}
+	}
+
+	validationAgent := ""
+	temporaryAgentPath := ""
+	if len(agents) > 0 {
+		validationAgent = agents[0].Name
+	} else if len(migration.topics) > 0 {
+		validationAgent = "migration-validator"
+		temporaryAgentPath = filepath.Join(root, "registry", validationAgent+".json")
+		if err := writeJSON(temporaryAgentPath, protocol.Agent{Name: validationAgent, Responsibility: "migration validation"}); err != nil {
+			return fmt.Errorf("create temporary validation agent: %w", err)
+		}
+	}
+	client, err := state.New(root, validationAgent)
+	if err != nil {
+		return fmt.Errorf("open staged protocol-v4 root: %w", err)
+	}
+
+	actualTopics, err := listStageTopics(client)
+	if err != nil {
+		return err
+	}
+	if len(actualTopics) != len(migration.topics) {
+		return fmt.Errorf("staged root contains topics %v; expected %v", actualTopics, migration.topics)
+	}
+	for i, topic := range migration.topics {
+		if actualTopics[i] != topic {
+			return fmt.Errorf("staged root contains topics %v; expected %v", actualTopics, migration.topics)
+		}
+		topicDir, err := topicPath(root, topic)
+		if err != nil {
+			return err
+		}
+		for _, obsolete := range []string{"history", "head.json"} {
+			path := filepath.Join(topicDir, obsolete)
+			if _, err := os.Stat(path); err == nil {
+				return fmt.Errorf("topic %q contains obsolete protocol-v4 artifact %q", topic, obsolete)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("inspect topic %q artifact %q: %w", topic, obsolete, err)
+			}
+		}
+
+		expected := migration.currentRecords[topic]
+		full, err := client.Get(state.ReadRequest{Topic: topic, Mode: state.ReadFull})
+		if err != nil {
+			return fmt.Errorf("read topic %q through protocol-v4 full read: %w", topic, err)
+		}
+		if materialized := len(full.Records) + full.Remaining; materialized != len(expected) {
+			return fmt.Errorf("topic %q materializes %d records; expected %d", topic, materialized, len(expected))
+		}
+		for index, text := range expected {
+			result, err := client.Get(state.ReadRequest{Topic: topic, RecordIndex: index, Mode: state.ReadRange})
+			if err != nil {
+				return fmt.Errorf("read mapped topic %q index %d: %w", topic, index, err)
+			}
+			if len(result.Records) != 1 || result.Records[0].Index != index || result.Records[0].Text != text {
+				return fmt.Errorf("topic %q index %d materialized as %#v; expected text %q", topic, index, result.Records, text)
+			}
+		}
+	}
+	if temporaryAgentPath != "" {
+		if err := os.Remove(temporaryAgentPath); err != nil {
+			return fmt.Errorf("remove temporary validation agent: %w", err)
+		}
+	}
+	return nil
+}
+
+func listStageTopics(client *state.Client) ([]string, error) {
+	groups, err := client.ListTopicGroups()
+	if err != nil {
+		return nil, fmt.Errorf("list staged topic groups: %w", err)
+	}
+	var topics []string
+	for _, group := range groups {
+		groupTopics, err := client.ListTopics(group)
+		if err != nil {
+			return nil, fmt.Errorf("list staged topics in %q: %w", group, err)
+		}
+		topics = append(topics, groupTopics...)
+	}
+	sort.Strings(topics)
+	return topics, nil
 }
 
 func readLegacyPublications(source string) ([]legacyPublication, error) {
