@@ -11,3 +11,9 @@ const CurrentProtocolVersion = state.CurrentProtocolVersion
 func New(home, agent string) (*Client, error) {
 	return state.New(home, agent)
 }
+
+// Open constructs a client without reading or initializing the state root.
+// It is intended for watch processes that may need to wait through cutover.
+func Open(home, agent string) (*Client, error) {
+	return state.Open(home, agent)
+}

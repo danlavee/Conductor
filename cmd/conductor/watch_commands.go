@@ -22,7 +22,10 @@ func runWatchCommand(client *conductor.Client, agent string, args []string) erro
 	if len(watchArgs) != 1 {
 		return usageError()
 	}
-	if watchArgs[0] == "--claude-cli" {
+	switch watchArgs[0] {
+	case "--codex-desktop":
+		return runCodexDesktopWatchCommand(client, agent, mode)
+	case "--claude-cli":
 		return runClaudeCLIWatchCommand(context.Background(), client, agent, mode)
 	}
 	return usageError()
@@ -34,11 +37,15 @@ func runOneShotWatch(ctx context.Context, client *conductor.Client, mode conduct
 		return err
 	}
 	defer func() { _ = release() }()
-	summaries, err := client.WatchContext(ctx)
+	result, err := client.WatchResultContext(ctx)
 	if err != nil {
 		return err
 	}
-	batch, err := client.ResolveBatch(summaries, mode)
+	defer result.Close()
+	if result.Activation != nil {
+		return conductor.WriteJSON(os.Stdout, result.Activation)
+	}
+	batch, err := client.ResolveBatch(result.Summaries, mode)
 	if err != nil {
 		return err
 	}

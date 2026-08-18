@@ -10,7 +10,11 @@ import (
 )
 
 func runAgentCommand(agent, command string, rest []string) error {
-	client, err := conductor.New(os.Getenv("CONDUCTOR_HOME"), agent)
+	open := conductor.New
+	if command == "watch" {
+		open = conductor.Open
+	}
+	client, err := open(os.Getenv("CONDUCTOR_HOME"), agent)
 	if err != nil {
 		return err
 	}
