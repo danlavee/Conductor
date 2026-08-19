@@ -42,9 +42,9 @@ var requiredSkillFiles = []string{
 // dispatch from -- Validate cross-checks this against cliCommands so drift
 // fails a test instead of silently doing nothing.
 var supportedCommands = map[string]bool{
-	"join": true, "leave": true, "list-agents": true, "subscribe": true, "list": true,
-	"begin": true, "commit": true, "abort": true, "put": true, "edit": true, "strike": true,
-	"redact": true, "get": true, "watch": true, "status": true, "install": true, "verify": true, "version": true, "migrate": true, "cutover": true, "adapter": true,
+	"join": true, "leave": true, "subscribe": true, "list": true,
+	"put": true, "edit": true, "strike": true, "redact": true, "get": true, "watch": true, "status": true,
+	"install": true, "verify": true, "version": true, "migrate": true, "cutover": true, "adapter": true,
 }
 
 var (

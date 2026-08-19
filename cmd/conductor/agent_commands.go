@@ -47,15 +47,6 @@ func runAgentCommand(agent, command string, rest []string) error {
 			return err
 		}
 		return conductor.WriteJSON(os.Stdout, map[string]string{"left": agent})
-	case "list-agents":
-		if len(rest) != 0 {
-			return usageError()
-		}
-		roster, err := client.Roster()
-		if err != nil {
-			return err
-		}
-		return conductor.WriteJSON(os.Stdout, roster)
 	case "subscribe":
 		if len(rest) != 1 {
 			return usageError()
@@ -94,95 +85,53 @@ func runAgentCommand(agent, command string, rest []string) error {
 			return conductor.WriteJSON(os.Stdout, topics)
 		}
 		return usageError()
-	case "begin":
-		if len(rest) != 1 {
-			return usageError()
-		}
-		if err := client.Begin(rest[0]); err != nil {
-			return err
-		}
-		return conductor.WriteJSON(os.Stdout, map[string]string{"status": "begun", "topic": rest[0]})
-	case "commit":
-		if len(rest) != 0 {
-			return usageError()
-		}
-		publication, err := client.Commit()
-		if err != nil {
-			return err
-		}
-		return conductor.WriteJSON(os.Stdout, publication)
-	case "abort":
-		if len(rest) != 0 {
-			return usageError()
-		}
-		if err := client.Abort(); err != nil {
-			return err
-		}
-		return conductor.WriteJSON(os.Stdout, map[string]bool{"aborted": true})
+	// Every record verb names its topic. There is no second, topic-less form:
+	// the staged one existed only inside a transaction the CLI no longer
+	// opens, and its absence is what makes each of these one unambiguous
+	// shape rather than two distinguished by argument count.
 	case "put":
-		if len(rest) != 1 && len(rest) != 2 {
+		if len(rest) != 2 {
 			return usageError()
 		}
-		if len(rest) == 2 {
-			if path, ok := strings.CutPrefix(rest[1], jsonlPrefix); ok {
-				if path == "" {
-					return usageError()
-				}
-				publication, err := putJSONL(client, rest[0], path)
-				if err != nil {
-					return err
-				}
-				return conductor.WriteJSON(os.Stdout, publication)
+		if path, ok := strings.CutPrefix(rest[1], jsonlPrefix); ok {
+			if path == "" {
+				return usageError()
 			}
+			publication, err := putJSONL(client, rest[0], path)
+			if err != nil {
+				return err
+			}
+			return conductor.WriteJSON(os.Stdout, publication)
 		}
-		text, err := resolveText(rest[len(rest)-1])
+		text, err := resolveText(rest[1])
 		if err != nil {
 			return err
 		}
-		var record conductor.Record
-		if len(rest) == 1 {
-			record, err = client.StagePut(text)
-		} else {
-			record, err = client.Put(rest[0], text)
-		}
+		record, err := client.Put(rest[0], text)
 		return writeRecordResult(record, err)
 	case "edit":
-		if len(rest) != 2 && len(rest) != 3 {
+		if len(rest) != 3 {
 			return usageError()
 		}
-		text, err := resolveText(rest[len(rest)-1])
+		index, err := parseRecordIndex(rest[1])
 		if err != nil {
 			return err
 		}
-		index, parseErr := parseRecordIndex(rest[len(rest)-2])
-		if parseErr != nil {
-			return parseErr
+		text, err := resolveText(rest[2])
+		if err != nil {
+			return err
 		}
-		var record conductor.Record
-		if len(rest) == 2 {
-			record, err = client.StageEdit(index, text)
-		} else {
-			record, err = client.Edit(rest[0], index, text)
-		}
+		record, err := client.Edit(rest[0], index, text)
 		return writeRecordResult(record, err)
 	case "strike":
-		var record conductor.Record
-		var err error
-		if len(rest) == 1 {
-			index, parseErr := parseRecordIndex(rest[0])
-			if parseErr != nil {
-				return parseErr
-			}
-			record, err = client.StageStrike(index)
-		} else if len(rest) == 2 {
-			index, parseErr := parseRecordIndex(rest[1])
-			if parseErr != nil {
-				return parseErr
-			}
-			record, err = client.Strike(rest[0], index)
-		} else {
+		if len(rest) != 2 {
 			return usageError()
 		}
+		index, err := parseRecordIndex(rest[1])
+		if err != nil {
+			return err
+		}
+		record, err := client.Strike(rest[0], index)
 		return writeRecordResult(record, err)
 	case "redact":
 		topic, start, end, err := parseRedact(rest)

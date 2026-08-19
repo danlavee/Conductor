@@ -40,7 +40,7 @@ stateDiagram-v2
     Settled --> [*]
 ```
 
-`begin` acquires the resource lease and creates a durable transaction. `put` allocates a new record index; `edit` replaces text under an existing index; `strike` literally wraps existing text in `~~` markers. Each staged operation updates the transaction and renews the lease. `abort` removes the buffer without making its values visible. A reserved record index may remain unused after abort.
+These are internal phases, not commands. The CLI opens no transaction a caller can hold: every record command runs one cycle start to finish, and a `--jsonl` load is one cycle carrying many staged records. `begin` acquires the resource lease and creates a durable transaction. `put` allocates a new record index; `edit` replaces text under an existing index; `strike` literally wraps existing text in `~~` markers. Each staged operation updates the transaction and renews the lease. `abort` removes the buffer without making its values visible. A reserved record index may remain unused after abort.
 
 The transaction records which indexes it created. Before commit first reserves a publication index, it verifies that created indexes are absent and edited indexes exist in authoritative current state. Once commit assigns its publication index, the transaction can only be completed by commit retry or recovery.
 

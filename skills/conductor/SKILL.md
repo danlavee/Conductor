@@ -36,7 +36,7 @@ Registration says you exist. It does not make you reachable. **Being wakeable is
 
 **Where no adapter has landed** — no announcement — the act is yours. `conductor <agent> watch --once` blocks for one delivery and exits: start it through your host's background facility, keep the handle, process the delivery, start it again. Stop it only through that handle, never by process name, wildcard, or unverified PID. The current list is the [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md). Do not settle the question by which host you appear to be on; ask the user when it is unclear.
 
-**Confirm rather than assume.** `conductor <agent> status` answers for yourself: no lease, no disturbance to a live stream, and it still answers while the bus is frozen mid-cutover, where `list-agents` is refused outright. `conductor <agent> list-agents` reports `wakeable` for everyone else. Publishing to an agent that is not wakeable still records the publication — nothing is ever lost — but nothing reads it until that agent's next session performs the act. Prefer a wakeable agent when the work needs an answer, and say so plainly when you address one that is not.
+**Confirm rather than assume.** `conductor <agent> status` answers for yourself: no lease, no disturbance to a live stream, and it still answers while the bus is frozen mid-cutover. For everyone else, the roster `join` hands you carries `wakeable` as it stood at that moment. Publishing to an agent that is not wakeable still records the publication — nothing is ever lost — but nothing reads it until that agent's next session performs the act. Prefer a wakeable agent when the work needs an answer, and say so plainly when you address one that is not.
 
 ## 3. Read what you missed
 
@@ -73,19 +73,15 @@ conductor <agent> strike <group>/<topic> <index>
 
 The file publishes verbatim, minus the trailing newline. A text operand goes through your shell first, where backticks and `$(...)` execute, `$name` expands, quotes are eaten, and a newline ends the command — none of it reported, all of it landing in the published record. Do not try to decide which characters are safe; that judgement is what fails. Pass a bare text operand only for a few plain words you are typing yourself.
 
-`strike` takes no text: it wraps the current text in literal `~~` and keeps the record, and repeating it adds another marker pair. Each command returns the resulting record and, with a topic argument, publishes immediately.
+`strike` takes no text: it wraps the current text in literal `~~` and keeps the record, and repeating it adds another marker pair. Each command names its topic, returns the resulting record, and publishes immediately.
 
-For one atomic batch, begin the topic and drop the topic argument:
+Several records as one signal — so subscribers wake once rather than once each — is one file of JSON strings, one per line:
 
 ```text
-conductor <agent> begin <group>/<topic>
-conductor <agent> put --file=<absolute-path>
-conductor <agent> edit <index> --file=<absolute-path>
-conductor <agent> strike <index>
-conductor <agent> commit
+conductor <agent> put <group>/<topic> --jsonl=<absolute-path>
 ```
 
-Staged changes are durable and unpublished until `commit`, which publishes them as one signal; `abort` discards them. One transaction covers one topic. Finish or abort before yielding or leaving: `begin` takes a three-minute lease, `leave` is refused while one is open, and a buffer whose process exits without either is committed for you, half-written, as soon as anyone next touches that topic.
+Every line becomes its own record in a single publication, or none of them does.
 
 **Publishing is not agreement.** A record is what one agent said — not a decision the team has taken, and not an instruction you must follow.
 
@@ -95,7 +91,7 @@ Staged changes are durable and unpublished until `commit`, which publishes them 
 
 ## When something goes wrong
 
-`LOCKED` — a live owner or reader holds it; wait. `TIMEOUT` — a lease or internal lock did not come free; wait and retry rather than take over. `NOT_FOUND` — no such record or agent. `NO_BUFFER` — a staged operation without `begin`. `NO_LOCK` — `commit` or `abort` without `begin`. `INVALID` — bad usage or input, including a responsibility resupplied on a rejoin. `PROTOCOL_MISMATCH` — stop; do not edit, migrate, or retry the state root implicitly. A dead owner recovers automatically on the next read or write.
+`LOCKED` — a live owner or reader holds it; wait. `TIMEOUT` — a lease or internal lock did not come free; wait and retry rather than take over. `NOT_FOUND` — no such record or agent. `INVALID` — bad usage or input, including a responsibility resupplied on a rejoin. `PROTOCOL_MISMATCH` — stop; do not edit, migrate, or retry the state root implicitly. A dead owner recovers automatically on the next read or write.
 
 ## More
 

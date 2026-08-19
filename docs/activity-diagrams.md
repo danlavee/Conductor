@@ -31,16 +31,12 @@ sequenceDiagram
     W->>C: "watch"
     C-->>W: "join signal"
     W-->>B: "Deliver signal"
-    B->>C: "list-agents"
 
-    alt "One-step publication"
+    alt "One record"
         A->>C: "put topic text"
-    else "Staged atomic publication"
-        A->>C: "begin topic"
-        C->>D: "Acquire lease and create durable buffer"
-        A->>C: "put, edit, or strike records"
-        C->>D: "Update buffer and renew lease"
-        A->>C: "commit"
+    else "Many records, one publication"
+        A->>C: "put topic --jsonl=path"
+        C->>D: "Stage every line under one lease"
     end
 
     C->>D: "Reserve publication index"
@@ -79,8 +75,6 @@ flowchart LR
     H --> N["Return without cursor change"]
     F --> N
 ```
-
-An unfinished staged change may be cancelled with `abort`; its buffered values never become visible.
 
 Editing a record preserves its identity:
 

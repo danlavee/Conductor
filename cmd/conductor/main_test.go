@@ -271,14 +271,14 @@ func TestPutJSONLMalformedLineAbortsWithoutPartialRecords(t *testing.T) {
 		t.Fatalf("full records = %#v, want none after aborted bulk load", full.Records)
 	}
 
-	// The failed bulk load must not leave a dangling transaction/lock behind:
-	// a fresh begin on the same topic must succeed immediately.
-	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "begin", "messages/team")
+	// The failed bulk load must not leave a dangling transaction or lock
+	// behind. Nothing can ask that directly any more -- the CLI opens no
+	// transaction of its own -- so it is asked the way a caller would feel it:
+	// the next write to the same topic succeeds immediately rather than
+	// blocking on a lease nobody holds.
+	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "recovered")
 	if err != nil || len(stderr) != 0 || len(stdout) == 0 {
-		t.Fatalf("begin after aborted bulk load error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
-	}
-	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "abort"); err != nil {
-		t.Fatal(err)
+		t.Fatalf("put after aborted bulk load error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
 	}
 }
 
@@ -331,7 +331,7 @@ func TestProtocolMismatchProcessContract(t *testing.T) {
 	if err := os.WriteFile(declaration, []byte(declarationText), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "list-agents")
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "list", "--topic-groups")
 	exit, ok := err.(*exec.ExitError)
 	if !ok || exit.ExitCode() != 1 || len(stdout) != 0 {
 		t.Fatalf("error = %v, stdout = %q", err, stdout)
@@ -469,7 +469,7 @@ func TestUsageExposesNoVendorWatchTransports(t *testing.T) {
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> [--replace --root=<absolute-state-root>] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace --root=<absolute-state-root>] | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> put (<text> | --file=<path>) | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> edit <index> (<text> | --file=<path>) | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> redact <group/topic> (<index> | --start=N --end=M) | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
+	const want = "usage: conductor install <absolute-skill-directory> [--replace --root=<absolute-state-root>] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace --root=<absolute-state-root>] | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> strike <group/topic> <index> | conductor <agent> redact <group/topic> (<index> | --start=N --end=M) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}
@@ -771,7 +771,10 @@ func TestStatusReportsRegistrationAndLiveWakeability(t *testing.T) {
 // matter: an agent holding a live stream has to read as wakeable, and one that
 // registered and then lost its stream has to read as not -- reporting the
 // second as available is the silent unwakeability this design exists to remove.
-func TestListAgentsReportsWhoWouldRespond(t *testing.T) {
+// The roster is handed out by join and nowhere else, so join is where the
+// "who would respond" answer has to hold: registration read from disk, and
+// wakeability observed live beside it rather than stored.
+func TestJoinSnapshotReportsWhoWouldRespond(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
 	for agent, responsibility := range map[string]string{"a": "dev", "b": "review"} {
 		if _, stderr, err := runCLIHelper(os.Args[0], root, "", agent, "join", responsibility); err != nil {
@@ -786,20 +789,22 @@ func TestListAgentsReportsWhoWouldRespond(t *testing.T) {
 	defer stopWatch(t, watch)
 	waitForOwnership(t, root)
 
-	stdout, stderr, err := runCLIHelper(os.Args[0], root, "", "b", "list-agents")
+	stdout, stderr, err := runCLIHelper(os.Args[0], root, "", "b", "join")
 	if err != nil {
-		t.Fatalf("list-agents: %v: %s", err, stderr)
+		t.Fatalf("join: %v: %s", err, stderr)
 	}
-	var roster []conductor.RosterEntry
-	if err := json.Unmarshal(stdout, &roster); err != nil {
-		t.Fatalf("roster is not decodable: %q: %v", stdout, err)
+	var snapshot struct {
+		Agents []conductor.RosterEntry `json:"agents"`
+	}
+	if err := json.Unmarshal(stdout, &snapshot); err != nil {
+		t.Fatalf("snapshot is not decodable: %q: %v", stdout, err)
 	}
 	byName := map[string]conductor.RosterEntry{}
-	for _, entry := range roster {
+	for _, entry := range snapshot.Agents {
 		byName[entry.Name] = entry
 	}
 	if len(byName) != 2 {
-		t.Fatalf("roster = %#v", roster)
+		t.Fatalf("roster = %#v", snapshot.Agents)
 	}
 	// The roster still carries the registration it always did, alongside the
 	// observation; wakeability is reported beside that record, not stored in it.
