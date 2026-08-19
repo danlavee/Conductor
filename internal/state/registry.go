@@ -200,8 +200,8 @@ type RosterEntry struct {
 
 // Roster lists the registry the way an agent choosing whom to address needs to
 // see it -- not who signed up, but who would answer. Every roster an agent is
-// shown goes through here: list-agents, the join snapshot, and the roster
-// carried by a join or leave delivery. Those are once per event.
+// shown goes through here: the join snapshot, and the roster carried by a join
+// or leave delivery. Those are once per event.
 //
 // ListAgents remains the bare membership answer for recipient resolution,
 // which runs on every publication and must not pay a process probe per agent.

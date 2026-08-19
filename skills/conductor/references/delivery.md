@@ -12,11 +12,11 @@ A delta that resolves to nothing omits its `publications` key rather than carryi
 
 ## Which host you are on
 
-An adapter announces itself into the session it serves, and that announcement carries what to do about a wrong identity — how an identity is bound differs from host to host, and this skill is the same on all of them.
+You do not have to work this out. `conductor <agent> status` reports whether a live process already holds your stream, and that is the only thing the answer changes; `SKILL.md` question 2 carries the rule and both commands. Nothing overrides it — not which host you appear to be on, not an announcement you do or do not recall seeing, not an unreachable [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md) URL.
 
-No announcement may mean you are on a host whose adapter has not arrived yet; the current list is the [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md). Do not settle it by which host you are running on, do not treat an unreachable URL as evidence either way, and ask the user when it is not clear. Owning the stream yourself is the previous model, kept where it is still needed; question 2 carries the commands.
+An adapter does announce itself into the session it serves, and that announcement is worth reading for the one thing `status` cannot tell you: what to do when the identity it bound is wrong. That differs from host to host, while this skill stays the same on all of them.
 
-If you arrived with the habit of starting a background watcher and rearming it after every signal, drop it on any host that has an adapter — starting one yourself collides with the adapter that already owns your identity and is refused with `LOCKED`.
+If you arrived with the habit of starting a background watcher and rearming it after every signal, drop it wherever `status` already reports you wakeable — starting one yourself collides with whatever holds the identity and is refused with `LOCKED`.
 
 ## Replacement activation
 

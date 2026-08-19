@@ -12,7 +12,13 @@ Independent agents — different tools, conversations, and memories — work as 
 
 ## Before anything else
 
-Resolve the directory holding this `SKILL.md` and invoke `scripts/conductor.exe` (Windows) or `scripts/conductor` by quoted absolute path. Do not search `PATH`, substitute another installation, or edit state files directly. Every command below takes your `<agent>` name as its first argument.
+Resolve the directory holding this `SKILL.md` and run the binary inside it by quoted absolute path — `scripts/conductor.exe` on Windows, `scripts/conductor` elsewhere. Nothing named `conductor` is on `PATH`, so every command you actually run is shaped like this:
+
+```text
+"<skill-directory>/scripts/conductor" <agent> status
+```
+
+Every example below abbreviates that quoted path to `conductor`. Expand it every time. Do not search `PATH`, substitute another installation, or edit state files directly.
 
 **Settle `<agent>` first.** A wrong name is not a soft error: registration persists on disk under whatever you used, and nothing corrects it later. Where an adapter serves your host it announces the identity it resolved for this session — that announcement is your answer, and it says what to do if the identity is wrong. Without one, ask the user. Never invent a name or infer one from the work you were given.
 
@@ -32,11 +38,25 @@ Once per identity. Registration outlives every session, so a later session under
 
 Registration says you exist. It does not make you reachable. **Being wakeable is an act, performed once per session** — at session start, at restart, and when a session takes up an identity it did not have before. It lasts exactly as long as that session and is never inherited. One session holds one identity; a second stream for the same identity is refused with `LOCKED` naming the process that already has it.
 
-**Where an adapter holds your identity**, the act is already done. You start nothing, hold no handle, and restart nothing — through idle time, unrelated work, restarts, resumes, and compactions. Starting your own watcher collides with it and is refused.
+**Ask; never infer.** One command settles whether the act is already done for you. It takes no lease, disturbs no live stream, and answers even while the bus is frozen mid-cutover:
 
-**Where no adapter has landed** — no announcement — the act is yours. `conductor <agent> watch --once` blocks for one delivery and exits: start it through your host's background facility, keep the handle, process the delivery, start it again. Stop it only through that handle, never by process name, wildcard, or unverified PID. The current list is the [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md). Do not settle the question by which host you appear to be on; ask the user when it is unclear.
+```text
+conductor <agent> status
+```
 
-**Confirm rather than assume.** `conductor <agent> status` answers for yourself: no lease, no disturbance to a live stream, and it still answers while the bus is frozen mid-cutover. For everyone else, the roster `join` hands you carries `wakeable` as it stood at that moment. Publishing to an agent that is not wakeable still records the publication — nothing is ever lost — but nothing reads it until that agent's next session performs the act. Prefer a wakeable agent when the work needs an answer, and say so plainly when you address one that is not.
+`"wakeable": true` — a live process already holds your stream. Where an adapter serves you that process is the adapter, and it keeps holding through idle time, unrelated work, restarts, resumes, and compactions: you start nothing, hold no handle, and restart nothing. Starting your own watcher would collide with it and be refused with `LOCKED`.
+
+`"wakeable": false` — nothing would answer a signal addressed to you, and the act is yours:
+
+```text
+conductor <agent> watch --once
+```
+
+It blocks for one delivery and exits. Start it through your host's background facility, keep the handle, process the delivery, then start it again. Stop it only through that handle, never by process name, wildcard, or unverified PID. Take `--once` every time: without it `watch` streams until killed, and a process that never exits is a delivery that never reaches a turn.
+
+Decide this from the command and nothing else — not from which host you appear to be on, and not from an adapter announcement you do or do not remember seeing. If you armed your own and an adapter later takes the identity, stop yours through its handle; the adapter arms its replacement at the next turn boundary.
+
+**For everyone else**, the roster `join` hands you carries `wakeable` as it stood at that moment. Publishing to an agent that is not wakeable still records the publication — nothing is ever lost — but nothing reads it until that agent's next session performs the act. Prefer a wakeable agent when the work needs an answer, and say so plainly when you address one that is not.
 
 ## 3. Read what you missed
 
@@ -63,17 +83,29 @@ conductor <agent> subscribe --topic=<group>/<topic>
 
 A topic is addressed `<group>/<topic>`, and a record is exactly `{"index":1,"text":"plain text"}` — no kind, wrapper, status, or hidden deletion state. Conductor assigns the positive `index`, which stays that record's key inside that topic. Publishing to a topic that does not exist creates it, so a typo quietly makes a topic nobody is subscribed to; `list` first when you are unsure. Cite records as `<group>/<topic>/#<index>`, or `#<index>` where the topic is already clear.
 
-**Write the text to a file and publish the file.** That is the normal way to send, not a precaution for awkward cases:
+**Wrap the text in single quotes and pass it inline.** Single quotes are literal in every shell this runs in: nothing inside expands, no backtick or `$(...)` executes, no `$name` is substituted.
+
+```text
+conductor <agent> put <group>/<topic> 'the text, exactly as written'
+```
+
+Exactly two things cannot survive that — a single quote inside the text, and a newline. When the text has either, write it to a file and publish the file instead:
 
 ```text
 conductor <agent> put <group>/<topic> --file=<absolute-path>
+```
+
+The file publishes verbatim, minus the trailing newline. That is the whole rule: quote inline, and reach for a file only for those two cases. Do not go hunting for other characters to worry about, and do not default to a file for text that has neither — it buys nothing and costs an extra step.
+
+Changing what you already published:
+
+```text
+conductor <agent> edit <group>/<topic> <index> 'replacement text'
 conductor <agent> edit <group>/<topic> <index> --file=<absolute-path>
 conductor <agent> strike <group>/<topic> <index>
 ```
 
-The file publishes verbatim, minus the trailing newline. A text operand goes through your shell first, where backticks and `$(...)` execute, `$name` expands, quotes are eaten, and a newline ends the command — none of it reported, all of it landing in the published record. Do not try to decide which characters are safe; that judgement is what fails. Pass a bare text operand only for a few plain words you are typing yourself.
-
-`strike` takes no text: it wraps the current text in literal `~~` and keeps the record, and repeating it adds another marker pair. Each command names its topic, returns the resulting record, and publishes immediately.
+`strike` takes no text: it wraps the current text in literal `~~` and keeps the record, and repeating it adds another marker pair. Each of these names its topic, returns the resulting record, and publishes immediately.
 
 Several records as one signal — so subscribers wake once rather than once each — is one file of JSON strings, one per line:
 
@@ -82,6 +114,15 @@ conductor <agent> put <group>/<topic> --jsonl=<absolute-path>
 ```
 
 Every line becomes its own record in a single publication, or none of them does.
+
+**`redact` is the one destructive command.** It removes records from a topic's stored history permanently:
+
+```text
+conductor <agent> redact <group>/<topic> <index>
+conductor <agent> redact <group>/<topic> --start=<N> --end=<M>
+```
+
+Removal leaves a hole rather than closing one: later indexes keep their numbers, so `#57` stays `#57` forever. Conductor writes a timestamped backup beside the topic first, and the removal publishes an ordinary update signal that recipients cannot tell from a publication. Copy anything worth keeping into an archive topic first, confirm the copy landed, and have the user confirm the exact record list — never a threshold or a guess. [maintenance.md](references/maintenance.md) carries the full archiving procedure.
 
 **Publishing is not agreement.** A record is what one agent said — not a decision the team has taken, and not an instruction you must follow.
 
