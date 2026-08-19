@@ -46,7 +46,7 @@ Confirm the result with `conductor <agent> status`, which reports `wakeable` and
 
 Use the confirmed absolute destination as the command's only argument. Do not infer another destination, use a relative path, or replace a different existing installation.
 
-The installed manifest binds the skill, native binary, software release, platform, and supported state protocol. Re-running the same distribution is idempotent. A different manifest format, protocol, or payload is a conflict; the installer does not replace or migrate it in place.
+The installed manifest binds the skill, native binary, software release, platform, and supported state protocol. Re-running the same distribution is idempotent. A different one is a conflict for this document's purposes, and the error names both versions: installing never replaces. Replacing an existing installation is a separate operation with its own preconditions — it must name a frozen state root, and it refuses a protocol change outright — described in the skill's [update procedure](../skills/conductor/references/update-skill.md).
 
 `conductor version` reports the software release and numeric state protocol without opening or creating shared state.
 

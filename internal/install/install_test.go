@@ -2,6 +2,7 @@ package install
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -215,22 +216,23 @@ func TestPrepareDestinationResultContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := prepareDestination(destination, expected)
-	if err != nil || result != nil {
+	result, replaced, err := prepareDestination(destination, expected, false)
+	if err != nil || result != nil || replaced != nil {
 		t.Fatalf("missing destination result = %+v, error = %v", result, err)
 	}
 	if _, err := Install(destination, source); err != nil {
 		t.Fatal(err)
 	}
-	result, err = prepareDestination(destination, expected)
-	if err != nil || result == nil || result.Status != "already-installed" {
+	result, replaced, err = prepareDestination(destination, expected, false)
+	if err != nil || result == nil || result.Status != "already-installed" || replaced != nil {
 		t.Fatalf("matching destination result = %+v, error = %v", result, err)
 	}
 
 	conflicting := expected
 	conflicting.DistributionID = "different-distribution"
-	result, err = prepareDestination(destination, conflicting)
-	if err == nil || result != nil || !strings.Contains(err.Error(), "different Conductor installation") {
+	conflicting.Version = "v9.9.9"
+	result, replaced, err = prepareDestination(destination, conflicting, false)
+	if err == nil || result != nil || replaced != nil || !strings.Contains(err.Error(), "replacing an installation is a separate operation") {
 		t.Fatalf("conflicting destination result = %+v, error = %v", result, err)
 	}
 }
@@ -566,6 +568,177 @@ func TestInstallKeepsBackupWhenVerificationFails(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(backups[0], "legacy.txt")); err != nil || string(data) != "legacy" {
 		t.Fatalf("backup content = %q, error = %v", data, err)
+	}
+}
+
+// upgradeSource returns a source that differs from testSource only in version,
+// which is the ordinary shape of an upgrade: same payload, new release.
+func upgradeSource(t *testing.T, from Source) Source {
+	t.Helper()
+	next := from
+	next.Version = "v1.3.0"
+	return next
+}
+
+func TestReplaceUpgradesAnInstalledDistribution(t *testing.T) {
+	backupDirectory := testBackupDirectory(t)
+	destination := testDestination(t)
+	source := testSource(t)
+	if _, err := Install(destination, source); err != nil {
+		t.Fatal(err)
+	}
+
+	next := upgradeSource(t, source)
+	next.Replace = true
+	result, err := Install(destination, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "upgraded" || result.Version != "v1.3.0" || result.PreviousVersion != "v1.2.3" {
+		t.Fatalf("result = %+v", result)
+	}
+	installed, _, err := verifyInstallation(destination, result.BinaryPath[len(destination)+1:])
+	if err == nil && installed.Version != "v1.3.0" {
+		t.Fatalf("installed version = %q", installed.Version)
+	}
+	current, err := CheckCurrency(destination, next)
+	if err != nil || current.Status != "current" {
+		t.Fatalf("currency = %+v, error = %v", current, err)
+	}
+	backups, err := filepath.Glob(filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-*"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups = %v, error = %v", backups, err)
+	}
+	retiredManifest, _, err := verifyInstallation(backups[0], "scripts/conductor")
+	if err != nil {
+		// The retired tree keeps the platform's executable name; only assert
+		// what is portable, which is that the outgoing version was preserved.
+		retiredManifest, _, err = verifyInstallation(backups[0], "scripts/conductor.exe")
+	}
+	if err != nil || retiredManifest.Version != "v1.2.3" {
+		t.Fatalf("retired manifest = %+v, error = %v", retiredManifest, err)
+	}
+}
+
+func TestReplaceIsRequiredToOverwriteAnotherVersion(t *testing.T) {
+	testBackupDirectory(t)
+	destination := testDestination(t)
+	source := testSource(t)
+	if _, err := Install(destination, source); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Install(destination, upgradeSource(t, source))
+	if err == nil || !strings.Contains(err.Error(), "replacing an installation is a separate operation") {
+		t.Fatalf("error = %v, want a conflict naming both versions", err)
+	}
+	if !strings.Contains(err.Error(), "v1.2.3") || !strings.Contains(err.Error(), "v1.3.0") {
+		t.Fatalf("error = %v, does not name what is installed and what is offered", err)
+	}
+	current, err := CheckCurrency(destination, source)
+	if err != nil || current.Status != "current" {
+		t.Fatalf("refused conflict disturbed the installation: %+v, error = %v", current, err)
+	}
+}
+
+func TestReplaceRefusesAProtocolChange(t *testing.T) {
+	testBackupDirectory(t)
+	destination := testDestination(t)
+	source := testSource(t)
+	if _, err := Install(destination, source); err != nil {
+		t.Fatal(err)
+	}
+
+	next := upgradeSource(t, source)
+	next.Protocol = source.Protocol + 1
+	next.Replace = true
+	_, err := Install(destination, next)
+	if err == nil || !strings.Contains(err.Error(), "migrate every state root") {
+		t.Fatalf("error = %v, want a protocol refusal pointing at migrate", err)
+	}
+	current, err := CheckCurrency(destination, source)
+	if err != nil || current.Status != "current" {
+		t.Fatalf("refused protocol change disturbed the installation: %+v, error = %v", current, err)
+	}
+}
+
+// A rejected candidate must not cost the working installation. Retirement
+// happens after staging verification for exactly this reason.
+func TestReplaceKeepsTheInstallationWhenTheCandidateFails(t *testing.T) {
+	backupDirectory := testBackupDirectory(t)
+	destination := testDestination(t)
+	source := testSource(t)
+	if _, err := Install(destination, source); err != nil {
+		t.Fatal(err)
+	}
+
+	next := upgradeSource(t, source)
+	next.Replace = true
+	next.SmokeCheck = true
+	if _, err := Install(destination, next); err == nil || !strings.Contains(err.Error(), "install verify") {
+		t.Fatalf("error = %v, want verification failure", err)
+	}
+	current, err := CheckCurrency(destination, source)
+	if err != nil || current.Status != "current" {
+		t.Fatalf("currency = %+v, error = %v", current, err)
+	}
+	backups, err := filepath.Glob(filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-*"))
+	if err != nil || len(backups) != 0 {
+		t.Fatalf("failed candidate displaced the installation: %v, error = %v", backups, err)
+	}
+}
+
+// Publication failing after the outgoing tree is already aside is the only
+// window where a working installation can be lost, so the restore that closes
+// it has to be exercised rather than reasoned about.
+func TestReplaceRestoresTheInstallationWhenPublicationFails(t *testing.T) {
+	backupDirectory := testBackupDirectory(t)
+	destination := testDestination(t)
+	source := testSource(t)
+	if _, err := Install(destination, source); err != nil {
+		t.Fatal(err)
+	}
+
+	original := publish
+	publish = func(string, string) error { return errors.New("publication refused") }
+	t.Cleanup(func() { publish = original })
+
+	next := upgradeSource(t, source)
+	next.Replace = true
+	if _, err := Install(destination, next); err == nil || !strings.Contains(err.Error(), "publication refused") {
+		t.Fatalf("error = %v, want the publication failure", err)
+	}
+	current, err := CheckCurrency(destination, source)
+	if err != nil || current.Status != "current" {
+		t.Fatalf("the outgoing installation was not restored: %+v, error = %v", current, err)
+	}
+	backups, err := filepath.Glob(filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-*"))
+	if err != nil || len(backups) != 0 {
+		t.Fatalf("restore left the tree behind in backups: %v, error = %v", backups, err)
+	}
+}
+
+// Replacement is permission to overwrite this payload at another version, never
+// permission to overwrite something else that happens to sit at the path.
+func TestReplaceStillRefusesAnUnrelatedTree(t *testing.T) {
+	testBackupDirectory(t)
+	destination := testDestination(t)
+	source := testSource(t)
+	if _, err := Install(destination, source); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(destination, manifestName)
+	if err := os.Chmod(manifestPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	next := upgradeSource(t, source)
+	next.Replace = true
+	if _, err := Install(destination, next); err == nil || !strings.Contains(err.Error(), "install conflict") {
+		t.Fatalf("error = %v, want a conflict on an unreadable manifest", err)
 	}
 }
 

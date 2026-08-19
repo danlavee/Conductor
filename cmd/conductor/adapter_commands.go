@@ -257,8 +257,12 @@ func runAdapterArm(client *conductor.Client, session, agent string) error {
 // and stops there. Enabling stays a host command the user runs, because the
 // host's plugin registry is private state with no documented contract.
 func runAdapterInstall(args []string) error {
-	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+	if len(args) < 1 || strings.TrimSpace(args[0]) == "" {
 		return adapterInstallUsageError()
+	}
+	replace, err := replaceRequested(args[1:])
+	if err != nil {
+		return err
 	}
 	payload := install.AdapterPayload(claude.AdapterName)
 	if err := install.ValidateDestination(args[0], payload); err != nil {
@@ -268,6 +272,7 @@ func runAdapterInstall(args []string) error {
 	if err != nil {
 		return err
 	}
+	source.Replace = replace
 	result, err := install.Install(args[0], source)
 	if err != nil {
 		return err
@@ -298,7 +303,7 @@ func adapterUsageError() error {
 }
 
 func adapterInstallUsageError() error {
-	return errors.New("usage: conductor adapter claude install <absolute-adapter-directory>")
+	return errors.New("usage: conductor adapter claude install <absolute-adapter-directory> [--replace --root=<absolute-state-root>]")
 }
 
 func adapterBindUsageError() error {

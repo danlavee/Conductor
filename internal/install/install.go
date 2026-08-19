@@ -21,6 +21,12 @@ const (
 
 var errDestinationExists = errors.New("installation destination already exists")
 
+// publish is the final rename, named as a variable so a test can reach the one
+// branch where a working installation could be lost: publication failing after
+// the outgoing tree has already been moved aside. Nothing but a test replaces
+// it.
+var publish = publishNoReplace
+
 // Payload names one installable unit. A skill and a host adapter differ in
 // exactly three ways -- the trailing path the host expects them at, where the
 // executable sits inside the tree, and whether the tree is a skill at all --
@@ -63,17 +69,23 @@ type Source struct {
 	GOOS           string
 	GOARCH         string
 	SmokeCheck     bool
+	// Replace permits overwriting an installation of this same payload at a
+	// different version. A fresh install never sets it, so the destination
+	// contract stays what docs/installation.md promises: the caller that means
+	// to replace something has to say so.
+	Replace bool
 }
 
 // Result is the deterministic install response written by the CLI.
 type Result struct {
-	Status       string `json:"status"`
-	Version      string `json:"version"`
-	Protocol     int    `json:"protocol"`
-	InstallPath  string `json:"install_path"`
-	BinaryPath   string `json:"binary_path"`
-	FileCount    int    `json:"file_count"`
-	ManifestHash string `json:"manifest_hash"`
+	Status          string `json:"status"`
+	Version         string `json:"version"`
+	PreviousVersion string `json:"previous_version,omitempty"`
+	Protocol        int    `json:"protocol"`
+	InstallPath     string `json:"install_path"`
+	BinaryPath      string `json:"binary_path"`
+	FileCount       int    `json:"file_count"`
+	ManifestHash    string `json:"manifest_hash"`
 }
 
 // CurrencyResult reports whether destination's installed content matches
@@ -91,9 +103,11 @@ func Install(destination string, source Source) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("install preflight: %w", err)
 	}
-	if existingResult, err := prepareDestination(cleanDestination, expected); err != nil {
+	existingResult, replaced, err := prepareDestination(cleanDestination, expected, source.Replace)
+	if err != nil {
 		return Result{}, err
-	} else if existingResult != nil {
+	}
+	if existingResult != nil {
 		return *existingResult, nil
 	}
 
@@ -123,15 +137,44 @@ func Install(destination string, source Source) (Result, error) {
 			return Result{}, fmt.Errorf("install verify: %w", err)
 		}
 	}
-	if err := publishNoReplace(stage, cleanDestination); err != nil {
-		if existingResult, inspectErr := prepareDestination(cleanDestination, expected); inspectErr != nil {
+	// Displace the outgoing installation only now, with a verified candidate
+	// ready to take its place. Everything above this line can still reject the
+	// incoming tree, and must do so without disturbing a working one.
+	if replaced != nil {
+		retiredPath, retireErr := retire(cleanDestination)
+		if retireErr != nil {
+			return Result{}, fmt.Errorf("install replace: %w", retireErr)
+		}
+		replaced.retired = retiredPath
+	}
+	if err := publish(stage, cleanDestination); err != nil {
+		if replaced != nil {
+			// Put back exactly what was displaced. Leaving the destination
+			// empty would turn a failed upgrade into an uninstall, and
+			// re-classifying it would only displace the tree a second time.
+			if restoreErr := os.Rename(replaced.retired, cleanDestination); restoreErr != nil {
+				return Result{}, fmt.Errorf("install publish: %w; the previous installation is at %s and could not be restored: %v", err, replaced.retired, restoreErr)
+			}
+			return Result{}, fmt.Errorf("install publish: %w", err)
+		}
+		if existingResult, _, inspectErr := prepareDestination(cleanDestination, expected, false); inspectErr != nil {
 			return Result{}, inspectErr
 		} else if existingResult != nil {
 			return *existingResult, nil
 		}
 		return Result{}, fmt.Errorf("install publish: %w", err)
 	}
-	return resultFor("installed", cleanDestination, expected, manifestData), nil
+	result := resultFor("installed", cleanDestination, expected, manifestData)
+	if replaced != nil {
+		// The retired tree is deliberately left on disk. Removing it here would
+		// fail anyway during a real cutover -- an outgoing watcher still has its
+		// binary mapped and only exits after replacement -- and by this point
+		// the destination is already correct, so a failed cleanup must not fail
+		// the install.
+		result.Status = "upgraded"
+		result.PreviousVersion = replaced.previousVersion
+	}
+	return result, nil
 }
 
 // ValidateDestination checks the native host's install-path contract without writing.

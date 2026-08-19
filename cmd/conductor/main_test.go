@@ -28,29 +28,75 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+const installUsage = "usage: conductor install <absolute-skill-directory> [--replace --root=<absolute-state-root>]"
+
 func TestInstallArgumentFailuresDoNotInitializeRuntime(t *testing.T) {
-	for name, args := range map[string][]string{
-		"missing":   {"install"},
-		"empty":     {"install", ""},
-		"relative":  {"install", filepath.Join(".agents", "skills", "conductor")},
-		"malformed": {"install", filepath.Join(t.TempDir(), ".agents", "skills", "other")},
-		"extra":     {"install", "first", "second"},
+	for name, invocation := range map[string]struct {
+		args    []string
+		message string
+	}{
+		"missing":     {args: []string{"install"}, message: installUsage},
+		"empty":       {args: []string{"install", ""}, message: installUsage},
+		"relative":    {args: []string{"install", filepath.Join(".agents", "skills", "conductor")}, message: installUsage},
+		"malformed":   {args: []string{"install", filepath.Join(t.TempDir(), ".agents", "skills", "other")}, message: installUsage},
+		"extra":       {args: []string{"install", "first", "second"}, message: "unrecognized option second"},
+		"rootAlone":   {args: []string{"install", "first", "--root=" + filepath.Join(t.TempDir(), "root")}, message: "--root applies only to --replace"},
+		"replaceBare": {args: []string{"install", "first", "--replace"}, message: "--replace requires --root=<absolute-state-root>"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			state := filepath.Join(t.TempDir(), "runtime-state")
 			t.Setenv("CONDUCTOR_HOME", state)
-			err := run(args)
+			err := run(invocation.args)
 			if err == nil {
 				t.Fatal("invalid install invocation succeeded")
 			}
-			if err.Error() != "usage: conductor install <absolute-skill-directory>" {
-				t.Fatalf("error = %q", err)
+			if err.Error() != invocation.message {
+				t.Fatalf("error = %q, want %q", err, invocation.message)
 			}
 			if _, statErr := os.Stat(state); !os.IsNotExist(statErr) {
 				t.Fatalf("runtime state was initialized: %v", statErr)
 			}
 		})
 	}
+}
+
+// An unfrozen root is the case the precondition exists for: the tree is about
+// to be overwritten while agents are still running out of it. Both ways a root
+// can fail to be frozen are covered -- one that never cut over at all, and one
+// carrying real cutover state in some other phase -- because they reach the
+// answer by different routes.
+func TestReplaceRefusesAnUnfrozenRoot(t *testing.T) {
+	const want = "replacing an installation requires a frozen cutover root"
+	destination := filepath.Join(t.TempDir(), ".agents", "skills", "conductor")
+
+	t.Run("neverCutOver", func(t *testing.T) {
+		root := t.TempDir()
+		err := run([]string{"install", destination, "--replace", "--root=" + root})
+		if err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	})
+
+	t.Run("cutOverThenAborted", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "protocol.json"), []byte("{\"version\":4}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cutover.Freeze(root, "cut-1", currentVersion(), nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cutover.Abort(root, "cut-1"); err != nil {
+			t.Fatal(err)
+		}
+		current, exists, err := cutover.Observe(root)
+		if err != nil || !exists || current.Phase == cutover.Frozen {
+			t.Fatalf("setup did not produce real cutover state outside frozen: %+v exists=%v error=%v", current, exists, err)
+		}
+		err = run([]string{"install", destination, "--replace", "--root=" + root})
+		if err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	})
 }
 
 func TestMissingInstallFolderProcessContract(t *testing.T) {
@@ -70,7 +116,7 @@ func TestMissingInstallFolderProcessContract(t *testing.T) {
 	if err := json.Unmarshal(stderr, &response); err != nil {
 		t.Fatalf("stderr is not JSON: %q: %v", stderr, err)
 	}
-	if response.Code != "INVALID" || response.Message != "usage: conductor install <absolute-skill-directory>" {
+	if response.Code != "INVALID" || response.Message != installUsage {
 		t.Fatalf("stderr response = %+v", response)
 	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
@@ -423,7 +469,7 @@ func TestUsageExposesNoVendorWatchTransports(t *testing.T) {
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> put (<text> | --file=<path>) | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> edit <index> (<text> | --file=<path>) | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> redact <group/topic> (<index> | --start=N --end=M) | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
+	const want = "usage: conductor install <absolute-skill-directory> [--replace --root=<absolute-state-root>] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace --root=<absolute-state-root>] | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> list-agents | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> begin <group/topic> | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> put (<text> | --file=<path>) | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> edit <index> (<text> | --file=<path>) | conductor <agent> strike <group/topic> <index> | conductor <agent> strike <index> | conductor <agent> redact <group/topic> (<index> | --start=N --end=M) | conductor <agent> commit | conductor <agent> abort | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}

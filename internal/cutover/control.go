@@ -117,6 +117,20 @@ func Observe(root string) (State, bool, error) {
 	return observe(root)
 }
 
+// IsFrozen reports whether root is fenced by a completed freeze. It exists so
+// the callers that change something a running system depends on -- migrating a
+// state root, replacing an installation -- cannot disagree about the answer.
+// A root that never cut over is not frozen: Observe reports it as absent while
+// still describing an active phase, and reading only the phase would admit
+// every ordinary live root.
+func IsFrozen(root string) (bool, error) {
+	current, exists, err := observe(root)
+	if err != nil {
+		return false, err
+	}
+	return exists && current.Phase == Frozen, nil
+}
+
 func activeState(generation int64) State {
 	return State{Phase: Active, Generation: generation, Capability: Capability}
 }

@@ -89,52 +89,91 @@ func isUNCVolume(volume string) bool {
 	return strings.HasPrefix(volume, `\\`) && !strings.HasPrefix(lower, `\\?\`)
 }
 
-func prepareDestination(destination string, expected manifest) (*Result, error) {
+// replacement is permission to overwrite the installation already at the
+// destination, carrying what it was so the result can name what it replaced.
+// Nothing is displaced when this is issued: the move happens once the incoming
+// tree is staged and verified, so a rejected candidate leaves the working
+// installation exactly where it was.
+type replacement struct {
+	retired         string
+	previousVersion string
+}
+
+// retire moves an installed tree off the destination and reports where it went.
+// Both callers displace to the same place under the same naming -- an upgrade,
+// and the safety net for a tree carrying no manifest at all -- so an operator
+// has one location to look in rather than one per reason.
+func retire(destination string) (string, error) {
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user home directory for backup: %w", err)
+	}
+	// Grouped by the directory the payload was being installed into --
+	// "skills", "adapters" -- rather than by a fixed name, so a backup taken
+	// during an adapter install is not filed under a word that describes
+	// something else.
+	backupDirectory := filepath.Join(userHome, ".conductor", "backups", filepath.Base(filepath.Dir(destination)))
+	if err := os.MkdirAll(backupDirectory, 0o700); err != nil {
+		return "", fmt.Errorf("failed to create backup directory: %w", err)
+	}
+	backupPath := filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-"+time.Now().Format("20060102150405"))
+	if err := os.Rename(destination, backupPath); err != nil {
+		return "", fmt.Errorf("failed to move %s aside: %w", destination, err)
+	}
+	return backupPath, nil
+}
+
+// prepareDestination classifies what already occupies destination. Only two of
+// its outcomes let the install proceed: nothing is there, or what is there was
+// moved aside first.
+func prepareDestination(destination string, expected manifest, replace bool) (*Result, *replacement, error) {
 	info, err := os.Lstat(destination)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("install preflight: inspect destination: %w", err)
+		return nil, nil, fmt.Errorf("install preflight: inspect destination: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("install conflict: destination is a symbolic link")
+		return nil, nil, errors.New("install conflict: destination is a symbolic link")
 	}
 	if !info.IsDir() {
-		return nil, errors.New("install conflict: destination is not a directory")
+		return nil, nil, errors.New("install conflict: destination is not a directory")
 	}
+	// A successful verification is also what proves the destination holds this
+	// payload rather than the other one: the two disagree about where the
+	// executable lives, so an adapter tree fails a skill's verification before
+	// any version is compared.
 	existing, manifestData, err := verifyInstallation(destination, expected.Executable)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			empty, emptyErr := isDirEmpty(destination)
 			if emptyErr == nil && !empty {
-				userHome, homeErr := os.UserHomeDir()
-				if homeErr != nil {
-					return nil, fmt.Errorf("install preflight: failed to get user home directory for backup: %w", homeErr)
+				backupPath, retireErr := retire(destination)
+				if retireErr != nil {
+					return nil, nil, fmt.Errorf("install preflight: %w", retireErr)
 				}
-				// Grouped by the directory the payload was being installed
-				// into -- "skills", "adapters" -- rather than by a fixed name,
-				// so a backup taken during an adapter install is not filed
-				// under a word that describes something else.
-				backupDirectory := filepath.Join(userHome, ".conductor", "backups", filepath.Base(filepath.Dir(destination)))
-				if err := os.MkdirAll(backupDirectory, 0o700); err != nil {
-					return nil, fmt.Errorf("install preflight: failed to create backup directory: %w", err)
-				}
-				backupPath := filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-"+time.Now().Format("20060102150405"))
-				log.Printf("Warning: Destination %s has no install manifest. Creating a safety-net backup at %s and overwriting...", destination, backupPath)
-				if renameErr := os.Rename(destination, backupPath); renameErr != nil {
-					return nil, fmt.Errorf("install preflight: failed to backup conflicting destination: %w", renameErr)
-				}
-				return nil, nil
+				log.Printf("Warning: Destination %s had no install manifest. Its contents were moved to %s.", destination, backupPath)
+				return nil, nil, nil
 			}
 		}
-		return nil, fmt.Errorf("install conflict: %w", err)
+		return nil, nil, fmt.Errorf("install conflict: %w", err)
 	}
-	if existing.DistributionID != expected.DistributionID {
-		return nil, errors.New("install conflict: destination contains a different Conductor installation")
+	if existing.DistributionID == expected.DistributionID {
+		result := resultFor("already-installed", destination, existing, manifestData)
+		return &result, nil, nil
 	}
-	result := resultFor("already-installed", destination, existing, manifestData)
-	return &result, nil
+	if !replace {
+		return nil, nil, fmt.Errorf("install conflict: destination holds Conductor %s and this is %s; replacing an installation is a separate operation", existing.Version, expected.Version)
+	}
+	// Refused rather than handled. Only the state roots this installation
+	// serves can be migrated across a protocol change, and the installer knows
+	// none of them -- replacing the binary would leave that work undone while
+	// looking like it had succeeded.
+	if existing.Protocol != expected.Protocol {
+		return nil, nil, fmt.Errorf("install conflict: installed state protocol %d differs from %d; migrate every state root this installation serves first", existing.Protocol, expected.Protocol)
+	}
+	return nil, &replacement{previousVersion: existing.Version}, nil
 }
 
 func isDirEmpty(name string) (bool, error) {

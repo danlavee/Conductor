@@ -14,8 +14,14 @@ This is a conversation you carry out, not a CLI command. When asked to update or
    1. Confirm the incoming `version` reports `cutover_capability: 1`. Finish or abort every durable transaction.
    2. Run `conductor cutover freeze <absolute-active-root> --id=<id> --release=<release>`. This closes operation admission, drains in-flight calls, refuses active legacy watchers, and leaves writes blocked.
    3. If the protocol changes, run `conductor migrate <absolute-active-root> <absolute-staging-root>` and validate the staging root with real reads. Keep the old root as the rollback snapshot.
-   4. Replace the root generation at the same logical path, binary, and skill while still frozen. Then run `conductor cutover replace <absolute-active-root> --id=<id>`.
-   Update the host adapter's tree in the same step. It carries its own copy of the executable, and an adapter left behind runs the outgoing CLI against the incoming generation — it keeps waking on schedule, so nothing reports an error.
+   4. Replace the root generation at the same logical path, and the installed trees with it, while still frozen:
+
+   ```bash
+   conductor install <absolute-skill-directory> --replace --root=<absolute-active-root>
+   conductor adapter claude install <absolute-adapter-directory> --replace --root=<absolute-active-root>
+   ```
+
+   Do the adapter in the same step, never later. It carries its own copy of the executable, and an adapter left behind runs the outgoing CLI against the incoming generation — it keeps waking on schedule, so nothing reports an error. `--replace` is refused unless that root is already frozen, and refused outright on a protocol change, which is what step 3 exists for. Each outgoing tree is moved to `~/.conductor/backups/<skills|adapters>/<name>.pre-upgrade-<timestamp>` and left there: the outgoing binary is still running out of it, so deleting it now would fail. Then run `conductor cutover replace <absolute-active-root> --id=<id>`, which refuses to run from any binary but the target release.
    5. Let every old watcher fire its one no-delta `conductor-replaced` activation and exit. Reload the installed skill and binary; each host's adapter restores its own delivery stream against the new generation.
    6. Run `conductor cutover activate <absolute-active-root> --id=<id>`, then verify one fresh publication, delivery, and acknowledgment.
    Before the root is replaced, `conductor cutover abort <absolute-active-root> --id=<id>` safely returns to active admission. After replacement, never abort; resume the same `replace`/`activate` cutover identity. A timeout never unfreezes the system.

@@ -10,11 +10,11 @@ import (
 )
 
 func runMigrateCommand(source, destination string) error {
-	current, exists, err := cutover.Observe(source)
+	frozen, err := cutover.IsFrozen(source)
 	if err != nil {
 		return err
 	}
-	if !exists || current.Phase != cutover.Frozen {
+	if !frozen {
 		return fmt.Errorf("migration requires a frozen cutover source")
 	}
 	report, err := migrate.Run(source, destination)
