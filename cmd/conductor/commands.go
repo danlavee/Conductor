@@ -20,6 +20,9 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return usageError()
 	}
+	if helpRequested(args) {
+		return conductor.WriteJSON(os.Stdout, usageResult{Usage: usageText})
+	}
 	switch args[0] {
 	case "install":
 		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
