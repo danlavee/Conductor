@@ -192,10 +192,17 @@ func (c *Client) ListAgents() ([]Agent, error) {
 // persisted Agent record and must not become one: registration is durable and
 // self-declared, while wakeability is observed at the moment of asking and
 // goes stale the instant a stream dies.
+//
+// Holder says how long the true answer is likely to stay true, which the
+// boolean alone cannot: an adapter holds across turns, and a self-armed watcher
+// exits on its first delivery. Without it every roster -- including the one a
+// delivery hands the agent whose own watcher is exiting as it writes it --
+// reports those two as the same fact.
 type RosterEntry struct {
 	Agent
-	Wakeable bool `json:"wakeable"`
-	PID      int  `json:"pid,omitempty"`
+	Wakeable bool         `json:"wakeable"`
+	PID      int          `json:"pid,omitempty"`
+	Holder   *WatchHolder `json:"holder,omitempty"`
 }
 
 // Roster lists the registry the way an agent choosing whom to address needs to
@@ -219,11 +226,18 @@ func (c *Client) Roster() ([]RosterEntry, error) {
 	}
 	roster := make([]RosterEntry, 0, len(agents))
 	for _, agent := range agents {
-		pid, err := c.liveWatchOwner(agent.Name)
+		owner, err := c.liveWatchOwner(agent.Name)
 		if err != nil {
 			return nil, err
 		}
-		roster = append(roster, RosterEntry{Agent: agent, Wakeable: pid > 0, PID: pid})
+		entry := RosterEntry{Agent: agent}
+		if owner != nil {
+			holder := owner.holder()
+			entry.Wakeable = true
+			entry.PID = owner.PID
+			entry.Holder = &holder
+		}
+		roster = append(roster, entry)
 	}
 	return roster, nil
 }

@@ -7,7 +7,75 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/danlavee/Conductor/internal/platform"
 )
+
+// TestRosterSaysHowLongEachWakeableEntryStaysTrue covers what every roster
+// carries -- the join snapshot and the roster a join or leave delivery brings,
+// both of which come through here. Two entries can both be wakeable while one
+// holds across turns and the other has already spent its single delivery, and
+// the boolean reports those identically.
+func TestRosterSaysHowLongEachWakeableEntryStaysTrue(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+	for name, acquire := range map[string]func(*Client) (func() error, error){
+		"served": func(c *Client) (func() error, error) {
+			return c.AcquireAdapterWatchOwnership("claude", "session-1")
+		},
+		"selfarm": (*Client).AcquireWatchOwnership,
+	} {
+		if _, err := client.Join(name, "dev"); err != nil {
+			t.Fatal(err)
+		}
+		release, err := acquire(newTestClient(t, home, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = release() }()
+	}
+	if _, err := client.Join("absent", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	// A record an older build wrote. Both readers of the owner record share one
+	// normalization so they cannot disagree about it, and testing that on the
+	// status side alone would leave the shared part half covered.
+	if _, err := client.Join("legacy", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	_, ownerPath, err := watchGuardPaths(home, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := os.Getpid()
+	processStart, _ := platform.ProcessStartToken(pid)
+	if err := writeJSONAtomic(ownerPath, map[string]any{
+		"pid": pid, "process_start": processStart, "protocol": CurrentProtocolVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	roster, err := client.Roster()
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := map[string]*WatchHolder{}
+	for _, entry := range roster {
+		held[entry.Name] = entry.Holder
+	}
+	if held["served"] == nil || held["served"].Kind != HolderAdapter || held["served"].Adapter != "claude" {
+		t.Errorf("served holder = %+v, want the adapter that holds it", held["served"])
+	}
+	if held["selfarm"] == nil || held["selfarm"].Kind != HolderSelf {
+		t.Errorf("self-armed holder = %+v, want kind self", held["selfarm"])
+	}
+	if held["absent"] != nil {
+		t.Errorf("unheld holder = %+v, want none", held["absent"])
+	}
+	if held["legacy"] == nil || held["legacy"].Kind != HolderUnknown {
+		t.Errorf("unlabelled holder = %+v, want kind %q", held["legacy"], HolderUnknown)
+	}
+}
 
 func TestRegisterPutGetAndDiskState(t *testing.T) {
 	home := t.TempDir()

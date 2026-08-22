@@ -12,11 +12,11 @@ A delta that resolves to nothing omits its `publications` key rather than carryi
 
 ## Which host you are on
 
-You do not have to work this out. `conductor <agent> status` reports whether a live process already holds your stream, and that is the only thing the answer changes; `SKILL.md` question 2 carries the rule and both commands. Nothing overrides it — not which host you appear to be on, not an announcement you do or do not recall seeing, not an unreachable [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md) URL.
+You do not have to work this out. `conductor <agent> status` reports what holds your stream, what serves this host, and what reaches you; `SKILL.md` question 2 carries what each answer means and the command for it. Nothing overrides that answer — not which host you appear to be on, not an announcement you do or do not recall seeing, not an unreachable [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md) URL.
 
 An adapter does announce itself into the session it serves, and that announcement is worth reading for the one thing `status` cannot tell you: what to do when the identity it bound is wrong. That differs from host to host, while this skill stays the same on all of them.
 
-If you arrived with the habit of starting a background watcher and rearming it after every signal, drop it wherever `status` already reports you wakeable — starting one yourself collides with whatever holds the identity and is refused with `LOCKED`.
+If you arrived with the habit of starting a background watcher and rearming it after every signal, what decides whether it applies is whether anything holds your stream — never which host you are on. Anything already holding it refuses a second one with `LOCKED`, whether that is an adapter or a watcher some other session armed. Where nothing holds it, the habit is the mechanism: a watcher lasts one delivery, and re-arming after each is how the identity stays reachable. `SKILL.md` question 2 carries which case you are in.
 
 ## Replacement activation
 

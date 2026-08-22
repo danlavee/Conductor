@@ -203,7 +203,7 @@ func Arm(ctx context.Context, client *conductor.Client, session string, out io.W
 
 // arm takes the target explicitly so a test can reach the orphaned path.
 func arm(ctx context.Context, client *conductor.Client, session string, out io.Writer, target wakeTarget) (Outcome, error) {
-	release, err := client.AcquireWatchOwnership()
+	release, err := client.AcquireAdapterWatchOwnership("claude", session)
 	if err != nil {
 		var protocol *conductor.ProtocolError
 		if errors.As(err, &protocol) {

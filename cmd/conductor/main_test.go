@@ -536,8 +536,10 @@ func TestWatchResolvesContentBeforeWaking(t *testing.T) {
 	if err != nil || len(stderr) != 0 {
 		t.Fatalf("watch --once failed: %v, stderr = %q", err, stderr)
 	}
+	deliveries := json.NewDecoder(bytes.NewReader(stdout))
+	readArmAcknowledgement(t, deliveries)
 	var batch conductor.BatchDelivery
-	if err := json.Unmarshal(stdout, &batch); err != nil {
+	if err := deliveries.Decode(&batch); err != nil {
 		t.Fatalf("stdout is not a delivery batch: %q: %v", stdout, err)
 	}
 	if len(batch.Deliveries) == 0 {
@@ -643,8 +645,10 @@ func TestCutoverFreezeReplaceFireAndRearm(t *testing.T) {
 		_ = watch.Process.Kill()
 		t.Fatal("watch did not fire replacement activation")
 	}
+	replaced := json.NewDecoder(bytes.NewReader(watchOut.Bytes()))
+	readArmAcknowledgement(t, replaced)
 	var activation conductor.ReplacementActivation
-	if err := json.Unmarshal(watchOut.Bytes(), &activation); err != nil {
+	if err := replaced.Decode(&activation); err != nil {
 		t.Fatalf("activation JSON: %v: %s", err, watchOut.String())
 	}
 	if activation.Type != "conductor-replaced" || activation.CutoverID != "cut-1" || activation.Release != targetRelease {
@@ -660,8 +664,10 @@ func TestCutoverFreezeReplaceFireAndRearm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rearm: %v: %s", err, stderr)
 	}
+	rearmed := json.NewDecoder(bytes.NewReader(stdout))
+	readArmAcknowledgement(t, rearmed)
 	var batch conductor.BatchDelivery
-	if err := json.Unmarshal(stdout, &batch); err != nil || len(batch.Deliveries) == 0 {
+	if err := rearmed.Decode(&batch); err != nil || len(batch.Deliveries) == 0 {
 		t.Fatalf("rearmed delivery = %#v, %v: %s", batch, err, stdout)
 	}
 }
@@ -866,7 +872,37 @@ func startWatch(t *testing.T, root string) (*exec.Cmd, *json.Decoder) {
 	if err := watch.Start(); err != nil {
 		t.Fatal(err)
 	}
-	return watch, json.NewDecoder(stdout)
+	deliveries := json.NewDecoder(stdout)
+	readArmAcknowledgement(t, deliveries)
+	return watch, deliveries
+}
+
+// readArmAcknowledgement consumes what watch answers the moment it takes the
+// stream, and is the reason every caller here decodes a sequence rather than
+// one document. Arming is an act the agent concludes from, and it used to
+// return nothing at all -- leaving the host's pid as the only evidence, which
+// reports that a process exists and not that anything reaches the identity.
+func readArmAcknowledgement(t *testing.T, deliveries *json.Decoder) statusReport {
+	t.Helper()
+	var armed statusReport
+	// Bounded, because the defect this helper exists to catch is the answer
+	// arriving only with the first delivery. On a stream where no delivery is
+	// coming -- the case that matters -- an unbounded decode reports that as a
+	// package-wide test timeout instead of as this assertion.
+	decoded := make(chan error, 1)
+	go func() { decoded <- deliveries.Decode(&armed) }()
+	select {
+	case err := <-decoded:
+		if err != nil {
+			t.Fatalf("watch armed without answering: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("watch took the stream and answered nothing before waiting")
+	}
+	if !armed.Wakeable || armed.Holder == nil || armed.Holder.Kind != conductor.HolderSelf {
+		t.Fatalf("arm acknowledgement = %#v; want a wakeable identity held by this session", armed)
+	}
+	return armed
 }
 
 func stopWatch(t *testing.T, watch *exec.Cmd) {

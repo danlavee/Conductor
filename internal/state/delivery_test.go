@@ -199,6 +199,49 @@ func TestContentJoinCarriesRoster(t *testing.T) {
 	if err != nil || len(delivery.Roster) != 1 || delivery.Roster[0].Name != "a" {
 		t.Fatalf("delivery = %#v, error = %v", delivery, err)
 	}
+	// The roster a delivery carries is the same one the snapshot carries, and
+	// the holder has to survive the trip: this is the copy an agent reads
+	// without having asked for it.
+	release, err := client.AcquireWatchOwnership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if _, err := client.Join("b", "review"); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range resolveJoinRoster(t, client) {
+		if entry.Name != "a" {
+			continue
+		}
+		if entry.Holder == nil || entry.Holder.Kind != HolderSelf {
+			t.Fatalf("delivered holder = %+v, want kind %q", entry.Holder, HolderSelf)
+		}
+		return
+	}
+	t.Fatal("the delivered roster dropped the held agent")
+}
+
+// resolveJoinRoster returns the roster from the pending delivery that carries
+// one. A join raises the registry signal alongside the collaboration/agents
+// update, and only the first of those carries a roster.
+func resolveJoinRoster(t *testing.T, client *Client) []RosterEntry {
+	t.Helper()
+	summaries, err := client.Watch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, summary := range summaries {
+		delivery, err := client.ResolveDelivery(summary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(delivery.Roster) != 0 {
+			return delivery.Roster
+		}
+	}
+	t.Fatal("no delivery carried a roster")
+	return nil
 }
 
 func TestResolveBatchGroupsSameTopicSignalsAndCapsAtDefaultReadLimit(t *testing.T) {

@@ -12,6 +12,8 @@ type Summary = protocol.Summary
 type ReplacementActivation = state.ReplacementActivation
 type WatchResult = state.WatchResult
 type WatchStatus = state.WatchStatus
+type WatchHolder = state.WatchHolder
+type HolderKind = state.HolderKind
 type RosterEntry = state.RosterEntry
 type Snapshot = state.Snapshot
 type Subscription = state.Subscription
@@ -25,6 +27,10 @@ const (
 	ReadRange = state.ReadRange
 	ReadDelta = state.ReadDelta
 	ReadFull  = state.ReadFull
+
+	HolderSelf    = state.HolderSelf
+	HolderAdapter = state.HolderAdapter
+	HolderUnknown = state.HolderUnknown
 )
 
 // DefaultReadLimit caps get and watch responses. Range and delta reads may

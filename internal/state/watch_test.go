@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/danlavee/Conductor/internal/platform"
 )
 
 func TestWatchAcknowledgementReplaysBeforeCheckpoint(t *testing.T) {
@@ -291,6 +293,101 @@ func TestWatchReconcilesJournalWhenInboxEndsWithTruncatedLine(t *testing.T) {
 	afterRepair := watchOne(t, client)
 	if afterRepair.Sequence != next.Sequence {
 		t.Fatalf("watch after repair = %#v", afterRepair)
+	}
+}
+
+// An identity held by an adapter and one holding its own watcher are both
+// wakeable and differ in everything the agent must then do, so status has to
+// separate them. It also has to say what reaches the agent: an agent that armed
+// nothing and an agent subscribed to nothing are equally unreachable, and only
+// one of them looks it.
+func TestStatusReportsWhatHoldsTheStreamAndWhatReachesTheAgent(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+	if _, err := client.Join("nomad", "parser"); err != nil {
+		t.Fatal(err)
+	}
+	nomad := newTestClient(t, home, "nomad")
+
+	status, err := nomad.WatchStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Holder != nil {
+		t.Fatalf("holder = %+v, want none while nothing holds the stream", status.Holder)
+	}
+	if len(status.Subscriptions.TopicGroups) != 0 || len(status.Subscriptions.Topics) != 0 {
+		t.Fatalf("subscriptions = %+v, want empty for an agent that has subscribed to nothing", status.Subscriptions)
+	}
+
+	for _, held := range []struct {
+		acquire func() (func() error, error)
+		want    WatchHolder
+	}{
+		{nomad.AcquireWatchOwnership, WatchHolder{Kind: HolderSelf}},
+		{
+			func() (func() error, error) { return nomad.AcquireAdapterWatchOwnership("claude", "session-1") },
+			WatchHolder{Kind: HolderAdapter, Adapter: "claude", Session: "session-1"},
+		},
+	} {
+		release, err := held.acquire()
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := nomad.WatchStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.Holder == nil || *status.Holder != held.want {
+			t.Fatalf("holder = %+v, want %+v", status.Holder, held.want)
+		}
+		if err := release(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := nomad.SubscribeTopicGroup("development"); err != nil {
+		t.Fatal(err)
+	}
+	status, err = nomad.WatchStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Subscriptions.TopicGroups) != 1 || status.Subscriptions.TopicGroups[0] != "development" {
+		t.Fatalf("subscriptions = %+v, want the group just subscribed", status.Subscriptions)
+	}
+}
+
+// An owner record written before holders were recorded names a live process and
+// says nothing about what it is. Reporting that as either kind would be an
+// invention; the query has an answer for not knowing.
+func TestStatusReportsAnUnlabelledHolderAsUnknown(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+	if _, err := client.Join("nomad", "parser"); err != nil {
+		t.Fatal(err)
+	}
+	nomad := newTestClient(t, home, "nomad")
+	_, ownerPath, err := watchGuardPaths(home, "nomad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := os.Getpid()
+	processStart, _ := platform.ProcessStartToken(pid)
+	if err := writeJSONAtomic(ownerPath, map[string]any{
+		"pid": pid, "process_start": processStart, "protocol": CurrentProtocolVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := nomad.WatchStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Wakeable {
+		t.Fatal("wakeable = false; a live owner without a holder is still holding")
+	}
+	if status.Holder == nil || status.Holder.Kind != HolderUnknown {
+		t.Fatalf("holder = %+v, want kind %q", status.Holder, HolderUnknown)
 	}
 }
 
