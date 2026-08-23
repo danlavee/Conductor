@@ -12,7 +12,7 @@ Holding a stream is not durable, and is not a state anything maintains. It is an
 
 **The promise: while a stream is held for an identity, a delivery reaches a turn.** An adapter makes that promise, by whatever means its host offers. An adapter that can no longer keep it releases the stream rather than holding one it cannot honour.
 
-The core knows a stream is held. It never learns what holds it or what a stream would wake — a bus with no addressee has no vocabulary for either, and no reader for them.
+The core records what holds a stream, and never learns what a stream would wake. The second is what a bus with no addressee has no vocabulary for and no reader for. The first has exactly one reader — the agent deciding whether reachability is its business — and one use: an adapter's hold outlives a turn and re-arms itself, a watcher's ends at its first delivery, so "something holds it" is not an answer an agent can act on. It is reported and never routed on. Nothing resolves a recipient by it, and the day something does, this is a bus with an addressee and the line above is the one that broke.
 
 There are no classes of host. The mechanism varies; the promise does not. A host that cannot keep a process alive between turns needs a waker outside the session, not a category of its own. Whether a host's adapter has landed yet is a difference in tense, not a class: it says how far the work has got, never what kind of host that is.
 
