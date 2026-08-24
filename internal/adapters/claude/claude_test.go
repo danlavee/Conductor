@@ -272,6 +272,16 @@ func joined(t *testing.T, root string) *conductor.Client {
 	if _, err := client.Join("planner", "dev"); err != nil {
 		t.Fatal(err)
 	}
+	// An agent's own join never reaches its own inbox, so a peer supplies the
+	// pending work these tests arm against. Registration force-broadcasts to
+	// collaboration/agents, which reaches every agent without a subscription.
+	peer, err := conductor.New(root, "peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := peer.Join("peer", "review"); err != nil {
+		t.Fatal(err)
+	}
 	return client
 }
 

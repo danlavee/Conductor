@@ -58,32 +58,6 @@ func assertCode(t *testing.T, err error, code string) {
 	}
 }
 
-// drainSummaries watches and immediately acknowledges exactly count pending
-// summaries. Tests use it to skip past the collaboration/agents and join
-// signals a fresh Register produces, when what they actually want to
-// exercise starts afterward. A single Watch call may return more than count
-// at once; anything past the requested count is left unacknowledged so it
-// replays on the caller's own next Watch call, never silently over-drained.
-func drainSummaries(t *testing.T, client *Client, count int) {
-	t.Helper()
-	drained := 0
-	for drained < count {
-		summaries, err := client.Watch()
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, summary := range summaries {
-			if drained >= count {
-				break
-			}
-			if err := client.AcknowledgeSummary(summary); err != nil {
-				t.Fatal(err)
-			}
-			drained++
-		}
-	}
-}
-
 func watchOne(t *testing.T, client *Client) Summary {
 	t.Helper()
 	summaries, err := client.Watch()

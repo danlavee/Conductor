@@ -26,7 +26,19 @@ func (c *Client) publishEvent(kind, topic, agent string, recipients []string) (S
 	return summary, c.writeEvent(Event{Summary: summary, Recipients: recipients})
 }
 
+// writeEvent drops the acting agent from its own event's recipients. An inbox
+// is a wake queue and nothing else -- a record accumulates on its topic whether
+// or not anyone is woken -- and an agent is not an addressee of its own act.
+// Waking one would spend a one-shot hold to report what the agent just did, so
+// an agent that publishes after arming would un-arm itself.
 func (c *Client) writeEvent(event Event) error {
+	recipients := make([]string, 0, len(event.Recipients))
+	for _, recipient := range event.Recipients {
+		if recipient != event.Summary.Agent {
+			recipients = append(recipients, recipient)
+		}
+	}
+	event.Recipients = recipients
 	if err := writeJSONAtomic(filepath.Join(c.Home, "events", indexName(event.Summary.Sequence)), event); err != nil {
 		return err
 	}

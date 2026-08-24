@@ -36,6 +36,16 @@ func TestFrozenCutoverBlocksMutatorsAcknowledgmentsAndInitialization(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The acknowledgement paths below need a summary to be blocked on, and a
+	// publisher is never woken by its own publication, so a peer supplies it.
+	writer := newTestClient(t, root, "")
+	if _, err := writer.Join("writer", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, client)
+	if _, err := writer.Put("dev/tasks", "from a peer"); err != nil {
+		t.Fatal(err)
+	}
 	watch, err := client.WatchResultContext(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +127,7 @@ func TestWatcherStopsReadingRootAndFiresControlOnlyReplacement(t *testing.T) {
 	if _, err := client.Join("reader", "review"); err != nil {
 		t.Fatal(err)
 	}
-	drainPending(t, client)
+	drainAllPending(t, client)
 	idle := make(chan struct{}, 1)
 	client.watchIdleFn = func() {
 		select {
@@ -170,7 +180,7 @@ func TestNewWatcherDoesNotDuplicateReplacementActivation(t *testing.T) {
 	if _, err := client.Join("reader", "review"); err != nil {
 		t.Fatal(err)
 	}
-	drainPending(t, client)
+	drainAllPending(t, client)
 	if _, err := cutover.Freeze(root, "cut-1", "v5", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +355,7 @@ func TestMissingMarkerAfterFreezeObservationFailsClosed(t *testing.T) {
 	if _, err := client.Join("reader", "review"); err != nil {
 		t.Fatal(err)
 	}
-	drainPending(t, client)
+	drainAllPending(t, client)
 	idle := make(chan struct{}, 1)
 	client.watchIdleFn = func() {
 		select {

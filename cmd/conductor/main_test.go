@@ -532,6 +532,11 @@ func TestWatchResolvesContentBeforeWaking(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], state, "", "a", "join", "dev"); err != nil {
 		t.Fatalf("join failed: %v", err)
 	}
+	// An agent's own join never reaches its own inbox, so a peer's registration
+	// is what this one-shot watch resolves content for.
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "peer", "join", "review"); err != nil {
+		t.Fatalf("peer join failed: %v", err)
+	}
 	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "a", "watch", "--once")
 	if err != nil || len(stderr) != 0 {
 		t.Fatalf("watch --once failed: %v, stderr = %q", err, stderr)
@@ -565,6 +570,15 @@ func TestOneShotWatchReleasesOwnership(t *testing.T) {
 	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
+	// A peer's registration is what the one-shot watch below delivers on: an
+	// agent's own join never reaches its own inbox.
+	peer, err := conductor.New(state, "peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := peer.Join("peer", "review"); err != nil {
+		t.Fatal(err)
+	}
 	if err := runWatch(context.Background(), client, true); err != nil {
 		t.Fatal(err)
 	}
@@ -591,10 +605,8 @@ func TestCutoverFreezeReplaceFireAndRearm(t *testing.T) {
 	if _, _, err := runCLIHelper(executable, root, "", "a", "subscribe", "--topic=dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := runCLIHelper(executable, root, "", "a", "watch", "--once"); err != nil {
-		t.Fatalf("drain join: %v", err)
-	}
-
+	// No drain: joining leaves nothing behind for the joiner to consume, so the
+	// watcher below starts on an empty stream.
 	watch := exec.Command(executable, "a", "watch")
 	watch.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
 	watch.Env = replaceEnvironment(watch.Env, "CONDUCTOR_HOME", root)
@@ -657,7 +669,12 @@ func TestCutoverFreezeReplaceFireAndRearm(t *testing.T) {
 	if _, stderr, err := runCLIHelper(executable, root, "", "cutover", "activate", root, "--id=cut-1"); err != nil {
 		t.Fatalf("activate: %v: %s", err, stderr)
 	}
-	if _, _, err := runCLIHelper(executable, root, "", "a", "put", "dev/tasks", "fresh"); err != nil {
+	// A peer publishes what the rearmed watch delivers: a put never wakes the
+	// agent that made it.
+	if _, _, err := runCLIHelper(executable, root, "", "peer", "join", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLIHelper(executable, root, "", "peer", "put", "dev/tasks", "fresh"); err != nil {
 		t.Fatal(err)
 	}
 	stdout, stderr, err := runCLIHelper(executable, root, "", "a", "watch", "--once")
@@ -701,6 +718,11 @@ func TestRemovedWatchModesReturnUsage(t *testing.T) {
 func TestContinuousWatchRetainsOwnershipAfterDelivering(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
 	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	// A peer's registration is what the stream below delivers: an agent's own
+	// join never reaches its own inbox.
+	if _, _, err := runCLIHelper(os.Args[0], root, "", "peer", "join", "review"); err != nil {
 		t.Fatal(err)
 	}
 	watch, deliveries := startWatch(t, root)

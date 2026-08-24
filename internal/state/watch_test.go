@@ -16,6 +16,48 @@ import (
 	"github.com/danlavee/Conductor/internal/platform"
 )
 
+// A one-shot watcher ends at its first delivery, so waking a publisher for its
+// own publication would un-arm any agent that followed the skill's own order:
+// make yourself reachable, then say what you have taken. The record still has
+// to accumulate, and peers still have to be woken -- only the author is spared.
+func TestAnAgentIsNotWokenByItsOwnPublication(t *testing.T) {
+	home := t.TempDir()
+	author := newTestClient(t, home, "")
+	if _, err := author.Join("author", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := author.SubscribeTopic("dev/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	peer := newTestClient(t, home, "")
+	if _, err := peer.Join("peer", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := peer.SubscribeTopic("dev/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, author)
+	drainAllPending(t, peer)
+
+	if _, err := author.Put("dev/tasks", "mine"); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if summaries, err := author.WatchContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the publisher was woken by its own publication: %#v, %v", summaries, err)
+	}
+	if delivered := watchOne(t, peer); delivered.Topic != "dev/tasks" {
+		t.Fatalf("a subscribed peer was not woken: %#v", delivered)
+	}
+	// Sparing the author a wake must not cost it the record.
+	full, err := author.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
+	if err != nil || len(full.Records) != 1 || full.Records[0].Text != "mine" {
+		t.Fatalf("the publication did not accumulate for its author: %#v, %v", full, err)
+	}
+}
+
 func TestWatchAcknowledgementReplaysBeforeCheckpoint(t *testing.T) {
 	home := t.TempDir()
 	a := newTestClient(t, home, "")
@@ -46,7 +88,7 @@ func TestWatchAcknowledgementReplaysBeforeCheckpoint(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := a.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 500, Agent: "a"}, Recipients: []string{"a"}}); err != nil {
+	if err := a.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 500, Agent: "b"}, Recipients: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
 	next := watchOne(t, a)
@@ -61,10 +103,12 @@ func TestWatchReturnsAllPendingSignalsInOneBatch(t *testing.T) {
 	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	drainSummaries(t, client, 2) // collaboration/agents roster commit, then join
+	drainAllPending(t, client)
+	// Authored by a peer: a signal an agent published itself never reaches its
+	// own inbox, so a self-addressed event would leave nothing to batch.
 	recipients := []string{"a"}
 	for _, sequence := range []int64{201, 202, 203} {
-		if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: sequence, Agent: "a"}, Recipients: recipients}); err != nil {
+		if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: sequence, Agent: "b"}, Recipients: recipients}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -98,11 +142,11 @@ func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	// Drain the collaboration/agents roster commit and the join signal
-	// registration itself produces before exercising late-delivery ordering.
-	drainSummaries(t, client, 2)
+	// Reach a clean slate before exercising late-delivery ordering, and let a
+	// peer author the signals: an agent's own act never reaches its own inbox.
+	drainAllPending(t, client)
 	recipients := []string{"a"}
-	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 103, Agent: "a"}, Recipients: recipients}); err != nil {
+	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 103, Agent: "b"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
 	higher := watchOne(t, client)
@@ -112,7 +156,7 @@ func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 	if err := client.AcknowledgeSummary(higher); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 102, Agent: "a"}, Recipients: recipients}); err != nil {
+	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 102, Agent: "b"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
 	late := watchOne(t, client)
@@ -129,7 +173,7 @@ func TestWatchSinceReturnsOnlyHigherIndexes(t *testing.T) {
 	}
 	for index := int64(2); index <= 3; index++ {
 		if err := client.writeEvent(Event{
-			Summary:    Summary{Type: "update", Topic: "dev/tasks", Sequence: index, Agent: "a"},
+			Summary:    Summary{Type: "update", Topic: "dev/tasks", Sequence: index, Agent: "b"},
 			Recipients: []string{"a"},
 		}); err != nil {
 			t.Fatal(err)
@@ -179,14 +223,14 @@ func TestWatchReconcilesJournalWhenInboxAppendIsMissing(t *testing.T) {
 	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	// Drain the collaboration/agents roster commit and the join signal
-	// registration itself produces before exercising journal reconciliation.
-	drainSummaries(t, client, 2)
+	// Reach a clean slate before exercising journal reconciliation, and let a
+	// peer author the signal: an agent's own act never reaches its own inbox.
+	drainAllPending(t, client)
 	index, err := client.nextIndex()
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: index, Agent: "a"}, Recipients: []string{"a"}}
+	event := Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: index, Agent: "b"}, Recipients: []string{"a"}}
 	if err := writeJSONAtomic(filepath.Join(home, "events", indexName(index)), event); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +254,13 @@ func TestWatchSkipsCorruptInboxLine(t *testing.T) {
 			if _, err := client.Join("a", "dev"); err != nil {
 				t.Fatal(err)
 			}
-			drainSummaries(t, client, 2)
+			// A peer's signal is what creates the inbox this test corrupts:
+			// an agent's own act never lands in its own inbox, so a solo join
+			// leaves no file to append to.
+			if _, err := client.publishEvent("update", "dev/tasks", "b", []string{"a"}); err != nil {
+				t.Fatal(err)
+			}
+			drainAllPending(t, client)
 			inboxPath := filepath.Join(home, "inbox", "a")
 			file, err := os.OpenFile(inboxPath, os.O_WRONLY|os.O_APPEND, 0o600)
 			if err != nil {
@@ -222,7 +272,7 @@ func TestWatchSkipsCorruptInboxLine(t *testing.T) {
 			if err := file.Close(); err != nil {
 				t.Fatal(err)
 			}
-			summary, err := client.publishEvent("update", "dev/tasks", "a", []string{"a"})
+			summary, err := client.publishEvent("update", "dev/tasks", "b", []string{"a"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -243,7 +293,12 @@ func TestWatchReconcilesJournalWhenInboxEndsWithTruncatedLine(t *testing.T) {
 	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	drainSummaries(t, client, 2)
+	// A peer's signal is what creates the inbox this test truncates: an agent's
+	// own act never lands in its own inbox, so a solo join leaves no file.
+	if _, err := client.publishEvent("update", "dev/tasks", "b", []string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, client)
 	inboxPath := filepath.Join(home, "inbox", "a")
 	file, err := os.OpenFile(inboxPath, os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -259,7 +314,7 @@ func TestWatchReconcilesJournalWhenInboxEndsWithTruncatedLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: index, Agent: "a"}, Recipients: []string{"a"}}
+	event := Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: index, Agent: "b"}, Recipients: []string{"a"}}
 	if err := writeJSONAtomic(filepath.Join(home, "events", indexName(index)), event); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +325,7 @@ func TestWatchReconcilesJournalWhenInboxEndsWithTruncatedLine(t *testing.T) {
 	if err := client.AcknowledgeSummary(watched); err != nil {
 		t.Fatal(err)
 	}
-	next, err := client.publishEvent("update", "dev/tasks", "a", []string{"a"})
+	next, err := client.publishEvent("update", "dev/tasks", "b", []string{"a"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,18 +481,18 @@ func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 
 func TestWatchDetectsDeregistrationInsteadOfHangingForever(t *testing.T) {
 	// Deregistering "a" the normal way also force-broadcasts a
-	// collaboration/agents strike commit to every still-registered agent,
-	// including "a" itself (its registry file isn't removed until after that
-	// commit) — which would let this watch resolve via an ordinary signal and
-	// mask the bug this test targets. Removing the registry file directly
-	// isolates the actual mechanism: a watch already blocked mid-poll, with no
-	// other bus activity at all, must still notice its own agent is gone.
+	// collaboration/agents strike commit, and while "a" no longer receives its
+	// own commit, a peer deregistering it would deliver one — which would let
+	// this watch resolve via an ordinary signal and mask the bug this test
+	// targets. Removing the registry file directly isolates the actual
+	// mechanism: a watch already blocked mid-poll, with no other bus activity
+	// at all, must still notice its own agent is gone.
 	home := t.TempDir()
 	watcher := newTestClient(t, home, "")
 	if _, err := watcher.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	drainSummaries(t, watcher, 2) // collaboration/agents roster commit, then join
+	drainAllPending(t, watcher)
 
 	result := make(chan error, 1)
 	go func() {

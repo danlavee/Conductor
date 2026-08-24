@@ -77,6 +77,11 @@ func TestArmingAnswersBeforeItWaits(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], root, "", "nomad", "join", "parser"); err != nil {
 		t.Fatal(err)
 	}
+	// A peer's registration is what lets the one-shot watch below terminate;
+	// nomad's own join reaches its peers, not its own inbox.
+	if _, _, err := runCLIHelper(os.Args[0], root, "", "peer", "join", "review"); err != nil {
+		t.Fatal(err)
+	}
 	stdout, stderr, err := runCLIHelper(os.Args[0], root, "", "nomad", "watch", "--once")
 	if err != nil {
 		t.Fatalf("watch: %v: %s", err, stderr)
@@ -103,11 +108,8 @@ func TestArmingAnswersOnAStreamThatNeverDelivers(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	// Consume what joining published, so the watcher below waits on an empty
-	// stream rather than on its own backlog.
-	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "watch", "--once"); err != nil {
-		t.Fatal(err)
-	}
+	// Nothing to consume first: what an agent's join publishes goes to its
+	// peers, never to its own inbox, so this stream starts empty.
 	watch, deliveries := startWatch(t, root)
 	defer stopWatch(t, watch)
 
@@ -125,6 +127,49 @@ func TestArmingAnswersOnAStreamThatNeverDelivers(t *testing.T) {
 	}
 }
 
+// TestPublishingDoesNotEndTheStreamThatArmedIt is the field failure this test
+// file's neighbours could not catch. An agent follows the order the skill sets
+// -- arm, then report what it has taken -- and its own put comes back to it as
+// a delivery, ending the one-shot stream it just armed. The turn then closes
+// with a claim of reachability that was true when written and false when read.
+func TestPublishingDoesNotEndTheStreamThatArmedIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "subscribe", "--topic=dev/log"); err != nil {
+		t.Fatal(err)
+	}
+	watch, deliveries := startWatch(t, root)
+	defer stopWatch(t, watch)
+
+	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "put", "dev/log", "picked this up"); err != nil {
+		t.Fatalf("put: %v: %s", err, stderr)
+	}
+	delivered := make(chan error, 1)
+	go func() {
+		var next json.RawMessage
+		delivered <- deliveries.Decode(&next)
+	}()
+	select {
+	case err := <-delivered:
+		t.Fatalf("the stream took the agent's own publication as a delivery: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	// Still held, so the record the agent is waiting for can still reach it.
+	stdout, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "status")
+	if err != nil {
+		t.Fatalf("status: %v: %s", err, stderr)
+	}
+	var reported conductor.WatchStatus
+	if err := json.Unmarshal(stdout, &reported); err != nil {
+		t.Fatalf("status JSON: %v: %s", err, stdout)
+	}
+	if !reported.Wakeable {
+		t.Fatalf("publishing left the agent unreachable: %+v", reported)
+	}
+}
+
 // TestAFailedWaitStillCarriesItsArmAnswer pins what a reader of the stream can
 // conclude from counting documents. The arm answer is written before the wait,
 // so a watch whose wait ends in failure exits having written one document and
@@ -136,12 +181,9 @@ func TestAFailedWaitStillCarriesItsArmAnswer(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], root, "", "nomad", "join", "parser"); err != nil {
 		t.Fatal(err)
 	}
-	// Drain what joining published, so the watcher below blocks rather than
-	// resolving its own backlog and exiting successfully.
-	if _, _, err := runCLIHelper(os.Args[0], root, "", "nomad", "watch", "--once"); err != nil {
-		t.Fatal(err)
-	}
-
+	// Nothing to drain: what an agent's join publishes goes to its peers, never
+	// to its own inbox, so the watcher below blocks instead of resolving a
+	// backlog and exiting successfully.
 	watch := exec.Command(os.Args[0], "nomad", "watch", "--once")
 	watch.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
 	watch.Env = replaceEnvironment(watch.Env, "CONDUCTOR_HOME", root)

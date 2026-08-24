@@ -22,11 +22,11 @@ func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 	if _, err := writer.Join("writer", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	// Each registration (reader's own, then writer's, forced-broadcast to
-	// every registered agent including reader) produces a collaboration/agents
-	// roster commit and a join signal: drain all four before exercising the
-	// dev/tasks delta below.
-	drainSummaries(t, reader, 4)
+	// Writer's registration force-broadcasts a collaboration/agents roster
+	// commit and a join signal to reader; reader's own registration produces
+	// the same pair but reaches everyone except reader. Drain whatever landed
+	// before exercising the dev/tasks delta below.
+	drainAllPending(t, reader)
 	if err := writer.Begin("dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
@@ -69,15 +69,22 @@ func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 }
 
 func TestFailedDeliveryCursorWriteLeavesSummaryAndDeltaReplayable(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
 	if _, err := client.Join("reader", "review"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.SubscribeTopic("messages/team"); err != nil {
 		t.Fatal(err)
 	}
-	drainSummaries(t, client, 2)
-	if _, err := client.Put("messages/team", "hello"); err != nil {
+	// A publisher is not woken by its own publication, so the delivery whose
+	// acknowledgement fails below has to come from a peer.
+	writer := newTestClient(t, home, "")
+	if _, err := writer.Join("writer", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	drainAllPending(t, client)
+	if _, err := writer.Put("messages/team", "hello"); err != nil {
 		t.Fatal(err)
 	}
 	summaries, err := client.Watch()
@@ -186,31 +193,30 @@ func isQuiescent(t *testing.T, client *Client) bool {
 }
 
 func TestContentJoinCarriesRoster(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
 	if _, err := client.Join("a", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	// The first signal is the collaboration/agents roster commit itself
-	// (an "update", which resolves to a Delta); the join signal that
-	// carries the roster follows it.
-	drainSummaries(t, client, 1)
-	summary := watchOne(t, client)
-	delivery, err := client.ResolveDelivery(summary)
-	if err != nil || len(delivery.Roster) != 1 || delivery.Roster[0].Name != "a" {
-		t.Fatalf("delivery = %#v, error = %v", delivery, err)
-	}
 	// The roster a delivery carries is the same one the snapshot carries, and
 	// the holder has to survive the trip: this is the copy an agent reads
-	// without having asked for it.
+	// without having asked for it. It takes a peer's join to observe, because
+	// a join signal never reaches the agent whose join raised it -- that agent
+	// already holds the roster its own join returned.
 	release, err := client.AcquireWatchOwnership()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = release() }()
-	if _, err := client.Join("b", "review"); err != nil {
+	peer := newTestClient(t, home, "")
+	if _, err := peer.Join("b", "review"); err != nil {
 		t.Fatal(err)
 	}
-	for _, entry := range resolveJoinRoster(t, client) {
+	roster := resolveJoinRoster(t, client)
+	if len(roster) != 2 {
+		t.Fatalf("delivered roster = %#v, want both registered agents", roster)
+	}
+	for _, entry := range roster {
 		if entry.Name != "a" {
 			continue
 		}
@@ -551,8 +557,15 @@ func TestBatchPersistsTopicOnlyProgressWithoutAcknowledgingRemainingSummary(t *t
 }
 
 func TestAcknowledgeBatchSupportsDeliveryWithoutCoverageMetadata(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
 	if _, err := client.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	// A peer's registration supplies the summary to acknowledge: an agent's
+	// own join never reaches its own inbox.
+	writer := newTestClient(t, home, "")
+	if _, err := writer.Join("writer", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	summaries, err := client.Watch()
