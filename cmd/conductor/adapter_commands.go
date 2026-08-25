@@ -295,10 +295,11 @@ func runAdapterInstall(args []string) error {
 	if len(args) < 1 || strings.TrimSpace(args[0]) == "" {
 		return adapterInstallUsageError()
 	}
-	replace, err := replaceRequested(args[1:])
+	replace, releaseBarrier, err := replaceRequested(args[1:])
 	if err != nil {
 		return err
 	}
+	defer releaseBarrier()
 	payload := install.AdapterPayload(claude.AdapterName)
 	if err := install.ValidateDestination(args[0], payload); err != nil {
 		return err

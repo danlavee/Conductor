@@ -21,6 +21,13 @@ import (
 
 const Capability = 1
 
+// FreezeLease bounds how long a barrier may stand before replacement. Freezing
+// and Frozen are the phases in which nothing has been swapped yet and Abort is
+// already sanctioned, so an expired lease is that same abort taken on time
+// rather than on a command. Replacement is what makes a cutover
+// unabandonable, and Replaced carries no lease: it is resumed, never reclaimed.
+const FreezeLease = 30 * time.Minute
+
 type Phase string
 
 const (
@@ -39,6 +46,16 @@ type State struct {
 	Generation    int64     `json:"generation"`
 	Capability    int       `json:"capability"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	ExpiresAt     time.Time `json:"expires_at,omitempty"`
+}
+
+// Expired reports a pre-replacement barrier whose lease has run out. A state
+// written before leases existed carries no deadline and never expires.
+func (s State) Expired() bool {
+	if s.Phase != Freezing && s.Phase != Frozen {
+		return false
+	}
+	return !s.ExpiresAt.IsZero() && time.Now().After(s.ExpiresAt)
 }
 
 type Activation struct {
@@ -128,7 +145,53 @@ func IsFrozen(root string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return exists && current.Phase == Frozen, nil
+	return exists && current.Phase == Frozen && !current.Expired(), nil
+}
+
+// HoldBarrier claims the barrier for as long as the returned release is
+// uncalled. Freezing, migration, and installation replacement each work against
+// a root for however long their draining or their file trees take, and a lease
+// that lapsed mid-work would otherwise let an ordinary operation reopen
+// admission underneath them.
+// The hold is a crash-released file mutex, so an operator that dies releases
+// it and the lease recovers the root exactly as intended: it separates a slow
+// barrier from an abandoned one without asking which process took the freeze,
+// which is a question no cutover can answer -- the freeze and the replacement
+// deliberately run from different binaries.
+func HoldBarrier(root string) (func() error, error) {
+	dir, err := Directory(root)
+	if err != nil {
+		return nil, err
+	}
+	return holdBarrier(dir)
+}
+
+func holdBarrier(dir string) (func() error, error) {
+	return platform.AcquireFileMutex(filepath.Join(dir, "barrier.lock"), 0)
+}
+
+// barrierHeld reports whether a command is working behind the barrier now. An
+// unreadable lock counts as held: reclaiming a root on a failed probe is the
+// one outcome this must never produce.
+func barrierHeld(dir string) bool {
+	release, err := platform.AcquireFileMutex(filepath.Join(dir, "barrier.lock"), 0)
+	if err != nil {
+		return true
+	}
+	return release() != nil
+}
+
+// reclaimable reports an expired barrier that nothing is working behind.
+func reclaimable(dir string, state State) bool {
+	return state.Expired() && !barrierHeld(dir)
+}
+
+// reclaim returns an expired barrier to active admission. Callers must already
+// hold the gate, so no freeze can be in flight against the observed state.
+func reclaim(dir string, current State) (State, error) {
+	active := activeState(current.Generation)
+	active.UpdatedAt = time.Now().UTC()
+	return active, writeState(dir, active)
 }
 
 func activeState(generation int64) State {
@@ -167,6 +230,14 @@ func Admit(root string) (func() error, error) {
 	if stateErr != nil {
 		_ = releaseGate()
 		return nil, stateErr
+	}
+	if reclaimable(dir, state) {
+		reclaimed, reclaimErr := reclaim(dir, state)
+		if reclaimErr != nil {
+			_ = releaseGate()
+			return nil, reclaimErr
+		}
+		state, exists = reclaimed, true
 	}
 	if state.Phase != Active {
 		_ = releaseGate()
@@ -216,13 +287,33 @@ func Freeze(root, id, release string, validateRoot func() error) (State, error) 
 		_ = releaseGate()
 		return State{}, err
 	}
+	if reclaimable(dir, current) {
+		reclaimed, reclaimErr := reclaim(dir, current)
+		if reclaimErr != nil {
+			_ = releaseGate()
+			return State{}, reclaimErr
+		}
+		current = reclaimed
+	}
 	if current.Phase != Active {
 		_ = releaseGate()
 		return State{}, fmt.Errorf("freeze requires active cutover state, found %s", current.Phase)
 	}
+	// Held for the rest of the freeze. Draining runs with the gate released and
+	// may wait minutes on each in-flight lease, so a drain slower than the
+	// freezing lease would otherwise let an ordinary operation reclaim the root
+	// out from under a freeze that is still running rather than abandoned.
+	releaseBarrier, holdErr := holdBarrier(dir)
+	if holdErr != nil {
+		_ = releaseGate()
+		return State{}, fmt.Errorf("another command is already working behind this cutover: %w", holdErr)
+	}
+	defer releaseBarrier()
+	now := time.Now().UTC()
 	freezing := State{
 		Phase: Freezing, CutoverID: id, Release: release,
-		Generation: current.Generation, Capability: Capability, UpdatedAt: time.Now().UTC(),
+		Generation: current.Generation, Capability: Capability,
+		UpdatedAt: now, ExpiresAt: now.Add(FreezeLease),
 	}
 	if err := writeState(dir, freezing); err != nil {
 		_ = releaseGate()
@@ -267,6 +358,7 @@ func Freeze(root, id, release string, validateRoot func() error) (State, error) 
 	}
 	current.Phase = Frozen
 	current.UpdatedAt = time.Now().UTC()
+	current.ExpiresAt = current.UpdatedAt.Add(FreezeLease)
 	return current, writeState(dir, current)
 }
 
@@ -333,6 +425,13 @@ func Abort(root, id string) (State, error) {
 	if (current.Phase != Freezing && current.Phase != Frozen) || current.CutoverID != id {
 		return State{}, fmt.Errorf("abort is safe only before replacement for cutover %q", id)
 	}
+	// Abort is a reclaim like any other, and the barrier means the same thing
+	// here: a migration or a replacement is working against this root, and
+	// reopening admission would expose a tree mid-copy. Nothing is lost by
+	// waiting -- an abort is only ever wanted for a cutover nobody is advancing.
+	if barrierHeld(dir) {
+		return State{}, fmt.Errorf("cutover %q is still being worked behind the barrier; let that command finish first", id)
+	}
 	active := activeState(current.Generation)
 	active.UpdatedAt = time.Now().UTC()
 	return active, writeState(dir, active)
@@ -358,8 +457,28 @@ func transition(root, id string, from, to Phase) (State, error) {
 	if current.Phase != from || current.CutoverID != id {
 		return State{}, fmt.Errorf("transition requires %s cutover %q, found %s %q", from, id, current.Phase, current.CutoverID)
 	}
+	// A lapsed barrier is not frozen, whether or not anything has reclaimed it
+	// yet. Without this, a root nobody happened to touch would still carry the
+	// phase on disk, and replacement would move it to Replaced -- the one phase
+	// that carries no lease and cannot be aborted -- with nothing swapped.
+	if current.Expired() {
+		return State{}, fmt.Errorf("cutover %q lost its freeze lease before replacement; freeze again", id)
+	}
+	// The trees must already be swapped when this records that they are. A
+	// migration or an installation replacement still working behind the barrier
+	// says they are not, and recording it anyway would carry a half-copied root
+	// into the one phase with no lease and no abort.
+	if to == Replaced && barrierHeld(dir) {
+		return State{}, fmt.Errorf("cutover %q is still being replaced; let that command finish first", id)
+	}
 	current.Phase = to
 	current.UpdatedAt = time.Now().UTC()
+	if to == Replaced {
+		// Replacement is the point of no return: the trees are swapped and only
+		// the same cutover identity can carry the root forward. Drop the lease
+		// so nothing reclaims a root that can no longer be abandoned safely.
+		current.ExpiresAt = time.Time{}
+	}
 	return current, writeState(dir, current)
 }
 

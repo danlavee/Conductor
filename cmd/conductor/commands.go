@@ -28,10 +28,11 @@ func run(args []string) error {
 		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
 			return installUsageError()
 		}
-		replace, err := replaceRequested(args[2:])
+		replace, releaseBarrier, err := replaceRequested(args[2:])
 		if err != nil {
 			return err
 		}
+		defer releaseBarrier()
 		if err := install.ValidateDestination(args[1], install.SkillPayload()); err != nil {
 			return installUsageError()
 		}
@@ -97,7 +98,9 @@ const rootFlag = "--root="
 // reporting anything wrong -- so the operator names the root being fenced, and
 // it must already be frozen. This is the precondition migrate places on its
 // source, for the same reason.
-func replaceRequested(args []string) (bool, error) {
+// The returned release must be called once the replacement has finished; it is
+// a no-op when no replacement was requested.
+func replaceRequested(args []string) (bool, func() error, error) {
 	replace, root := false, ""
 	for _, argument := range args {
 		switch {
@@ -106,26 +109,35 @@ func replaceRequested(args []string) (bool, error) {
 		case strings.HasPrefix(argument, rootFlag):
 			root = strings.TrimPrefix(argument, rootFlag)
 		default:
-			return false, fmt.Errorf("unrecognized option %s", argument)
+			return false, nil, fmt.Errorf("unrecognized option %s", argument)
 		}
 	}
 	if !replace {
 		if root != "" {
-			return false, errors.New("--root applies only to --replace")
+			return false, nil, errors.New("--root applies only to --replace")
 		}
-		return false, nil
+		return false, func() error { return nil }, nil
 	}
 	if !filepath.IsAbs(root) {
-		return false, errors.New("--replace requires --root=<absolute-state-root>")
+		return false, nil, errors.New("--replace requires --root=<absolute-state-root>")
+	}
+	// Hold before asking, so the answer cannot go stale between the two: an
+	// expired barrier reclaimed after this check would leave the swap running
+	// against a root open to everyone else.
+	release, err := cutover.HoldBarrier(root)
+	if err != nil {
+		return false, nil, fmt.Errorf("another command is already replacing behind this cutover: %w", err)
 	}
 	frozen, err := cutover.IsFrozen(root)
 	if err != nil {
-		return false, err
+		_ = release()
+		return false, nil, err
 	}
 	if !frozen {
-		return false, errors.New("replacing an installation requires a frozen cutover root")
+		_ = release()
+		return false, nil, errors.New("replacing an installation requires a frozen cutover root")
 	}
-	return true, nil
+	return true, release, nil
 }
 
 func installationSource(payload install.Payload, bundle fs.FS, smokeCheck bool) (install.Source, error) {

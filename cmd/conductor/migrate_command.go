@@ -10,6 +10,13 @@ import (
 )
 
 func runMigrateCommand(source, destination string) error {
+	// Held first: migration reads the whole source root, and a lease that
+	// lapsed partway would otherwise let ordinary writes back in behind it.
+	releaseBarrier, err := cutover.HoldBarrier(source)
+	if err != nil {
+		return fmt.Errorf("another command is already working behind this cutover: %w", err)
+	}
+	defer releaseBarrier()
 	frozen, err := cutover.IsFrozen(source)
 	if err != nil {
 		return err
