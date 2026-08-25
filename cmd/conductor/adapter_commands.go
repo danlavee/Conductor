@@ -58,6 +58,17 @@ const identityAdvice = "If this is not the identity you were told to act as, run
 	"It binds this session alone, outranks the project's .conductor-agent, leaves that file and other sessions untouched, " +
 	"and is forgotten when this session ends. Run it once, and never for an agent that is not you."
 
+// adapterInvocation is where one adapter command is running: the session, the
+// project, and whether the host's own hook started it. The last decides who may
+// record that the adapter serves this session -- a model-started command shares
+// the session and the environment with the hook, and without the distinction
+// could assert the fact the hook exists to observe.
+type adapterInvocation struct {
+	Session string
+	Project string
+	Hook    bool
+}
+
 type bindResult struct {
 	Adapter  string `json:"adapter"`
 	Session  string `json:"session"`
@@ -81,10 +92,11 @@ func runAdapterCommand(args []string) error {
 	if command != "arm" && command != "release" && command != "identity" {
 		return adapterUsageError()
 	}
-	session, project, err := adapterContext(command, rest)
+	invocation, err := adapterContext(command, rest)
 	if err != nil {
 		return err
 	}
+	session, project := invocation.Session, invocation.Project
 	root, err := conductor.Root(os.Getenv("CONDUCTOR_HOME"))
 	if err != nil {
 		return err
@@ -93,6 +105,13 @@ func runAdapterCommand(args []string) error {
 	// is the answer rather than a reason to do nothing, and it resolves both
 	// bindings rather than the winner.
 	if command == "identity" {
+		// Running at all is what makes the adapter observable, so the hook
+		// records that before it answers. Nothing else may: see RecordSession.
+		if invocation.Hook {
+			if err := claude.RecordSession(root, session); err != nil {
+				return err
+			}
+		}
 		resolution, err := claude.Resolve(root, session, project)
 		if err != nil {
 			return err
@@ -104,6 +123,13 @@ func runAdapterCommand(args []string) error {
 		return err
 	}
 	if binding.Agent == "" {
+		// A session that bound nothing has no stream to end, but it was still
+		// served, and teardown is the only event that says it is gone.
+		if command == "release" {
+			if err := claude.ForgetSession(root, session); err != nil {
+				return err
+			}
+		}
 		return reportAdapter(command, claude.Unbound, "", nil)
 	}
 	client, err := conductor.Open(root, binding.Agent)
@@ -124,31 +150,31 @@ func runAdapterCommand(args []string) error {
 // Neither path falls back to the other. A caller that cannot reach its own
 // source is misconfigured, not degraded, and the fallback answers "nothing
 // names you" for a directory that does.
-func adapterContext(command string, args []string) (string, string, error) {
+func adapterContext(command string, args []string) (adapterInvocation, error) {
 	if len(args) == 0 && command == "identity" {
 		session := os.Getenv(claude.SessionEnvironment)
 		if err := claude.ValidateSession(session); err != nil {
-			return "", "", fmt.Errorf("%s: %w", claude.SessionEnvironment, err)
+			return adapterInvocation{}, fmt.Errorf("%s: %w", claude.SessionEnvironment, err)
 		}
 		working, err := os.Getwd()
 		if err != nil {
-			return "", "", err
+			return adapterInvocation{}, err
 		}
 		project, err := claude.ProjectDirectory(working)
 		if err != nil {
-			return "", "", err
+			return adapterInvocation{}, err
 		}
-		return session, project, nil
+		return adapterInvocation{Session: session, Project: project}, nil
 	}
 	session, err := hookSession(args)
 	if err != nil {
-		return "", "", err
+		return adapterInvocation{}, err
 	}
 	project := os.Getenv(claude.ProjectEnvironment)
 	if strings.TrimSpace(project) == "" {
-		return "", "", errors.New(claude.ProjectEnvironment + " is unset, so this host did not export it to the hook")
+		return adapterInvocation{}, errors.New(claude.ProjectEnvironment + " is unset, so this host did not export it to the hook")
 	}
-	return session, project, nil
+	return adapterInvocation{Session: session, Project: project, Hook: true}, nil
 }
 
 // hookSession takes the session identifier from the substituted argument. A
@@ -165,13 +191,13 @@ func hookSession(args []string) (string, error) {
 	return session, nil
 }
 
-// runAdapterRelease ends the stream and forgets the binding, unconditionally:
+// runAdapterRelease ends the stream and forgets the session, unconditionally:
 // a session that armed nothing may still have bound an identity, and teardown
 // is the only event that says a session is gone. Both failures are joined so a
-// leftover binding cannot hide behind a release failure.
+// leftover record cannot hide behind a release failure.
 func runAdapterRelease(client *conductor.Client, root, session, agent string) error {
 	released, releaseErr := claude.Release(client, session)
-	if err := errors.Join(releaseErr, claude.UnbindSession(root, session)); err != nil {
+	if err := errors.Join(releaseErr, claude.ForgetSession(root, session)); err != nil {
 		return err
 	}
 	return reportAdapter("release", releaseOutcome(released), agent, nil)
@@ -195,9 +221,10 @@ func runAdapterIdentity(root, session, project string, resolution claude.Resolut
 // runAdapterBind records that this session acts as agent, for the case the
 // project file cannot express: several agents in one directory.
 //
-// The identity must already be on the roster. Unlike the hand-written project
-// file, bind is run by an agent that has joined, so a name absent from the
-// roster is a typo -- and would be a quiet no-op for the session's whole life.
+// Both preconditions fail loudly for the same reason. A session no adapter
+// served has nothing to read the binding, and an identity absent from the
+// roster is a typo -- and either one would otherwise be a quiet no-op for the
+// session's whole life.
 func runAdapterBind(args []string) error {
 	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
 		return adapterBindUsageError()
@@ -210,6 +237,14 @@ func runAdapterBind(args []string) error {
 	root, err := conductor.Root(os.Getenv("CONDUCTOR_HOME"))
 	if err != nil {
 		return err
+	}
+	served, err := claude.ServesSession(root, session)
+	if err != nil {
+		return err
+	}
+	if !served {
+		return errors.New("cannot bind in this session: no adapter has served it, so the binding would be read by nothing. " +
+			"Install the adapter plugin, enable it on this host, and start a new session")
 	}
 	client, err := conductor.Open(root, agent)
 	if err != nil {

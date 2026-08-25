@@ -216,12 +216,16 @@ type hostAdapterReport struct {
 }
 
 // hostAdapter reports the adapter serving this process, or nothing where none
-// does. A served session exports its identifier into every process it starts,
-// so an absent one is the answer that no adapter is here rather than a failed
-// read of one that is. Every other failure is returned: status exists to be
-// trustworthy when the rest of the bus is not, and an adapter it could not read
-// reported as an adapter that is not there is the exact confusion it is being
-// changed to remove.
+// does. Presence is read from the record the adapter's own hook wrote when it
+// served this session, which is the only thing that observes it: the session
+// identifier says a host of this kind is running, which is equally true of one
+// that never installed the plugin, and the skill routes on this field -- so an
+// adapter reported from the environment alone sends an agent to bind an
+// identity nothing will ever read.
+//
+// Every other failure is returned: status exists to be trustworthy when the
+// rest of the bus is not, and an adapter it could not read reported as an
+// adapter that is not there is the exact confusion the field exists to remove.
 func hostAdapter(root string) (*hostAdapterReport, error) {
 	session := os.Getenv(claude.SessionEnvironment)
 	if session == "" {
@@ -229,6 +233,13 @@ func hostAdapter(root string) (*hostAdapterReport, error) {
 	}
 	if err := claude.ValidateSession(session); err != nil {
 		return nil, err
+	}
+	served, err := claude.ServesSession(root, session)
+	if err != nil {
+		return nil, err
+	}
+	if !served {
+		return nil, nil
 	}
 	working, err := os.Getwd()
 	if err != nil {

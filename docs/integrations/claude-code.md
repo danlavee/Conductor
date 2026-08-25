@@ -14,7 +14,7 @@ Each is one hook entry, and all of them run the same executable: `conductor adap
 | --- | --- | --- |
 | Resident component | `adapter claude arm` as a background hook marked `asyncRewake`. It holds the identity's ownership guard, blocks on the stream, prints the delivery to stdout and exits 2; that output reaches the model as a system reminder, waking an idle session with no active turn. | Yes, with this binary |
 | Turn-boundary trigger | A `Stop` hook running the same `arm` command. Arming and the resident component are the same act: it backgrounds without blocking the turn, and every turn end re-arms. | Mechanism yes, this binary no |
-| Lifecycle trigger | A `SessionStart` hook matching `startup`, `resume`, `clear`, `compact`, and `fork`. Runs `identity` to announce the binding into context, then `arm`. | Partial — `startup` only |
+| Lifecycle trigger | A `SessionStart` hook matching `startup`, `resume`, `clear`, `compact`, and `fork`. Runs `identity`, which records that this adapter served the session and announces the binding into context, then `arm`. | Partial — `startup` only |
 | Teardown | A `SessionEnd` hook running `release`. Not optional: the host awaits outstanding rewake hooks during session teardown, so a stream that ignores session end delays the host's exit. | No |
 
 `release` is scoped to the session that armed the stream, so a second session in the same project cannot tear down the first one's residency. It reaches the stream through an adapter-owned residency record beside the control directory — not through the protocol root, which has no concept of a host session and should not acquire one. Beside the control directory rather than under the root for a second reason too: which session holds a stream, and which identity a session speaks for, both have to outlive a cutover, and the sessions carrying them keep running while the root underneath is replaced.
@@ -32,6 +32,18 @@ The host exposes the session identifier two ways, to two different kinds of call
 
 They are not interchangeable. `CLAUDE_SESSION_ID` is *not* an environment variable — the host only ever substitutes it as text — so a hook reading it with `getenv` receives the empty string in every session. Every session then shares one identifier and the scoping above silently stops holding: one session's `SessionEnd` tears down whatever stream is resident, including one another session armed. So hooks take the session from `--session=${CLAUDE_SESSION_ID}`, and a missing or unsubstituted value exits non-zero rather than degrading — the version of that fault which shipped was invisible precisely because it exited cleanly.
 
+## Whether an adapter is here at all
+
+The skill routes on `status`'s `adapter` field: an agent that sees one binds to it and leaves the stream to it, an agent that sees none owns its own reachability. So the field has to be able to say no, and on this host it could not.
+
+Presence was read from `CLAUDE_CODE_SESSION_ID`, which says a Claude Code session is running — equally true of a host that never installed the plugin, and the skill and the plugin are separate installs with the onboarding path installing only the skill. Every such session was told an adapter served it, bound an identity nothing would read, and was told not to arm on the strength of it.
+
+The plugin lives in the host's registry, which is private state nothing here may read, so installation cannot be observed. The adapter *running* can be: the `SessionStart` `identity` hook records the session it served, and `status` reports an adapter only for a session carrying that record. Nothing else may write it — a model-run `conductor adapter claude identity` reads the same environment and would be asserting the very fact the hook exists to observe. `bind` refuses in a session with no such record for the same reason it refuses an unregistered name.
+
+Teardown clears the record for every served session, including the ones that bound nothing — which used to leave the release path at "nothing bound here" before it cleared anything at all.
+
+A session that began under a build too old to record it reads as unserved and owns its own stream for the rest of its life. That is the whole cost, and it is nothing to migrate: the gap is a missing record in a live session, and it goes when the session does.
+
 ## Two bindings, and which wins
 
 The identity a hook acts for is resolved in a fixed order:
@@ -43,7 +55,7 @@ The session binding wins because it is the more specific claim: a session that h
 
 This is what lets several agents work in one directory. One identity holds one stream, so without a per-session binding a second session in the same project resolves to the same identity, loses the race for it, and is refused at every turn end while looking, from the outside, exactly like a working install. `identity` reports which of the two bindings answered, so a session acting as the wrong agent shows which file to correct.
 
-`bind` is the one adapter command the model runs itself, and the only one requiring the identity to be on the roster already: `.conductor-agent` is written by hand before an agent joins and so cannot require registration, while `bind` is run by an agent that has joined, where an unknown name is a typo that would otherwise become a quiet no-op for the life of the session.
+`bind` is the one adapter command the model runs itself, and the only one with preconditions: the identity is on the roster, and the session is one a hook has served. `.conductor-agent` is written by hand before an agent joins and so cannot require registration, while `bind` is run by an agent that has joined and inside a session that has already started. Both refusals buy the same thing — an unknown name and an unserved session each write a record nothing ever reads, silently, for the life of the session.
 
 Arming when a live stream already holds the identity is refused and exits cleanly. That is what makes it safe for session start and every turn end to arm blindly, and the property the design rests on: every path that could lose the stream has an event that restores it, and no restore attempt can double-deliver.
 

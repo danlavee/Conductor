@@ -29,9 +29,21 @@ func TestStatusReportsWhatServesThisHost(t *testing.T) {
 		t.Fatalf("adapter = %+v, %v; want none where no adapter serves the host", report, err)
 	}
 
+	// A session identifier and no adapter: the ordinary state of this host,
+	// since the skill and the plugin are separate installs. It has to read as
+	// no adapter, or the skill routes an agent into binding a name nothing
+	// reads.
+	t.Setenv(claude.SessionEnvironment, "session-1")
+	report, err = hostAdapter(root)
+	if err != nil || report != nil {
+		t.Fatalf("adapter = %+v, %v; want none where only the session says so", report, err)
+	}
+
 	// An adapter is here and holds no identity for this session. This is the
 	// state that reads identically to "no adapter" in wakeability alone.
-	t.Setenv(claude.SessionEnvironment, "session-1")
+	if err := claude.RecordSession(root, "session-1"); err != nil {
+		t.Fatal(err)
+	}
 	report, err = hostAdapter(root)
 	if err != nil {
 		t.Fatal(err)
@@ -270,6 +282,9 @@ func TestArmingRefusesRatherThanArmingBlind(t *testing.T) {
 func TestStatusCommandCarriesTheAdapterToStdout(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
 	t.Setenv(claude.SessionEnvironment, "session-1")
+	if err := claude.RecordSession(root, "session-1"); err != nil {
+		t.Fatal(err)
+	}
 	stdout, stderr, err := runCLIHelper(os.Args[0], root, t.TempDir(), "nomad", "status")
 	if err != nil {
 		t.Fatalf("status: %v: %s", err, stderr)

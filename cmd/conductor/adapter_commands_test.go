@@ -184,7 +184,9 @@ func TestAdapterBindGivesTwoAgentsInOneProjectTheirOwnIdentities(t *testing.T) {
 
 	// Binding is run by the model, not by a hook, so it takes its session from
 	// the environment the host exports to child processes rather than from an
-	// argument nobody would substitute for it.
+	// argument nobody would substitute for it. The hook that serves the session
+	// has already run, as it does before the model gets its first turn.
+	serveSession(t, root, project, "session-2")
 	stdout, stderr, err := runAdapterProcess(t, root, project, "session-2", "adapter", "claude", "bind", "b")
 	if err != nil {
 		t.Fatalf("bind: %v: %s", err, stderr)
@@ -212,16 +214,48 @@ func TestAdapterBindGivesTwoAgentsInOneProjectTheirOwnIdentities(t *testing.T) {
 	assertIdentity(t, root, project, "session-2", "a", "project")
 }
 
-// TestAdapterBindRefusesAnIdentityThatNeverJoined covers the gate that
-// `.conductor-agent` cannot have. A typo there is caught later as a quiet
-// unregistered no-op; bind is run by an agent that has already joined, so the
-// same typo can be refused outright, once, while someone is reading.
-func TestAdapterBindRefusesAnIdentityThatNeverJoined(t *testing.T) {
+// TestAdapterReleaseClearsASessionThatBoundNothing covers the half of teardown
+// the unbound short-circuit used to skip. Most served sessions bind no
+// identity, and the record saying the adapter served them is written for every
+// one -- so a teardown that stops at "nothing bound here" leaves a record that
+// outlives its session and reports an adapter into whatever session the host
+// hands that identifier to next.
+func TestAdapterReleaseClearsASessionThatBoundNothing(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
+	project := t.TempDir()
+	serveSession(t, root, project, "session-1")
+	served, err := claude.ServesSession(root, "session-1")
+	if err != nil || !served {
+		t.Fatalf("served = %v, %v; want the hook's own record", served, err)
+	}
+	if _, stderr, err := runAdapterHelper(t, root, project, "session-1", "adapter", "claude", "release"); err != nil {
+		t.Fatalf("release: %v: %s", err, stderr)
+	}
+	if served, err = claude.ServesSession(root, "session-1"); err != nil || served {
+		t.Fatalf("served = %v, %v; want teardown to clear a session that bound nothing", served, err)
+	}
+}
+
+// TestAdapterBindRefusesWhatWouldBeAQuietNoOp covers the gates that
+// `.conductor-agent` cannot have. A binding is read by exactly one thing, in
+// exactly one session, under exactly one name; each of these would otherwise
+// write a record nothing ever reads and say nothing about it for the session's
+// whole life. bind is run by an agent that has already joined, in a session a
+// hook has already served, so all three can be refused outright, once, while
+// someone is reading.
+func TestAdapterBindRefusesWhatWouldBeAQuietNoOp(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+	project := t.TempDir()
 	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
 		t.Fatalf("join a: %v: %s", err, stderr)
 	}
-	if _, _, err := runAdapterProcess(t, root, t.TempDir(), "session-1", "adapter", "claude", "bind", "nobody"); err == nil {
+	// No hook has served this session, which is every Claude Code session on a
+	// host that installed the skill and not the plugin.
+	if _, _, err := runAdapterProcess(t, root, project, "session-1", "adapter", "claude", "bind", "a"); err == nil {
+		t.Fatal("bound in a session no adapter serves")
+	}
+	serveSession(t, root, project, "session-1")
+	if _, _, err := runAdapterProcess(t, root, project, "session-1", "adapter", "claude", "bind", "nobody"); err == nil {
 		t.Fatal("bound an identity that is not on the roster")
 	}
 	// And it must refuse when it cannot tell which session it is in at all,
@@ -262,6 +296,7 @@ func TestAdapterIdentityAnswersTheAgentThatRunsIt(t *testing.T) {
 
 	// Bound, and the same argument-free call now names the identity and reports
 	// that nothing holds it -- which is the second of the two causes.
+	serveSession(t, root, project, "session-1")
 	if _, stderr, err := runAdapterProcess(t, root, project, "session-1", "adapter", "claude", "bind", "a"); err != nil {
 		t.Fatalf("bind: %v: %s", err, stderr)
 	}
@@ -359,6 +394,7 @@ func TestAdapterIdentityKeepsTheProjectsNameAfterABindOverIt(t *testing.T) {
 			t.Fatalf("join %s: %v: %s", agent, err, stderr)
 		}
 	}
+	serveSession(t, root, project, "session-1")
 	if _, stderr, err := runAdapterProcess(t, root, project, "session-1", "adapter", "claude", "bind", "b"); err != nil {
 		t.Fatalf("bind: %v: %s", err, stderr)
 	}
@@ -407,6 +443,17 @@ func assertIdentity(t *testing.T, root, project, session, agent, source string) 
 func runAdapterHelper(t *testing.T, root, project, session string, args ...string) ([]byte, []byte, error) {
 	t.Helper()
 	return runAdapterProcess(t, root, project, session, append(args, "--session="+session)...)
+}
+
+// serveSession runs the SessionStart hook, which is what makes a session one
+// this adapter serves. Every test that binds needs it for the same reason a
+// real session does: the binding is only worth writing where a hook will read
+// it, and the hook running is the only evidence there is one.
+func serveSession(t *testing.T, root, project, session string) {
+	t.Helper()
+	if _, stderr, err := runAdapterHelper(t, root, project, session, "adapter", "claude", "identity"); err != nil {
+		t.Fatalf("identity hook for %s: %v: %s", session, err, stderr)
+	}
 }
 
 // runAdapterProcess spawns the adapter with the project supplied both ways at

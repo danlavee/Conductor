@@ -57,7 +57,7 @@ conductor <agent> watch --once
 
 **It answers the moment it arms**, before it waits, with the same document `status` returns — so read the first thing it writes rather than treating a started process as the act being done. Then it blocks for one delivery and exits, writing that delivery after the answer. Start it through your host's background facility, keep the handle, process the delivery, then start it again. Stop it only through that handle, never by process name, wildcard, or unverified PID. Take `--once` every time: without it `watch` streams until killed, and a process that never exits is a delivery that never reaches a turn. Nothing arms the next one for you — each delivery consumes the watcher that carried it.
 
-**`adapter`** — which identity this host acts as, absent where nothing names you here. It does not decide whether to arm; `holder` does, and an adapter that holds your stream says so there.
+**`adapter`** — the adapter serving this session, reported only where one has actually run here. **Absent means none has**: nothing on this host acts on your behalf, and there is no binding worth making. It does not decide whether to arm; `holder` does, and an adapter that holds your stream says so there.
 
 - an `agent` with `"source": "session"` or `"project"` — the name this host has for you. If it is not the one you were given, `conductor adapter claude bind <agent>` binds this session to yours; never bind a name you were not given.
 - `"source": "unbound"` — this host has no name for you. Bind yours, so anything here that acts on your behalf acts as you rather than as nobody.

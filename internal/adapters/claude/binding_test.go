@@ -114,23 +114,64 @@ func TestBindSessionReportsWhatItReplaced(t *testing.T) {
 	}
 }
 
-// TestUnbindSessionIsIdempotent matters because teardown runs it for every
+// TestForgetSessionIsIdempotent matters because teardown runs it for every
 // session, and most sessions never bound anything. A tantrum there would
 // report an error to the user at the end of every unrelated session.
-func TestUnbindSessionIsIdempotent(t *testing.T) {
+func TestForgetSessionIsIdempotent(t *testing.T) {
 	root := t.TempDir()
-	if err := UnbindSession(root, "session-1"); err != nil {
-		t.Fatalf("unbinding what was never bound failed: %v", err)
+	if err := ForgetSession(root, "session-1"); err != nil {
+		t.Fatalf("forgetting what was never recorded failed: %v", err)
 	}
 	if _, err := BindSession(root, "session-1", "planner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := UnbindSession(root, "session-1"); err != nil {
+	if err := ForgetSession(root, "session-1"); err != nil {
 		t.Fatal(err)
 	}
 	agent, err := SessionIdentity(root, "session-1")
 	if err != nil || agent != "" {
-		t.Fatalf("identity after unbind = %q, %v", agent, err)
+		t.Fatalf("identity after teardown = %q, %v", agent, err)
+	}
+}
+
+// TestServingIsRecordedNotInferred pins the fact the adapter field routes on.
+// Nothing but the hook can write it, the model's own binding must not imply it,
+// and teardown clears it for a session that never bound -- the case that used
+// to leave the short-circuit before it reached any clearing at all.
+func TestServingIsRecordedNotInferred(t *testing.T) {
+	root := t.TempDir()
+	served, err := ServesSession(root, "session-1")
+	if err != nil || served {
+		t.Fatalf("served = %v, %v; want no adapter for a session nothing recorded", served, err)
+	}
+
+	// A binding is the model's assertion, and the model runs on hosts with no
+	// adapter at all. It must not answer the question the hook answers.
+	if _, err := BindSession(root, "session-1", "planner"); err != nil {
+		t.Fatal(err)
+	}
+	if served, err = ServesSession(root, "session-1"); err != nil || served {
+		t.Fatalf("served = %v, %v; want binding alone to prove no adapter", served, err)
+	}
+
+	if err := RecordSession(root, "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	if served, err = ServesSession(root, "session-1"); err != nil || !served {
+		t.Fatalf("served = %v, %v; want the recorded adapter", served, err)
+	}
+	// SessionStart runs again on resume, compact and fork, over a binding the
+	// model made in between.
+	agent, err := SessionIdentity(root, "session-1")
+	if err != nil || agent != "planner" {
+		t.Fatalf("identity after re-recording = %q, %v; want the binding carried forward", agent, err)
+	}
+
+	if err := ForgetSession(root, "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	if served, err = ServesSession(root, "session-1"); err != nil || served {
+		t.Fatalf("served = %v, %v; want teardown to clear it", served, err)
 	}
 }
 
@@ -140,7 +181,7 @@ func TestUnbindSessionIsIdempotent(t *testing.T) {
 // and a binding stored inside the root would be replaced along with it.
 func TestBindingsLiveBesideTheRootRatherThanInsideIt(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
-	path, err := sessionBindingPath(root, "session-1")
+	path, err := sessionRecordPath(root, "session-1")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,13 +23,13 @@ For a second agent working in a project that is already bound to a different one
 conductor adapter claude bind <agent>
 ```
 
-The binding is recorded against the session, outranks the project file for that session alone, and is forgotten when the session ends. The identity has to be on the roster first.
+The binding is recorded against the session, outranks the project file for that session alone, and is forgotten when the session ends. Two things have to be true first, and both are refused outright rather than accepted into silence: the identity is on the roster, and this session is one the adapter's own `SessionStart` hook has served. A session started before the plugin was installed or enabled has no hook to read the binding, so recording one would be a no-op lasting the whole session — start a new session instead.
 
 ## What it registers
 
 | Hook | Responsibility | Behaviour |
 | --- | --- | --- |
-| `SessionStart` (`startup`, `resume`, `clear`, `compact`, `fork`) | Lifecycle trigger | Reports the bound identity into the session's context, and arms a delivery stream. |
+| `SessionStart` (`startup`, `resume`, `clear`, `compact`, `fork`) | Lifecycle trigger | Records that this adapter serves the session, reports the bound identity into its context, and arms a delivery stream. |
 | `Stop` | Resident component and turn-boundary trigger | Arms a delivery stream at every turn end. Backgrounded, so it never delays the turn. |
 | `SessionEnd` | Teardown | Ends this session's stream so it does not outlive the session and block the next one. |
 
