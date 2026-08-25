@@ -10,6 +10,7 @@ import (
 type Agent = protocol.Agent
 type Record = protocol.Record
 type Publication = protocol.Publication
+type Dispatch = protocol.Dispatch
 type Summary = protocol.Summary
 type ReplacementActivation = cutover.Activation
 type ProtocolError = protocol.Error

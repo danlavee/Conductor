@@ -42,21 +42,21 @@ func TestOneShotOperationsAndLiteralStrike(t *testing.T) {
 	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
-	record, err := client.Put("messages/team", "")
+	dispatch, err := client.Put("messages/team", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err = client.Strike("messages/team", record.Index)
-	if err != nil || record.Text != "~~~~" {
-		t.Fatalf("first strike = %#v, error = %v", record, err)
+	dispatch, err = client.Strike("messages/team", dispatch.Record().Index)
+	if err != nil || dispatch.Record().Text != "~~~~" {
+		t.Fatalf("first strike = %#v, error = %v", dispatch, err)
 	}
-	record, err = client.Strike("messages/team", record.Index)
-	if err != nil || record.Text != "~~~~~~"+"~~" {
-		t.Fatalf("second strike = %#v, error = %v", record, err)
+	dispatch, err = client.Strike("messages/team", dispatch.Record().Index)
+	if err != nil || dispatch.Record().Text != "~~~~~~"+"~~" {
+		t.Fatalf("second strike = %#v, error = %v", dispatch, err)
 	}
-	record, err = client.Edit("messages/team", record.Index, "exact")
-	if err != nil || record.Text != "exact" {
-		t.Fatalf("edit = %#v, error = %v", record, err)
+	dispatch, err = client.Edit("messages/team", dispatch.Record().Index, "exact")
+	if err != nil || dispatch.Record().Text != "exact" {
+		t.Fatalf("edit = %#v, error = %v", dispatch, err)
 	}
 }
 
@@ -73,8 +73,8 @@ func TestTopicLocalIndexesAndAbortGap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Index != 1 || b.Index != 1 {
-		t.Fatalf("topic-local indexes = %d and %d", a.Index, b.Index)
+	if a.Record().Index != 1 || b.Record().Index != 1 {
+		t.Fatalf("topic-local indexes = %d and %d", a.Record().Index, b.Record().Index)
 	}
 	if err := client.Begin("group/alpha"); err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestTopicLocalIndexesAndAbortGap(t *testing.T) {
 		t.Fatal(err)
 	}
 	next, err := client.Put("group/alpha", "next")
-	if err != nil || next.Index <= aborted.Index {
+	if err != nil || next.Record().Index <= aborted.Index {
 		t.Fatalf("next = %#v, aborted = %#v, error = %v", next, aborted, err)
 	}
 	full, err := client.Get(ReadRequest{Topic: "group/alpha", Mode: ReadFull})
@@ -130,17 +130,17 @@ func TestSameIndexInOtherTopicIsIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	beta, err := client.Put("group/beta", "beta")
-	if err != nil || beta.Index != alpha.Index {
+	if err != nil || beta.Record().Index != alpha.Record().Index {
 		t.Fatalf("beta = %#v, alpha = %#v, %v", beta, alpha, err)
 	}
-	if _, err := client.Edit("group/alpha", alpha.Index, "changed"); err != nil {
+	if _, err := client.Edit("group/alpha", alpha.Record().Index, "changed"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Strike("group/alpha", alpha.Index); err != nil {
+	if _, err := client.Strike("group/alpha", alpha.Record().Index); err != nil {
 		t.Fatal(err)
 	}
 	full, err := client.Get(ReadRequest{Topic: "group/beta", Mode: ReadFull})
-	if err != nil || len(full.Records) != 1 || full.Records[0] != beta {
+	if err != nil || len(full.Records) != 1 || full.Records[0] != beta.Record() {
 		t.Fatalf("other topic changed: %#v, %v", full, err)
 	}
 }
@@ -151,14 +151,14 @@ func TestTextIsPreservedExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, text := range []string{"   ", "first\nsecond", "שלום 🌍"} {
-		record, err := client.Put("messages/exact", text)
-		if err != nil || record.Text != text {
-			t.Fatalf("put %#v = %#v, %v", text, record, err)
+		dispatch, err := client.Put("messages/exact", text)
+		if err != nil || dispatch.Record().Text != text {
+			t.Fatalf("put %#v = %#v, %v", text, dispatch, err)
 		}
 		edited := text + "\nchanged"
-		record, err = client.Edit("messages/exact", record.Index, edited)
-		if err != nil || record.Text != edited {
-			t.Fatalf("edit %#v = %#v, %v", edited, record, err)
+		dispatch, err = client.Edit("messages/exact", dispatch.Record().Index, edited)
+		if err != nil || dispatch.Record().Text != edited {
+			t.Fatalf("edit %#v = %#v, %v", edited, dispatch, err)
 		}
 	}
 }
@@ -191,7 +191,7 @@ func TestRecordAllocatorRejectsMissingRegressedAndExhaustedState(t *testing.T) {
 				t.Fatal("create accepted inconsistent allocator")
 			}
 			full, err := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
-			if err != nil || len(full.Records) != 1 || full.Records[0] != first {
+			if err != nil || len(full.Records) != 1 || full.Records[0] != first.Record() {
 				t.Fatalf("current records changed: %#v, %v", full, err)
 			}
 		})
@@ -219,10 +219,10 @@ func TestRecoveryPublishesDurableRecordOverlayOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := owner.StageEdit(base.Index, "edited"); err != nil {
+	if _, err := owner.StageEdit(base.Record().Index, "edited"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := owner.StageStrike(base.Index); err != nil {
+	if _, err := owner.StageStrike(base.Record().Index); err != nil {
 		t.Fatal(err)
 	}
 	var lock Lock
@@ -241,8 +241,8 @@ func TestRecoveryPublishesDurableRecordOverlayOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.Index <= created.Index {
-		t.Fatalf("allocator reused recovered index: created=%d next=%d", created.Index, next.Index)
+	if next.Record().Index <= created.Index {
+		t.Fatalf("allocator reused recovered index: created=%d next=%d", created.Index, next.Record().Index)
 	}
 	full, err := rescuer.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
 	if err != nil {
@@ -320,9 +320,16 @@ func TestOneShotReturnsRecordWhenSettlementFailsAfterVisibility(t *testing.T) {
 	if err := os.Mkdir(eventPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	record, err := client.Put("dev/tasks", "visible")
+	dispatch, err := client.Put("dev/tasks", "visible")
+	record := dispatch.Record()
 	if err == nil || record.Index != 1 || record.Text != "visible" {
-		t.Fatalf("result = %#v, error = %v", record, err)
+		t.Fatalf("result = %#v, error = %v", dispatch, err)
+	}
+	// The publication landed and reached nobody: the one agent here is
+	// registered but subscribed to nothing. That pair is the whole point of
+	// answering with a dispatch -- exit 0 on a record no one will read.
+	if len(dispatch.Recipients) != 0 {
+		t.Fatalf("recipients = %#v; want none, nobody is subscribed", dispatch.Recipients)
 	}
 	full, readErr := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
 	if readErr == nil {
@@ -346,9 +353,11 @@ func TestOneShotReturnsNoRecordWhenCommitFailsBeforeVisibility(t *testing.T) {
 	if err := writeJSONAtomic(filepath.Join(home, "state", "index.json"), map[string]int64{"index": math.MaxInt64}); err != nil {
 		t.Fatal(err)
 	}
-	record, err := client.Put("dev/tasks", "not visible")
-	if err == nil || record != (Record{}) {
-		t.Fatalf("result = %#v, error = %v", record, err)
+	dispatch, err := client.Put("dev/tasks", "not visible")
+	// Sequence zero is what the CLI branches on to decide the record never
+	// became visible, so the contract is pinned there and not only on Record.
+	if err == nil || dispatch.Sequence != 0 || dispatch.Record() != (Record{}) {
+		t.Fatalf("result = %#v, error = %v", dispatch, err)
 	}
 	history, historyErr := client.readHistory("dev/tasks")
 	if historyErr != nil || len(history) != 0 {
@@ -365,8 +374,8 @@ func TestTextIdenticalEditStillPublishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edited, err := client.Edit("dev/tasks", record.Index, record.Text)
-	if err != nil || edited != record {
+	edited, err := client.Edit("dev/tasks", record.Record().Index, record.Record().Text)
+	if err != nil || edited.Record() != record.Record() {
 		t.Fatalf("edit = %#v, %v", edited, err)
 	}
 	history, err := client.readHistory("dev/tasks")
@@ -375,10 +384,111 @@ func TestTextIdenticalEditStillPublishes(t *testing.T) {
 	}
 }
 
+// A publisher subscribed to its own topic is the shape the whole transaction
+// exists for: it looks addressed and reaches nobody. The dispatch must not hand
+// the publisher its own name back, or an agent alone on a topic it created
+// reads a non-empty audience and stops there.
+func TestDispatchNeverNamesThePublisher(t *testing.T) {
+	home := t.TempDir()
+	writer := newTestClient(t, home, "")
+	if _, err := writer.Join("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.SubscribeTopic("solo/notes"); err != nil {
+		t.Fatal(err)
+	}
+	alone, err := writer.Put("solo/notes", "anyone there")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alone.Recipients) != 0 {
+		t.Fatalf("recipients = %#v; want none -- the publisher is not its own audience", alone.Recipients)
+	}
+
+	// The same act with a peer subscribed names the peer and only the peer,
+	// so the emptiness above is the exclusion and not a broken lookup.
+	reader := newTestClient(t, home, "")
+	if _, err := reader.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.SubscribeTopic("solo/notes"); err != nil {
+		t.Fatal(err)
+	}
+	heard, err := writer.Put("solo/notes", "still there?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(heard.Recipients) != 1 || heard.Recipients[0] != "reader" {
+		t.Fatalf("recipients = %#v; want exactly the peer", heard.Recipients)
+	}
+
+	// Broadcast topics take the same rule: every registered agent but the one
+	// publishing.
+	broadcast, err := writer.Put("collaboration/rules", "a rule")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(broadcast.Recipients) != 1 || broadcast.Recipients[0] != "reader" {
+		t.Fatalf("broadcast recipients = %#v; want every registered agent but the publisher", broadcast.Recipients)
+	}
+}
+
+// A redaction that removed records and then failed to announce them must still
+// answer with its sequence. The skill tells agents that an answer with no
+// sequence means nothing was removed, and this is the one path that could make
+// that false: the history rewrite is already irreversible when the announcement
+// runs.
+func TestRedactReportsTheRemovalWhenSettlementFails(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+	if _, err := client.Join("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Put("dev/tasks", "doomed"); err != nil {
+		t.Fatal(err)
+	}
+	// Registration consumes global sequences 1 and 2, the Put's event takes 3,
+	// so the redaction below reserves 4. A directory there fails the event write
+	// after the records are already gone.
+	if err := os.Mkdir(filepath.Join(home, "events", indexName(4)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dispatch, err := client.Redact("dev/tasks", 1, 1)
+	if err == nil {
+		t.Fatal("expected the announcement to fail")
+	}
+	if dispatch.Sequence != 4 {
+		t.Fatalf("dispatch = %#v; want the reserved sequence, not the answer for a range that matched nothing", dispatch)
+	}
+	if dispatch.Recipients == nil || len(dispatch.Recipients) != 0 {
+		t.Fatalf("recipients = %#v; want an empty list -- nobody was woken, and the field must not go absent", dispatch.Recipients)
+	}
+	history, err := client.readHistory("dev/tasks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range history {
+		if len(entry.Records) != 0 {
+			t.Fatalf("record survived a redaction that reported its sequence: %#v", entry)
+		}
+	}
+}
+
 func TestClientRedact(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
 	if _, err := client.Join("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	// A second agent, subscribed, so the redaction below has somebody to reach.
+	// It cannot be the redacting client itself: an agent is never woken by its
+	// own act, so subscribing the writer would leave the announcement reaching
+	// nobody, which is a different assertion.
+	reader := newTestClient(t, home, "")
+	if _, err := reader.Join("reader", "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.SubscribeTopic("dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -404,14 +514,19 @@ func TestClientRedact(t *testing.T) {
 	if len(full.Records) != 3 {
 		t.Fatalf("expected 3 records, got %d", len(full.Records))
 	}
-	if full.Records[0].Index != r1.Index || full.Records[1].Index != r2.Index || full.Records[2].Index != r3.Index {
+	if full.Records[0].Index != r1.Record().Index || full.Records[1].Index != r2.Record().Index || full.Records[2].Index != r3.Record().Index {
 		t.Fatal("records out of index sequence order")
 	}
 
 	// 2. Redact single record (Record 2)
-	err = client.Redact("dev/tasks", 2, 2)
+	redaction, err := client.Redact("dev/tasks", 2, 2)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A redaction that matched something says so: a sequence, and who was told
+	// it happened. Nothing else in the API reports that a removal was announced.
+	if redaction.Sequence == 0 || len(redaction.Recipients) == 0 {
+		t.Fatalf("redaction = %#v; want a sequence and the agents told", redaction)
 	}
 
 	// 3. Verify record 2 is gone, but 1 and 3 are present (indices MUST not shift)
@@ -451,9 +566,14 @@ func TestClientRedact(t *testing.T) {
 	}
 
 	// 5. Redact remaining range [1, 3]
-	err = client.Redact("dev/tasks", 1, 3)
-	if err != nil {
+	if _, err = client.Redact("dev/tasks", 1, 3); err != nil {
 		t.Fatal(err)
+	}
+	// The same range again matches nothing, and the zero dispatch is the only
+	// thing that distinguishes that from the redaction just above.
+	repeat, err := client.Redact("dev/tasks", 1, 3)
+	if err != nil || repeat.Sequence != 0 {
+		t.Fatalf("repeat redaction = %#v, %v; want nothing removed and nobody told", repeat, err)
 	}
 
 	// Verify all records in the range are completely pruned from live history

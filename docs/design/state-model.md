@@ -48,6 +48,8 @@ The transaction records which indexes it created. Before commit first reserves a
 
 Conductor then writes an event, appends signals to recipient inboxes, removes the transaction, and releases the lease. A crash after visibility may leave these later steps unfinished. Recovery completes them without creating a second publication.
 
+Announced is also where the recipient set becomes known, and it is what the publishing act answers with alongside the publication it made. A publisher that only got its own record back could not tell a topic somebody reads from one nobody is subscribed to; both succeed, and the difference is a delivery that never happens. The answer is who was woken, not who is subscribed — an agent is not an addressee of its own act, so the publisher is absent from it even on a topic it subscribes to, and an agent alone on a topic reads an empty audience rather than its own name. The set is not written to history: it is true of the instant it was resolved and the next subscription change falsifies it, so history stores the publication and the answer carries the audience.
+
 ## Reading and delivery
 
 Three read views share the same published history:

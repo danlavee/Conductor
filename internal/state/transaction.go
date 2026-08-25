@@ -196,90 +196,86 @@ func (c *Client) recordForTransaction(txn Transaction, index int64) (Record, err
 	return record, nil
 }
 
-func (c *Client) Put(topic, text string) (Record, error) {
+func (c *Client) Put(topic, text string) (Dispatch, error) {
 	releaseOperation, err := c.beginOperation()
 	if err != nil {
-		return Record{}, err
+		return Dispatch{}, err
 	}
 	defer releaseOperation()
 	return c.oneShotRecord(topic, func() (Record, error) { return c.StagePut(text) })
 }
 
-func (c *Client) Edit(topic string, index int64, text string) (Record, error) {
+func (c *Client) Edit(topic string, index int64, text string) (Dispatch, error) {
 	releaseOperation, err := c.beginOperation()
 	if err != nil {
-		return Record{}, err
+		return Dispatch{}, err
 	}
 	defer releaseOperation()
 	return c.oneShotRecord(topic, func() (Record, error) { return c.StageEdit(index, text) })
 }
 
-func (c *Client) Strike(topic string, index int64) (Record, error) {
+func (c *Client) Strike(topic string, index int64) (Dispatch, error) {
 	releaseOperation, err := c.beginOperation()
 	if err != nil {
-		return Record{}, err
+		return Dispatch{}, err
 	}
 	defer releaseOperation()
 	return c.oneShotRecord(topic, func() (Record, error) { return c.StageStrike(index) })
 }
 
-func (c *Client) oneShotRecord(topic string, operation func() (Record, error)) (Record, error) {
+// oneShotRecord runs one record verb as its own transaction and answers with
+// what publishing it did, recipients included. The staged record it built is
+// already in the dispatch's Records, so returning the dispatch loses nothing
+// and adds the half a publisher could not otherwise see.
+func (c *Client) oneShotRecord(topic string, operation func() (Record, error)) (Dispatch, error) {
 	if err := c.Begin(topic); err != nil {
-		return Record{}, err
+		return Dispatch{}, err
 	}
-	record, err := operation()
-	if err != nil {
+	if _, err := operation(); err != nil {
 		if abortErr := c.Abort(); abortErr != nil {
-			return Record{}, errors.Join(err, fmt.Errorf("abort failed: %w", abortErr))
+			return Dispatch{}, errors.Join(err, fmt.Errorf("abort failed: %w", abortErr))
 		}
-		return Record{}, err
+		return Dispatch{}, err
 	}
-	entry, err := c.commit()
-	if err != nil {
-		if entry.Sequence == 0 {
-			return Record{}, err
-		}
-		return record, err
-	}
-	return record, nil
+	return c.commit()
 }
 
 // Commit publishes every final staged record atomically.
-func (c *Client) Commit() (Publication, error) {
+func (c *Client) Commit() (Dispatch, error) {
 	releaseOperation, err := c.beginOperation()
 	if err != nil {
-		return Publication{}, err
+		return Dispatch{}, err
 	}
 	defer releaseOperation()
 	return c.commit()
 }
 
-func (c *Client) commit() (Publication, error) {
+func (c *Client) commit() (Dispatch, error) {
 	if err := c.validateProtocol(); err != nil {
-		return Publication{}, err
+		return Dispatch{}, err
 	}
 	agent, err := c.requireAgent()
 	if err != nil {
-		return Publication{}, err
+		return Dispatch{}, err
 	}
 	releaseGuard, err := c.acquireTransactionGuard(agent)
 	if err != nil {
-		return Publication{}, err
+		return Dispatch{}, err
 	}
 	defer releaseGuard()
 	var txn Transaction
 	if err := readJSON(c.transactionPath(agent), &txn); errors.Is(err, os.ErrNotExist) {
-		return Publication{}, &ProtocolError{Code: "NO_LOCK", Text: "commit requires begin"}
+		return Dispatch{}, &ProtocolError{Code: "NO_LOCK", Text: "commit requires begin"}
 	} else if err != nil {
-		return Publication{}, err
+		return Dispatch{}, err
 	}
 	if err := c.renewWrite(txn.Topic, agent); err != nil {
-		return Publication{}, err
+		return Dispatch{}, err
 	}
 	return c.commitTransaction(txn)
 }
 
-func (c *Client) commitTransaction(txn Transaction) (result Publication, err error) {
+func (c *Client) commitTransaction(txn Transaction) (result Dispatch, err error) {
 	defer func() {
 		if err == nil {
 			if removeErr := removeEventually(c.transactionPath(txn.Agent)); removeErr != nil {
@@ -292,30 +288,36 @@ func (c *Client) commitTransaction(txn Transaction) (result Publication, err err
 		}
 	}()
 	if len(txn.Records) == 0 {
-		return Publication{}, errors.New("transaction has no records")
+		return Dispatch{}, errors.New("transaction has no records")
 	}
 	if txn.Sequence == 0 {
 		if err := c.validateTransactionTargets(txn); err != nil {
-			return Publication{}, err
+			return Dispatch{}, err
 		}
 		txn.Sequence, err = c.nextIndex()
 		if err != nil {
-			return Publication{}, err
+			return Dispatch{}, err
 		}
 		if err := writeJSONAtomic(c.transactionPath(txn.Agent), txn); err != nil {
-			return Publication{}, err
+			return Dispatch{}, err
 		}
 	}
-	result = Publication{
+	publication := Publication{
 		Sequence: txn.Sequence, Topic: txn.Topic, Agent: txn.Agent,
 		Timestamp: txn.Started, Records: sortedRecords(txn.Records),
 	}
+	// Empty until the wake succeeds: a publication that landed and a settlement
+	// that did not has woken nobody yet, and the field must say so rather than
+	// go absent.
+	result = Dispatch{Publication: publication, Recipients: []string{}}
 	topicDir, err := c.topicDir(txn.Topic)
 	if err != nil {
-		return Publication{}, err
+		return Dispatch{}, err
 	}
-	if err := appendJSONL(filepath.Join(topicDir, "history.jsonl"), result); err != nil {
-		return Publication{}, err
+	// Only the publication is stored. Recipients answer who this act reaches
+	// now, which the next subscription changes; history must not carry it.
+	if err := appendJSONL(filepath.Join(topicDir, "history.jsonl"), publication); err != nil {
+		return Dispatch{}, err
 	}
 	var recipients []string
 	if forcedBroadcastTopic(txn.Topic) {
@@ -327,9 +329,14 @@ func (c *Client) commitTransaction(txn Transaction) (result Publication, err err
 		return result, err
 	}
 	summary := Summary{Type: "update", Topic: txn.Topic, Sequence: txn.Sequence, Agent: txn.Agent}
-	if err := c.writeEvent(Event{Summary: summary, Recipients: recipients}); err != nil {
+	// The woken set, not the subscribed one: writeEvent drops the publisher, and
+	// reporting the wider set would hand an agent alone on its own topic its own
+	// name back as an audience.
+	woken, err := c.writeEvent(Event{Summary: summary, Recipients: recipients})
+	if err != nil {
 		return result, err
 	}
+	result.Recipients = woken
 	return result, nil
 }
 

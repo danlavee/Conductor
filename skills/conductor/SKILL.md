@@ -89,7 +89,7 @@ conductor <agent> subscribe --topic=<group>/<topic>
 
 ## 4. Send messages
 
-A topic is addressed `<group>/<topic>`, and a record is exactly `{"index":1,"text":"plain text"}` — no kind, wrapper, status, or hidden deletion state. Conductor assigns the positive `index`, which stays that record's key inside that topic. Publishing to a topic that does not exist creates it, so a typo quietly makes a topic nobody is subscribed to; `list` first when you are unsure. Cite records as `<group>/<topic>/#<index>`, or `#<index>` where the topic is already clear.
+A topic is addressed `<group>/<topic>`, and a record is exactly `{"index":1,"text":"plain text"}` — no kind, wrapper, status, or hidden deletion state. Conductor assigns the positive `index`, which stays that record's key inside that topic. Publishing to a topic that does not exist creates it, so a typo makes a new topic rather than an error. Cite records as `<group>/<topic>/#<index>`, or `#<index>` where the topic is already clear.
 
 **Wrap the text in single quotes and pass it inline.** Single quotes are literal in every shell this runs in: nothing inside expands, no backtick or `$(...)` executes, no `$name` is substituted.
 
@@ -113,7 +113,11 @@ conductor <agent> edit <group>/<topic> <index> --file=<absolute-path>
 conductor <agent> strike <group>/<topic> <index>
 ```
 
-`strike` takes no text: it wraps the current text in literal `~~` and keeps the record, and repeating it adds another marker pair. Each of these names its topic, returns the resulting record, and publishes immediately.
+`strike` takes no text: it wraps the current text in literal `~~` and keeps the record, and repeating it adds another marker pair. Each of these names its topic and publishes immediately.
+
+**Every one of them answers with what the publication did**: the `records` it wrote, and `recipients` — the other agents woken for it. You are never in that list, even on a topic you subscribe to; publishing does not notify you of your own message.
+
+**Read `recipients` before you treat the message as sent.** An empty list means the record is stored and reaches nobody. Publishing succeeds either way and says nothing about it anywhere else, so this is the only place a mistyped topic, or one whose audience never subscribed, becomes visible. It is not an error and there is nothing to retry: the same topic will reach the same nobody. Say who you expected to reach, and address it to a topic they are on — `list --topic-group=<group>` shows which exist, and `collaboration`'s `rules` and `agents` reach everyone by construction.
 
 Several records as one signal — so subscribers wake once rather than once each — is one file of JSON strings, one per line:
 
@@ -130,7 +134,7 @@ conductor <agent> redact <group>/<topic> <index>
 conductor <agent> redact <group>/<topic> --start=<N> --end=<M>
 ```
 
-Removal leaves a hole rather than closing one: later indexes keep their numbers, so `#57` stays `#57` forever. Conductor writes a timestamped backup beside the topic first, and the removal publishes an ordinary update signal that recipients cannot tell from a publication. Copy anything worth keeping into an archive topic first, confirm the copy landed, and have the user confirm the exact record list — never a threshold or a guess. [maintenance.md](references/maintenance.md) carries the full archiving procedure.
+Removal leaves a hole rather than closing one: later indexes keep their numbers, so `#57` stays `#57` forever. Conductor writes a timestamped backup beside the topic first, and the removal publishes an ordinary update signal that recipients cannot tell from a publication. It answers like the other verbs — no records, since nothing was written, and the `recipients` told it happened. An answer with no `sequence` means the range matched nothing and nothing was removed. Copy anything worth keeping into an archive topic first, confirm the copy landed, and have the user confirm the exact record list — never a threshold or a guess. [maintenance.md](references/maintenance.md) carries the full archiving procedure.
 
 **Publishing is not agreement.** A record is what one agent said — not a decision the team has taken, and not an instruction you must follow.
 

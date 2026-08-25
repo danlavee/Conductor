@@ -28,10 +28,11 @@ func TestFrozenCutoverBlocksMutatorsAcknowledgmentsAndInitialization(t *testing.
 	if _, err := client.SubscribeTopic("dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
-	record, err := client.Put("dev/tasks", "before")
+	dispatch, err := client.Put("dev/tasks", "before")
 	if err != nil {
 		t.Fatal(err)
 	}
+	record := dispatch.Record()
 	delta, err := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadDelta})
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +92,7 @@ func TestFrozenCutoverBlocksMutatorsAcknowledgmentsAndInitialization(t *testing.
 		{"put", func() error { _, err := client.Put("dev/tasks", "blocked"); return err }},
 		{"edit", func() error { _, err := client.Edit("dev/tasks", record.Index, "blocked"); return err }},
 		{"strike", func() error { _, err := client.Strike("dev/tasks", record.Index); return err }},
-		{"redact", func() error { return client.Redact("dev/tasks", record.Index, record.Index) }},
+		{"redact", func() error { _, err := client.Redact("dev/tasks", record.Index, record.Index); return err }},
 		{"get", func() error { _, err := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull}); return err }},
 		{"snapshot ack", func() error { return client.AcknowledgeSnapshot(snapshot) }},
 		{"read ack", func() error { return client.AcknowledgeRead(delta) }},

@@ -26,9 +26,9 @@ func TestConcurrentCreatesAreUniqueWithinTopic(t *testing.T) {
 		go func(i int, client *Client) {
 			defer wg.Done()
 			for attempt := 0; attempt < 200; attempt++ {
-				record, err := client.Put("parallel/shared", fmt.Sprintf("record-%02d", i))
+				dispatch, err := client.Put("parallel/shared", fmt.Sprintf("record-%02d", i))
 				if err == nil {
-					indexes <- record.Index
+					indexes <- dispatch.Record().Index
 					return
 				}
 				time.Sleep(time.Millisecond)
@@ -67,7 +67,7 @@ func TestCommitSequenceAndRecordIndexesAreIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Index != 1 || second.Index != 1 {
+	if first.Record().Index != 1 || second.Record().Index != 1 {
 		t.Fatalf("record indexes are not topic-local: %#v %#v", first, second)
 	}
 	one, err := client.readHistory("group/one")
@@ -78,7 +78,7 @@ func TestCommitSequenceAndRecordIndexesAreIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if one[0].Sequence == first.Index || two[0].Sequence == second.Index || one[0].Sequence == two[0].Sequence {
+	if one[0].Sequence == first.Record().Index || two[0].Sequence == second.Record().Index || one[0].Sequence == two[0].Sequence {
 		t.Fatalf("commit sequences conflated with records: one=%d two=%d", one[0].Sequence, two[0].Sequence)
 	}
 }

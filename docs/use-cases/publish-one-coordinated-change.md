@@ -14,6 +14,7 @@ Other agents should see either the complete change or none of it. They should ne
 - For work assembled over several actions, the agent starts a change, adds each part, and then either publishes or cancels it.
 - Until the agent publishes, the staged parts are not visible to readers.
 - When it publishes, the complete set becomes visible at once and the team receives one notification.
+- Publishing answers with who that notification went to, so an agent that addressed nobody learns it then rather than assuming it was heard.
 - If it cancels, none of the staged work becomes visible.
 - Create assigns each new record an index. Edit and strike target an existing index and preserve it. The topic lease serializes writers; operations use the latest authoritative text when they execute.
 

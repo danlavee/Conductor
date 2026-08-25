@@ -134,25 +134,32 @@ func TestRecordOperationProcessContract(t *testing.T) {
 	if err != nil || len(stderr) != 0 || len(stdout) == 0 {
 		t.Fatalf("create error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
 	}
-	var created map[string]any
-	if err := json.Unmarshal(stdout, &created); err != nil || len(created) != 2 || created["index"] != float64(1) || created["text"] != "created" {
-		t.Fatalf("created record = %#v, error = %v", created, err)
+	// Every record verb answers with a dispatch: the publication it made and
+	// who it reached. `recipients` is always present, and empty here because
+	// the one agent on this bus is subscribed to nothing -- which is the fact
+	// a record-only answer left an agent no way to learn.
+	var created conductor.Dispatch
+	if err := json.Unmarshal(stdout, &created); err != nil || created.Record().Index != 1 || created.Record().Text != "created" {
+		t.Fatalf("created dispatch = %#v, error = %v", created, err)
+	}
+	if created.Recipients == nil || len(created.Recipients) != 0 {
+		t.Fatalf("recipients = %#v; want an empty list, never absent or null", created.Recipients)
 	}
 	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "edit", "messages/team", "1", "updated")
 	if err != nil || len(stderr) != 0 {
 		t.Fatalf("edit error = %v, stderr = %q", err, stderr)
 	}
-	var edited map[string]any
-	if err := json.Unmarshal(stdout, &edited); err != nil || len(edited) != 2 || edited["index"] != float64(1) || edited["text"] != "updated" {
-		t.Fatalf("edited record = %#v, error = %v", edited, err)
+	var edited conductor.Dispatch
+	if err := json.Unmarshal(stdout, &edited); err != nil || edited.Record().Index != 1 || edited.Record().Text != "updated" {
+		t.Fatalf("edited dispatch = %#v, error = %v", edited, err)
 	}
 	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "strike", "messages/team", "1")
 	if err != nil || len(stderr) != 0 {
 		t.Fatalf("strike error = %v, stderr = %q", err, stderr)
 	}
-	var struck conductor.Record
-	if err := json.Unmarshal(stdout, &struck); err != nil || struck.Index != 1 || struck.Text != "~~updated~~" {
-		t.Fatalf("struck record = %#v, error = %v", struck, err)
+	var struck conductor.Dispatch
+	if err := json.Unmarshal(stdout, &struck); err != nil || struck.Record().Index != 1 || struck.Record().Text != "~~updated~~" {
+		t.Fatalf("struck dispatch = %#v, error = %v", struck, err)
 	}
 }
 
@@ -172,12 +179,12 @@ func TestFileOperandCarriesTextVerbatim(t *testing.T) {
 	if err != nil || len(stderr) != 0 {
 		t.Fatalf("put --file error = %v, stderr = %q", err, stderr)
 	}
-	var record conductor.Record
-	if err := json.Unmarshal(stdout, &record); err != nil {
-		t.Fatalf("stdout is not a record: %q: %v", stdout, err)
+	var dispatch conductor.Dispatch
+	if err := json.Unmarshal(stdout, &dispatch); err != nil {
+		t.Fatalf("stdout is not a dispatch: %q: %v", stdout, err)
 	}
-	if record.Index != 1 || record.Text != body {
-		t.Fatalf("record = %#v, want index 1 text %q", record, body)
+	if dispatch.Record().Index != 1 || dispatch.Record().Text != body {
+		t.Fatalf("dispatch = %#v, want index 1 text %q", dispatch, body)
 	}
 
 	editPath := filepath.Join(t.TempDir(), "edit.txt")
@@ -188,11 +195,11 @@ func TestFileOperandCarriesTextVerbatim(t *testing.T) {
 	if err != nil || len(stderr) != 0 {
 		t.Fatalf("edit --file error = %v, stderr = %q", err, stderr)
 	}
-	if err := json.Unmarshal(stdout, &record); err != nil {
-		t.Fatalf("stdout is not a record: %q: %v", stdout, err)
+	if err := json.Unmarshal(stdout, &dispatch); err != nil {
+		t.Fatalf("stdout is not a dispatch: %q: %v", stdout, err)
 	}
-	if record.Text != "replaced\nstill multi-line" {
-		t.Fatalf("edited record = %#v", record)
+	if dispatch.Record().Text != "replaced\nstill multi-line" {
+		t.Fatalf("edited dispatch = %#v", dispatch)
 	}
 
 	empty := filepath.Join(t.TempDir(), "empty.txt")
@@ -313,9 +320,9 @@ func TestRecordOperationProcessVisibilityBoundary(t *testing.T) {
 		if err == nil || len(stdout) == 0 || len(stderr) == 0 {
 			t.Fatalf("error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
 		}
-		var record conductor.Record
-		if decodeErr := json.Unmarshal(stdout, &record); decodeErr != nil || record.Index != 1 || record.Text != "visible" {
-			t.Fatalf("record = %#v, decode error = %v", record, decodeErr)
+		var dispatch conductor.Dispatch
+		if decodeErr := json.Unmarshal(stdout, &dispatch); decodeErr != nil || dispatch.Record().Index != 1 || dispatch.Record().Text != "visible" {
+			t.Fatalf("dispatch = %#v, decode error = %v", dispatch, decodeErr)
 		}
 	})
 }

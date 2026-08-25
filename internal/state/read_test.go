@@ -22,14 +22,15 @@ func TestReadModesAndIndependentRecordCursors(t *testing.T) {
 	if _, err := reader.SubscribeTopic("dev/tasks"); err != nil {
 		t.Fatal(err)
 	}
-	first, err := writer.Put("dev/tasks", "one")
+	firstDispatch, err := writer.Put("dev/tasks", "one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := writer.Put("dev/tasks", "two")
+	secondDispatch, err := writer.Put("dev/tasks", "two")
 	if err != nil {
 		t.Fatal(err)
 	}
+	first, second := firstDispatch.Record(), secondDispatch.Record()
 	if _, err := writer.Edit("dev/tasks", first.Index, "one-updated"); err != nil {
 		t.Fatal(err)
 	}
@@ -79,10 +80,11 @@ func TestStruckRecordRemainsInFullAndDelta(t *testing.T) {
 	if _, err := client.SubscribeTopic("collaboration/shared"); err != nil {
 		t.Fatal(err)
 	}
-	record, err := client.Put("collaboration/shared", "plain")
+	dispatch, err := client.Put("collaboration/shared", "plain")
 	if err != nil {
 		t.Fatal(err)
 	}
+	record := dispatch.Record()
 	if _, err := client.Strike("collaboration/shared", record.Index); err != nil {
 		t.Fatal(err)
 	}

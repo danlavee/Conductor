@@ -23,15 +23,23 @@ func (c *Client) publishEvent(kind, topic, agent string, recipients []string) (S
 		}
 	}
 	summary := Summary{Type: kind, Topic: topic, Sequence: sequence, Agent: agent}
-	return summary, c.writeEvent(Event{Summary: summary, Recipients: recipients})
+	_, err = c.writeEvent(Event{Summary: summary, Recipients: recipients})
+	return summary, err
 }
 
-// writeEvent drops the acting agent from its own event's recipients. An inbox
-// is a wake queue and nothing else -- a record accumulates on its topic whether
-// or not anyone is woken -- and an agent is not an addressee of its own act.
-// Waking one would spend a one-shot hold to report what the agent just did, so
-// an agent that publishes after arming would un-arm itself.
-func (c *Client) writeEvent(event Event) error {
+// writeEvent drops the acting agent from its own event's recipients and answers
+// with those actually woken. An inbox is a wake queue and nothing else -- a
+// record accumulates on its topic whether or not anyone is woken -- and an agent
+// is not an addressee of its own act. Waking one would spend a one-shot hold to
+// report what the agent just did, so an agent that publishes after arming would
+// un-arm itself.
+//
+// This is the only place that decides who a publication wakes, so it is also the
+// only honest source for what a publisher is told it reached. Resolving the
+// subscribers and reporting that set instead would over-report by exactly the
+// publisher -- and an agent alone on a topic it created would read its own name
+// back as an audience.
+func (c *Client) writeEvent(event Event) ([]string, error) {
 	recipients := make([]string, 0, len(event.Recipients))
 	for _, recipient := range event.Recipients {
 		if recipient != event.Summary.Agent {
@@ -40,19 +48,19 @@ func (c *Client) writeEvent(event Event) error {
 	}
 	event.Recipients = recipients
 	if err := writeJSONAtomic(filepath.Join(c.Home, "events", indexName(event.Summary.Sequence)), event); err != nil {
-		return err
+		return nil, err
 	}
 	line, err := json.Marshal(event.Summary)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	line = append(line, '\n')
 	for _, recipient := range event.Recipients {
 		if err := c.appendInbox(recipient, line); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return recipients, nil
 }
 
 func (c *Client) unreadEvents(acknowledged []IndexRange) ([]Event, error) {

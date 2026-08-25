@@ -88,7 +88,7 @@ func TestWatchAcknowledgementReplaysBeforeCheckpoint(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := a.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 500, Agent: "b"}, Recipients: []string{"a"}}); err != nil {
+	if _, err := a.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 500, Agent: "b"}, Recipients: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
 	next := watchOne(t, a)
@@ -108,7 +108,7 @@ func TestWatchReturnsAllPendingSignalsInOneBatch(t *testing.T) {
 	// own inbox, so a self-addressed event would leave nothing to batch.
 	recipients := []string{"a"}
 	for _, sequence := range []int64{201, 202, 203} {
-		if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: sequence, Agent: "b"}, Recipients: recipients}); err != nil {
+		if _, err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: sequence, Agent: "b"}, Recipients: recipients}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -146,7 +146,7 @@ func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 	// peer author the signals: an agent's own act never reaches its own inbox.
 	drainAllPending(t, client)
 	recipients := []string{"a"}
-	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 103, Agent: "b"}, Recipients: recipients}); err != nil {
+	if _, err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 103, Agent: "b"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
 	higher := watchOne(t, client)
@@ -156,7 +156,7 @@ func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 	if err := client.AcknowledgeSummary(higher); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 102, Agent: "b"}, Recipients: recipients}); err != nil {
+	if _, err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 102, Agent: "b"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
 	late := watchOne(t, client)
@@ -172,7 +172,7 @@ func TestWatchSinceReturnsOnlyHigherIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index := int64(2); index <= 3; index++ {
-		if err := client.writeEvent(Event{
+		if _, err := client.writeEvent(Event{
 			Summary:    Summary{Type: "update", Topic: "dev/tasks", Sequence: index, Agent: "b"},
 			Recipients: []string{"a"},
 		}); err != nil {

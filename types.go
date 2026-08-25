@@ -8,6 +8,7 @@ import (
 type Agent = protocol.Agent
 type Record = protocol.Record
 type Publication = protocol.Publication
+type Dispatch = protocol.Dispatch
 type Summary = protocol.Summary
 type ReplacementActivation = state.ReplacementActivation
 type WatchResult = state.WatchResult

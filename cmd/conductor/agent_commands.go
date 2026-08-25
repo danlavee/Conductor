@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"os"
-	"strconv"
 	"strings"
 
 	conductor "github.com/danlavee/Conductor"
@@ -98,18 +97,13 @@ func runAgentCommand(agent, command string, rest []string) error {
 			if path == "" {
 				return usageError()
 			}
-			publication, err := putJSONL(client, rest[0], path)
-			if err != nil {
-				return err
-			}
-			return conductor.WriteJSON(os.Stdout, publication)
+			return writeDispatch(putJSONL(client, rest[0], path))
 		}
 		text, err := resolveText(rest[1])
 		if err != nil {
 			return err
 		}
-		record, err := client.Put(rest[0], text)
-		return writeRecordResult(record, err)
+		return writeDispatch(client.Put(rest[0], text))
 	case "edit":
 		if len(rest) != 3 {
 			return usageError()
@@ -122,8 +116,7 @@ func runAgentCommand(agent, command string, rest []string) error {
 		if err != nil {
 			return err
 		}
-		record, err := client.Edit(rest[0], index, text)
-		return writeRecordResult(record, err)
+		return writeDispatch(client.Edit(rest[0], index, text))
 	case "strike":
 		if len(rest) != 2 {
 			return usageError()
@@ -132,22 +125,16 @@ func runAgentCommand(agent, command string, rest []string) error {
 		if err != nil {
 			return err
 		}
-		record, err := client.Strike(rest[0], index)
-		return writeRecordResult(record, err)
+		return writeDispatch(client.Strike(rest[0], index))
 	case "redact":
 		topic, start, end, err := parseRedact(rest)
 		if err != nil {
 			return err
 		}
-		if err := client.Redact(topic, start, end); err != nil {
-			return err
-		}
-		return conductor.WriteJSON(os.Stdout, map[string]string{
-			"status": "redacted",
-			"topic":  topic,
-			"start":  strconv.FormatInt(start, 10),
-			"end":    strconv.FormatInt(end, 10),
-		})
+		// The old answer echoed the arguments back and said "redacted" whether
+		// or not the range matched anything. The dispatch says what actually
+		// happened: a sequence and the agents told, or nothing on both counts.
+		return writeDispatch(client.Redact(topic, start, end))
 	case "get":
 		request, err := parseGet(rest)
 		if err != nil {
@@ -260,14 +247,24 @@ func hostAdapter(root string) (*hostAdapterReport, error) {
 	return report, nil
 }
 
-func writeRecordResult(record conductor.Record, operationErr error) error {
+// writeDispatch is the single answer every record verb gives. Taking the whole
+// call result rather than a record keeps the recipients attached to the act
+// that resolved them: an agent that sees only what it wrote cannot tell a
+// topic somebody reads from one nobody is subscribed to, and both look like a
+// success.
+//
+// A dispatch with a sequence and an error is a publication that landed and
+// something after it that did not. Printing it is the only way the agent
+// learns the record is live, so the error alone would be a worse answer than
+// the pair.
+func writeDispatch(dispatch conductor.Dispatch, operationErr error) error {
 	if operationErr == nil {
-		return conductor.WriteJSON(os.Stdout, record)
+		return conductor.WriteJSON(os.Stdout, dispatch)
 	}
-	if record.Index == 0 {
+	if dispatch.Sequence == 0 {
 		return operationErr
 	}
-	if writeErr := conductor.WriteJSON(os.Stdout, record); writeErr != nil {
+	if writeErr := conductor.WriteJSON(os.Stdout, dispatch); writeErr != nil {
 		return errors.Join(operationErr, writeErr)
 	}
 	return operationErr

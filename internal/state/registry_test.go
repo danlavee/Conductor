@@ -88,10 +88,11 @@ func TestRegisterPutGetAndDiskState(t *testing.T) {
 		t.Fatalf("unexpected registration snapshot: %#v", snapshot)
 	}
 
-	record, err := client.Put("messages/team", "done")
+	dispatch, err := client.Put("messages/team", "done")
 	if err != nil {
 		t.Fatal(err)
 	}
+	record := dispatch.Record()
 	if record.Index != 1 {
 		t.Fatalf("record index = %d, want 1", record.Index)
 	}

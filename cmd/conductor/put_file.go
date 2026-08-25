@@ -43,14 +43,14 @@ func resolveText(operand string) (string, error) {
 
 // putJSONL loads a JSON string per line as one record each, in one atomic
 // transaction.
-func putJSONL(client *conductor.Client, topic, path string) (conductor.Publication, error) {
+func putJSONL(client *conductor.Client, topic, path string) (conductor.Dispatch, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return conductor.Publication{}, err
+		return conductor.Dispatch{}, err
 	}
 	defer file.Close()
 	if err := client.Begin(topic); err != nil {
-		return conductor.Publication{}, err
+		return conductor.Dispatch{}, err
 	}
 	staged := 0
 	scanner := bufio.NewScanner(file)
@@ -61,18 +61,18 @@ func putJSONL(client *conductor.Client, topic, path string) (conductor.Publicati
 		}
 		var text string
 		if err := json.Unmarshal([]byte(line), &text); err != nil {
-			return conductor.Publication{}, abortWith(client, fmt.Errorf("%s: line is not a JSON string: %w", path, err))
+			return conductor.Dispatch{}, abortWith(client, fmt.Errorf("%s: line is not a JSON string: %w", path, err))
 		}
 		if _, err := client.StagePut(text); err != nil {
-			return conductor.Publication{}, abortWith(client, err)
+			return conductor.Dispatch{}, abortWith(client, err)
 		}
 		staged++
 	}
 	if err := scanner.Err(); err != nil {
-		return conductor.Publication{}, abortWith(client, err)
+		return conductor.Dispatch{}, abortWith(client, err)
 	}
 	if staged == 0 {
-		return conductor.Publication{}, abortWith(client, fmt.Errorf("%s: no non-blank lines to load", path))
+		return conductor.Dispatch{}, abortWith(client, fmt.Errorf("%s: no non-blank lines to load", path))
 	}
 	return client.Commit()
 }
