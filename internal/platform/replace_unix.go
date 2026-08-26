@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 )
 
-// ReplaceFile atomically replaces target with source and syncs its directory.
-func ReplaceFile(source, target string) error {
+// replaceFile atomically replaces target with source and syncs its directory.
+func replaceFile(source, target string) error {
 	if err := os.Rename(source, target); err != nil {
 		return err
 	}

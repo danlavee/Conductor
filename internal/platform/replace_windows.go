@@ -9,8 +9,8 @@ import (
 
 var moveFileEx = syscall.NewLazyDLL("kernel32.dll").NewProc("MoveFileExW")
 
-// ReplaceFile atomically replaces target with source and requests write-through.
-func ReplaceFile(source, target string) error {
+// replaceFile atomically replaces target with source and requests write-through.
+func replaceFile(source, target string) error {
 	from, err := syscall.UTF16PtrFromString(source)
 	if err != nil {
 		return err
