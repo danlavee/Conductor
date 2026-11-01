@@ -84,8 +84,8 @@ func TestResolveIdentityIgnoresAByteOrderMark(t *testing.T) {
 // a quiet renumbering.
 func TestOutcomeCodesAreStableDistinctAndClearOfExitStatuses(t *testing.T) {
 	expected := map[Outcome]int{
-		Unbound: 10, Delivered: 11, Replaced: 12, Refused: 13,
-		Unregistered: 14, Released: 15, NotOwned: 16, Orphaned: 17,
+		Unbound: 10, Delivered: 11, Refused: 12,
+		Unregistered: 13, Released: 14, NotOwned: 15, Orphaned: 16,
 	}
 	seen := map[int]Outcome{}
 	for outcome, want := range expected {

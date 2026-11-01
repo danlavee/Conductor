@@ -166,11 +166,9 @@ func Install(destination string, source Source) (Result, error) {
 	}
 	result := resultFor("installed", cleanDestination, expected, manifestData)
 	if replaced != nil {
-		// The retired tree is deliberately left on disk. Removing it here would
-		// fail anyway during a real cutover -- an outgoing watcher still has its
-		// binary mapped and only exits after replacement -- and by this point
-		// the destination is already correct, so a failed cleanup must not fail
-		// the install.
+		// The retired tree is deliberately left on disk: by this point the
+		// destination is already correct, so a failed cleanup must not fail the
+		// install.
 		result.Status = "upgraded"
 		result.PreviousVersion = replaced.previousVersion
 	}

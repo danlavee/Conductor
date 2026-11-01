@@ -2,6 +2,6 @@
 
 This file contains only release-specific steps that fall outside Conductor's normal update procedure.
 
-## v0.5.0
+## Unreleased
 
-When upgrading from v0.4.0 or earlier, stop all running Conductor processes, including watchers and writers, before starting the normal update procedure. Those versions cannot respond to the cutover freeze.
+Live cutover and `migrate` are removed. Start a fresh state root: the old one is not carried forward, and the sibling `.<root>-cutover-*` control directory is no longer read. The Claude adapter's `replaced` outcome is gone, so the report codes after it moved down by one: `refused` is now 12 through `orphaned` at 16.

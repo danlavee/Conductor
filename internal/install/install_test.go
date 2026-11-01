@@ -641,27 +641,6 @@ func TestReplaceIsRequiredToOverwriteAnotherVersion(t *testing.T) {
 	}
 }
 
-func TestReplaceRefusesAProtocolChange(t *testing.T) {
-	testBackupDirectory(t)
-	destination := testDestination(t)
-	source := testSource(t)
-	if _, err := Install(destination, source); err != nil {
-		t.Fatal(err)
-	}
-
-	next := upgradeSource(t, source)
-	next.Protocol = source.Protocol + 1
-	next.Replace = true
-	_, err := Install(destination, next)
-	if err == nil || !strings.Contains(err.Error(), "migrate every state root") {
-		t.Fatalf("error = %v, want a protocol refusal pointing at migrate", err)
-	}
-	current, err := CheckCurrency(destination, source)
-	if err != nil || current.Status != "current" {
-		t.Fatalf("refused protocol change disturbed the installation: %+v, error = %v", current, err)
-	}
-}
-
 // A rejected candidate must not cost the working installation. Retirement
 // happens after staging verification for exactly this reason.
 func TestReplaceKeepsTheInstallationWhenTheCandidateFails(t *testing.T) {

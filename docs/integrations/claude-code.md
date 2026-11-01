@@ -1,6 +1,6 @@
 # Claude adapter
 
-Status: built on this branch, at [`adapters/claude-code/`](../../adapters/claude-code/README.md). This adapter's binary has been run end to end against a live session: it woke an idle session with a delivery payload on stdout, drained a backlog, re-armed itself between wakes with no human input, and reported codes 10, 13, 14 and 16 directly and 11 through a waking exit. See [verified wake methods](verified-wake-methods.md) for the runs and the evidence standard. What remains unverified is coverage, not viability: the lifecycle trigger was exercised only on `startup`, the turn-boundary trigger never by a real `Stop` hook, teardown never by a real `SessionEnd`.
+Status: built on this branch, at [`adapters/claude-code/`](../../adapters/claude-code/README.md). This adapter's binary has been run end to end against a live session: it woke an idle session with a delivery payload on stdout, drained a backlog, re-armed itself between wakes with no human input, and reported `unbound`, `refused`, `unregistered` and `not-owned` directly and `delivered` through a waking exit. See [verified wake methods](verified-wake-methods.md) for the runs and the evidence standard. What remains unverified is coverage, not viability: the lifecycle trigger was exercised only on `startup`, the turn-boundary trigger never by a real `Stop` hook, teardown never by a real `SessionEnd`.
 
 Packaged as a Claude Code plugin: `.claude-plugin/plugin.json`, with `hooks/hooks.json`, a marketplace manifest, and an optional `.mcp.json` beside it. Installing the plugin and binding an identity is the whole setup — there is no per-session step and nothing for the agent to run.
 
@@ -17,7 +17,7 @@ Each is one hook entry, and all of them run the same executable: `conductor adap
 | Lifecycle trigger | A `SessionStart` hook matching `startup`, `resume`, `clear`, `compact`, and `fork`. Runs `identity`, which records that this adapter served the session and announces the binding into context, then `arm`. | Partial — `startup` only |
 | Teardown | A `SessionEnd` hook running `release`. Not optional: the host awaits outstanding rewake hooks during session teardown, so a stream that ignores session end delays the host's exit. | No |
 
-`release` is scoped to the session that armed the stream, so a second session in the same project cannot tear down the first one's residency. It reaches the stream through an adapter-owned residency record beside the control directory — not through the protocol root, which has no concept of a host session and should not acquire one. Beside the control directory rather than under the root for a second reason too: which session holds a stream, and which identity a session speaks for, both have to outlive a cutover, and the sessions carrying them keep running while the root underneath is replaced.
+`release` is scoped to the session that armed the stream, so a second session in the same project cannot tear down the first one's residency. It reaches the stream through an adapter-owned residency record under `<root>/adapters/claude/` — outside the protocol's own state, which has no concept of a host session and should not acquire one.
 
 Records the adapter writes are published by rename. Teardown rewrites a residency from a different process than the one polling it, and a reader that caught a truncated write could not tell it from a release — it would cancel a live stream.
 
@@ -48,7 +48,7 @@ A session that began under a build too old to record it reads as unserved and ow
 
 The identity a hook acts for is resolved in a fixed order:
 
-1. **Session binding** — what a session recorded for itself, via `conductor adapter claude bind <agent>`. Stored beside the control directory, keyed by session identifier, and removed at teardown.
+1. **Session binding** — what a session recorded for itself, via `conductor adapter claude bind <agent>`. Stored under `<root>/adapters/claude/sessions/`, keyed by session identifier, and removed at teardown.
 2. **Project binding** — `.conductor-agent` at the project root. The ordinary case, and the one that needs nothing from the model.
 
 The session binding wins because it is the more specific claim: a session that has said who it is has said so about itself, while the project file speaks for every session that happens to open there. When a session binding answers, the project is not consulted at all — including its absence.
@@ -61,7 +61,7 @@ Arming when a live stream already holds the identity is refused and exits cleanl
 
 One process wakes once, because delivering the wake *is* exiting. The successor is always started by an event rather than by the process that just fired — a delivery wakes the session, the resulting turn ends, and the `Stop` hook arms the next stream. Session start, resume, and compaction enter the same cycle.
 
-Writing to stdout and waking are one decision. Stdout reaches the model only on a waking exit, so an outcome that writes without waking is an outcome nobody hears; the two that write — a delivery, and a replacement activation when the conductor is cut over beneath the stream — both exit 2. The wake is also decided before any error is: once the payload is on stdout, a later failure such as an acknowledgement that did not land must not convert a completed delivery into a silent clean exit. Waking anyway costs a duplicate; not waking costs the turn.
+Writing to stdout and waking are one decision. Stdout reaches the model only on a waking exit, so an outcome that writes without waking is an outcome nobody hears; the one that writes, a delivery, exits 2. The wake is also decided before any error is: once the payload is on stdout, a later failure such as an acknowledgement that did not land must not convert a completed delivery into a silent clean exit. Waking anyway costs a duplicate; not waking costs the turn.
 
 An identity that has not joined is reported and exits cleanly, since arming again is harmless once it does join. The cost: a `.conductor-agent` naming an agent that will *never* join — a typo, or a copied project — repeats that no-op indefinitely, reporting to stderr where a backgrounded hook's output is easy to miss. The adapter cannot distinguish "not yet" from "never"; `conductor <agent> status` can.
 
@@ -73,12 +73,11 @@ Every non-waking run prints one JSON report to stderr carrying a stable `code`, 
 | --- | --- | --- |
 | 10 | `unbound` | The project names no identity. The adapter is installed and opted out. |
 | 11 | `delivered` | Work reached the model. Exits with the wake code. |
-| 12 | `replaced` | The conductor was cut over beneath the stream. Exits with the wake code. |
-| 13 | `refused` | Another stream already owns the identity. The ordinary result of a blind re-arm. |
-| 14 | `unregistered` | The identity has not joined, so there is nothing to hold a stream for. |
-| 15 | `released` | The stream this session was holding ended. Reported under `release` when teardown ends it, and under `arm` when a blocked stream is cancelled by the teardown of the session that armed it — so read the outcome, not the command it arrived under. |
-| 16 | `not-owned` | Teardown found no stream this session owned. |
-| 17 | `orphaned` | The session this stream exists to wake is gone. The stream ends holding nothing and acknowledging nothing. |
+| 12 | `refused` | Another stream already owns the identity. The ordinary result of a blind re-arm. |
+| 13 | `unregistered` | The identity has not joined, so there is nothing to hold a stream for. |
+| 14 | `released` | The stream this session was holding ended. Reported under `release` when teardown ends it, and under `arm` when a blocked stream is cancelled by the teardown of the session that armed it — so read the outcome, not the command it arrived under. |
+| 15 | `not-owned` | Teardown found no stream this session owned. |
+| 16 | `orphaned` | The session this stream exists to wake is gone. The stream ends holding nothing and acknowledging nothing. |
 
 The codes start at ten to stay clear of the process exit statuses, a separate and much smaller vocabulary: `0` for nothing to say, `1` for a genuine failure, `2` for a wake. The exit status deliberately does not distinguish outcomes, because this host reads any status other than `0` and `2` as a hook failure and shows its stderr to the user — so giving `refused` or `unregistered` a status of its own would report an error at every turn end that armed correctly. The blind re-arm has to be able to decline without looking broken, which is exactly when it is working.
 

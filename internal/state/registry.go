@@ -11,15 +11,6 @@ import (
 
 // Join adds or reconnects an agent and returns the full current snapshot.
 func (c *Client) Join(name, responsibility string) (snapshot Snapshot, err error) {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return Snapshot{}, err
-	}
-	defer func() {
-		if releaseErr := releaseOperation(); err == nil {
-			err = releaseErr
-		}
-	}()
 	if err := c.validateProtocol(); err != nil {
 		return Snapshot{}, err
 	}
@@ -98,15 +89,6 @@ func (c *Client) Join(name, responsibility string) (snapshot Snapshot, err error
 
 // Leave removes an agent after any active transaction has been resolved.
 func (c *Client) Leave(name string) (err error) {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if releaseErr := releaseOperation(); err == nil {
-			err = releaseErr
-		}
-	}()
 	if err := c.validateProtocol(); err != nil {
 		return err
 	}
@@ -160,11 +142,6 @@ func (c *Client) Leave(name string) (err error) {
 
 // ListAgents returns the complete registry ordered by name.
 func (c *Client) ListAgents() ([]Agent, error) {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return nil, err
-	}
-	defer releaseOperation()
 	if err := c.validateProtocol(); err != nil {
 		return nil, err
 	}
@@ -244,11 +221,6 @@ func (c *Client) Roster() ([]RosterEntry, error) {
 
 // FullSnapshot returns all agents and every current record.
 func (c *Client) FullSnapshot() (Snapshot, error) {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return Snapshot{}, err
-	}
-	defer releaseOperation()
 	if err := c.validateProtocol(); err != nil {
 		return Snapshot{}, err
 	}
@@ -302,11 +274,6 @@ func (c *Client) FullSnapshot() (Snapshot, error) {
 // AcknowledgeSnapshot records the state delivered by Register. As with delta
 // acknowledgement, CLI callers invoke it only after stdout accepts the result.
 func (c *Client) AcknowledgeSnapshot(snapshot Snapshot) error {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return err
-	}
-	defer releaseOperation()
 	if err := c.validateProtocol(); err != nil {
 		return err
 	}

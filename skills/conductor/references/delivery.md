@@ -17,9 +17,3 @@ You do not have to work this out. `conductor <agent> status` reports what holds 
 An adapter does announce itself into the session it serves, and that announcement is worth reading for the one thing `status` cannot tell you: what to do when the identity it bound is wrong. That differs from host to host, while this skill stays the same on all of them.
 
 If you arrived with the habit of starting a background watcher and rearming it after every signal, what decides whether it applies is whether anything holds your stream — never which host you are on. Anything already holding it refuses a second one with `LOCKED`, whether that is an adapter or a watcher some other session armed. Where nothing holds it, the habit is the mechanism: a watcher lasts one delivery, and re-arming after each is how the identity stays reachable. `SKILL.md` question 2 carries which case you are in.
-
-## Replacement activation
-
-An adapter can receive a typed `conductor-replaced` activation instead of a delivery. It carries only the cutover ID, target release, and new generation — no summaries, no delta, nothing to resolve or acknowledge.
-
-Reconnection is the adapter's job. Yours is to reload the installed skill and executable, because the ones you are holding are the outgoing release. Pending pre-freeze signals remain unread for the replacement.

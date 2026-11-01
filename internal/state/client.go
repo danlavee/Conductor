@@ -3,33 +3,24 @@ package state
 import (
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
-
-	"github.com/danlavee/Conductor/internal/cutover"
 )
 
 const defaultLockTimeout = 3 * time.Minute
 
 // Client is safe to construct per CLI invocation.
 type Client struct {
-	Home             string
-	Agent            string
-	LockTimeout      time.Duration
-	PollInterval     time.Duration
-	ownerPID         int
-	saveCursorFn     func(string, Cursor) error
-	watchIdleFn      func()
-	watchGeneration  int64
-	watchParticipant bool
-	operationMu      sync.Mutex
-	operationDepth   int
-	operationRelease func() error
+	Home         string
+	Agent        string
+	LockTimeout  time.Duration
+	PollInterval time.Duration
+	ownerPID     int
+	saveCursorFn func(string, Cursor) error
+	watchIdleFn  func()
 }
 
 // Open constructs a client without reading, initializing, or otherwise
-// touching the protocol root. Watches use it so a frozen process can wait on
-// the external cutover plane without opening the root it is replacing.
+// touching the protocol root.
 func Open(home, agent string) (*Client, error) {
 	root, err := Root(home)
 	if err != nil {
@@ -58,18 +49,12 @@ func Root(home string) (string, error) {
 	return filepath.Clean(absolute), nil
 }
 
-// New opens and, when necessary, initializes a Conductor state root. Root
-// writes happen only while an admitted operation lease is held.
+// New opens and, when necessary, initializes a Conductor state root.
 func New(home, agent string) (*Client, error) {
 	c, err := Open(home, agent)
 	if err != nil {
 		return nil, err
 	}
-	release, err := c.beginOperation()
-	if err != nil {
-		return nil, err
-	}
-	defer release()
 	home = c.Home
 	if err := initializeProtocol(home); err != nil {
 		return nil, err
@@ -80,34 +65,4 @@ func New(home, agent string) (*Client, error) {
 		}
 	}
 	return c, nil
-}
-
-// beginOperation joins this client's current admitted operation, or creates a
-// new cross-process lease when it is the outermost call. Nested SDK methods
-// and concurrent calls on the same client share the lease until all return.
-func (c *Client) beginOperation() (func() error, error) {
-	c.operationMu.Lock()
-	defer c.operationMu.Unlock()
-	if c.operationDepth == 0 {
-		release, err := cutover.Admit(c.Home)
-		if err != nil {
-			return nil, err
-		}
-		c.operationRelease = release
-	}
-	c.operationDepth++
-	var once sync.Once
-	var releaseErr error
-	return func() error {
-		once.Do(func() {
-			c.operationMu.Lock()
-			defer c.operationMu.Unlock()
-			c.operationDepth--
-			if c.operationDepth == 0 {
-				releaseErr = c.operationRelease()
-				c.operationRelease = nil
-			}
-		})
-		return releaseErr
-	}, nil
 }

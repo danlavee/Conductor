@@ -17,11 +17,6 @@ type Delivery struct {
 }
 
 func (c *Client) ResolveDelivery(summary Summary) (Delivery, error) {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return Delivery{}, err
-	}
-	defer releaseOperation()
 	return c.resolveDeliveryWithLimit(summary, 0)
 }
 
@@ -50,11 +45,6 @@ func (c *Client) resolveDeliveryWithLimit(summary Summary, limit int) (Delivery,
 // AcknowledgeDelivery advances both the summary and content cursors after the
 // downstream consumer accepts the delivery.
 func (c *Client) AcknowledgeDelivery(delivery Delivery) error {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return err
-	}
-	defer releaseOperation()
 	agent, offset, err := c.prepareSummaryAcknowledgment(delivery.Summary)
 	if err != nil {
 		return err
@@ -102,11 +92,6 @@ type BatchDelivery struct {
 // "leave" summaries group the same way across every topic, since they all
 // resolve to the same current-roster read.
 func (c *Client) ResolveBatch(summaries []Summary) (BatchDelivery, error) {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return BatchDelivery{}, err
-	}
-	defer releaseOperation()
 	cursor, err := c.loadCursor(c.Agent)
 	if err != nil {
 		return BatchDelivery{}, err
@@ -159,11 +144,6 @@ func finalizeGroupDelivery(delivery Delivery, group []Summary, reader string, cu
 // carries. Summaries left out by Remaining were never touched and stay
 // pending for the next watch call.
 func (c *Client) AcknowledgeBatch(batch BatchDelivery) error {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return err
-	}
-	defer releaseOperation()
 	type summaryAcknowledgment struct {
 		summary Summary
 		offset  int64

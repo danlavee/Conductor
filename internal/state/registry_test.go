@@ -43,14 +43,11 @@ func TestRosterSaysHowLongEachWakeableEntryStaysTrue(t *testing.T) {
 	if _, err := client.Join("legacy", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	_, ownerPath, err := watchGuardPaths(home, "legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, ownerPath := watchGuardPaths(home, "legacy")
 	pid := os.Getpid()
 	processStart, _ := platform.ProcessStartToken(pid)
 	if err := writeJSONAtomic(ownerPath, map[string]any{
-		"pid": pid, "process_start": processStart, "protocol": CurrentProtocolVersion,
+		"pid": pid, "process_start": processStart,
 	}); err != nil {
 		t.Fatal(err)
 	}

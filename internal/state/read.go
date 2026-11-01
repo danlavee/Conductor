@@ -17,11 +17,6 @@ const DefaultReadLimit = 20
 // Get reads a current record range, the full current topic, or unread
 // subscribed content.
 func (c *Client) Get(request ReadRequest) (ReadResult, error) {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return ReadResult{}, err
-	}
-	defer releaseOperation()
 	if err := c.validateProtocol(); err != nil {
 		return ReadResult{}, err
 	}
@@ -145,11 +140,6 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 // AcknowledgeRead records the internal sequence through which delta content was
 // accepted. Range and full reads never change delta progress.
 func (c *Client) AcknowledgeRead(result ReadResult) error {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return err
-	}
-	defer releaseOperation()
 	if err := c.validateProtocol(); err != nil {
 		return err
 	}

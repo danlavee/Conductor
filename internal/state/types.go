@@ -3,7 +3,6 @@ package state
 import (
 	"time"
 
-	"github.com/danlavee/Conductor/internal/cutover"
 	"github.com/danlavee/Conductor/protocol"
 )
 
@@ -12,7 +11,6 @@ type Record = protocol.Record
 type Publication = protocol.Publication
 type Dispatch = protocol.Dispatch
 type Summary = protocol.Summary
-type ReplacementActivation = cutover.Activation
 type ProtocolError = protocol.Error
 type ProtocolVersionDetail = protocol.ProtocolVersionDetail
 
@@ -58,24 +56,6 @@ type Snapshot struct {
 	Agents []RosterEntry       `json:"agents"`
 	Topics map[string][]Record `json:"topics"`
 	heads  map[string]int64
-}
-
-// WatchResult is either ordinary summaries or the one control-plane
-// activation emitted by a watcher that crossed a replacement. Close releases
-// the operation lease protecting summaries through resolution and ack.
-type WatchResult struct {
-	Summaries  []Summary              `json:"summaries,omitempty"`
-	Activation *ReplacementActivation `json:"activation,omitempty"`
-	release    func() error
-}
-
-func (r *WatchResult) Close() error {
-	if r.release == nil {
-		return nil
-	}
-	release := r.release
-	r.release = nil
-	return release()
 }
 
 type ReadMode int

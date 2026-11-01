@@ -44,7 +44,7 @@ var requiredSkillFiles = []string{
 var supportedCommands = map[string]bool{
 	"join": true, "leave": true, "subscribe": true, "list": true,
 	"put": true, "edit": true, "strike": true, "redact": true, "get": true, "watch": true, "status": true,
-	"install": true, "verify": true, "version": true, "migrate": true, "cutover": true, "adapter": true,
+	"install": true, "verify": true, "version": true, "adapter": true,
 }
 
 var (
@@ -246,15 +246,14 @@ func cliCommands(root string) (map[string]bool, error) {
 
 // isAgentScopedDispatchTag reports whether tag is the bare identifier
 // "command" -- run()'s dispatch point for every agent-scoped verb (join,
-// put, watch, ...) -- as opposed to unrelated switches in the same file,
-// such as migrate's protocol-version dispatch.
+// put, watch, ...) -- as opposed to unrelated switches in the same file.
 func isAgentScopedDispatchTag(tag ast.Expr) bool {
 	ident, ok := tag.(*ast.Ident)
 	return ok && ident.Name == "command"
 }
 
 // isStandaloneDispatchTag reports whether tag is "args[0]" -- run()'s
-// dispatch point for install/version/migrate, the commands that precede
+// dispatch point for install/verify/version/adapter, the commands that precede
 // the leading-agent-argument grammar.
 func isStandaloneDispatchTag(tag ast.Expr) bool {
 	index, ok := tag.(*ast.IndexExpr)

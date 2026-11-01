@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/danlavee/Conductor/internal/cutover"
 	"github.com/danlavee/Conductor/internal/platform"
 )
 
@@ -195,11 +194,7 @@ func ForgetSession(root, session string) error {
 	if err := ValidateSession(session); err != nil {
 		return err
 	}
-	path, err := sessionRecordPath(root, session)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(sessionRecordPath(root, session)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -212,11 +207,7 @@ func readSession(root, session string) (sessionRecord, error) {
 	if err := ValidateSession(session); err != nil {
 		return sessionRecord{}, err
 	}
-	path, err := sessionRecordPath(root, session)
-	if err != nil {
-		return sessionRecord{}, err
-	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(sessionRecordPath(root, session))
 	if errors.Is(err, os.ErrNotExist) {
 		return sessionRecord{}, nil
 	}
@@ -231,10 +222,7 @@ func readSession(root, session string) (sessionRecord, error) {
 }
 
 func writeSession(root, session string, record sessionRecord) error {
-	path, err := sessionRecordPath(root, session)
-	if err != nil {
-		return err
-	}
+	path := sessionRecordPath(root, session)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -247,22 +235,13 @@ func writeSession(root, session string, record sessionRecord) error {
 
 // adapterDirectory holds state the protocol has no concept of: which session
 // holds a stream, which sessions this adapter serves, and which identity a
-// session speaks for. It hangs off the control directory because all of it
-// must outlive a cutover.
-func adapterDirectory(root string) (string, error) {
-	controlDir, err := cutover.Directory(root)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(controlDir, "adapters", "claude"), nil
+// session speaks for.
+func adapterDirectory(root string) string {
+	return filepath.Join(root, "adapters", "claude")
 }
 
-func sessionRecordPath(root, session string) (string, error) {
-	directory, err := adapterDirectory(root)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(directory, "sessions", session+".json"), nil
+func sessionRecordPath(root, session string) string {
+	return filepath.Join(adapterDirectory(root), "sessions", session+".json")
 }
 
 // writeAtomic publishes by rename, so a reader never sees a partial record.

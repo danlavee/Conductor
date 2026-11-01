@@ -56,31 +56,23 @@ func runWatch(ctx context.Context, client *conductor.Client, once bool) error {
 		return err
 	}
 	for {
-		continuing, err := deliverOnce(ctx, client)
-		if err != nil || once || !continuing {
+		if err := deliverOnce(ctx, client); err != nil || once {
 			return err
 		}
 	}
 }
 
-// deliverOnce reports whether the stream may continue. A replacement
-// activation ends it: the conductor this process was watching no longer
-// exists, and the adapter re-arms against its successor.
-func deliverOnce(ctx context.Context, client *conductor.Client) (bool, error) {
-	result, err := client.WatchResultContext(ctx)
+func deliverOnce(ctx context.Context, client *conductor.Client) error {
+	summaries, err := client.WatchContext(ctx)
 	if err != nil {
-		return false, err
+		return err
 	}
-	defer result.Close()
-	if result.Activation != nil {
-		return false, conductor.WriteJSON(os.Stdout, result.Activation)
-	}
-	batch, err := client.ResolveBatch(result.Summaries)
+	batch, err := client.ResolveBatch(summaries)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if err := conductor.WriteJSON(os.Stdout, batch); err != nil {
-		return false, err
+		return err
 	}
-	return true, client.AcknowledgeBatch(batch)
+	return client.AcknowledgeBatch(batch)
 }

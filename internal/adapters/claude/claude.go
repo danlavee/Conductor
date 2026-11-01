@@ -59,8 +59,6 @@ const (
 	Refused Outcome = "refused"
 	// Released means the session this stream belonged to ended.
 	Released Outcome = "released"
-	// Replaced means the conductor being watched was cut over beneath it.
-	Replaced Outcome = "replaced"
 	// Unregistered means the identity has not joined.
 	Unregistered Outcome = "unregistered"
 	// Unbound means the project names no identity. Reached without the bus.
@@ -76,7 +74,6 @@ const (
 const (
 	CodeUnbound = 10 + iota
 	CodeDelivered
-	CodeReplaced
 	CodeRefused
 	CodeUnregistered
 	CodeReleased
@@ -91,8 +88,6 @@ func (o Outcome) Code() int {
 		return CodeUnbound
 	case Delivered:
 		return CodeDelivered
-	case Replaced:
-		return CodeReplaced
 	case Refused:
 		return CodeRefused
 	case Unregistered:
@@ -110,7 +105,7 @@ func (o Outcome) Code() int {
 // Wakes reports whether the outcome wrote something the model has to see.
 // Writing and waking are one decision: stdout reaches the model only on a
 // waking exit.
-func (o Outcome) Wakes() bool { return o == Delivered || o == Replaced }
+func (o Outcome) Wakes() bool { return o == Delivered }
 
 // residency records which session's stream holds an identity, and is the
 // channel teardown speaks through.
@@ -231,7 +226,7 @@ func arm(ctx context.Context, client *conductor.Client, session string, out io.W
 	defer cancel()
 	go awaitStreamEnd(streamCtx, path, session, target, client.PollInterval, cancel)
 
-	result, err := client.WatchResultContext(streamCtx)
+	summaries, err := client.WatchContext(streamCtx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) && ctx.Err() == nil {
 			if !target.alive() {
@@ -241,15 +236,11 @@ func arm(ctx context.Context, client *conductor.Client, session string, out io.W
 		}
 		return "", err
 	}
-	defer result.Close()
 	// Closes the window between the poller's last check and this delivery.
 	if !target.alive() {
 		return Orphaned, nil
 	}
-	if result.Activation != nil {
-		return Replaced, conductor.WriteJSON(out, result.Activation)
-	}
-	batch, err := client.ResolveBatch(result.Summaries)
+	batch, err := client.ResolveBatch(summaries)
 	if err != nil {
 		return "", err
 	}
@@ -309,11 +300,7 @@ func residencyPath(client *conductor.Client) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	directory, err := adapterDirectory(client.Home)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(directory, agent+".json"), nil
+	return filepath.Join(adapterDirectory(client.Home), agent+".json"), nil
 }
 
 // writeResidency publishes by rename, so the poller never reads a partial

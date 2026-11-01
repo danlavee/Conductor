@@ -16,7 +16,7 @@ const replaceWait = 3 * time.Second
 // sharing violation or an access denial rather than a queued rename; both clear
 // on their own in milliseconds. Every caller here is publishing state a reader
 // may hold open at that instant, and treating that as a failed write loses a
-// publication, a cursor, or a cutover barrier over a condition that was gone
+// publication or a cursor over a condition that was gone
 // before anyone could observe it. A genuine permission error still fails, a
 // moment later. Platforms whose rename does not have this behaviour report
 // nothing transient and take the first answer.

@@ -8,5 +8,5 @@
 - Materialized record caches may remain stale after a crash until eligible recovery completes. CLI and Go-client reads reconstruct authoritative publication history.
 - Delivery is at least once around a crash before acknowledgement persistence, so recipients must tolerate replay.
 - Publication history, signal delivery, and cursors are not compacted automatically.
-- Conductor does not migrate unversioned or incompatible state implicitly.
+- Conductor does not migrate state. A protocol change starts a fresh state root.
 - Conductor is not an authorization boundary against a malicious or broken same-user process editing its files.

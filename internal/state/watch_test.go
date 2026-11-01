@@ -423,14 +423,11 @@ func TestStatusReportsAnUnlabelledHolderAsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	nomad := newTestClient(t, home, "nomad")
-	_, ownerPath, err := watchGuardPaths(home, "nomad")
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, ownerPath := watchGuardPaths(home, "nomad")
 	pid := os.Getpid()
 	processStart, _ := platform.ProcessStartToken(pid)
 	if err := writeJSONAtomic(ownerPath, map[string]any{
-		"pid": pid, "process_start": processStart, "protocol": CurrentProtocolVersion,
+		"pid": pid, "process_start": processStart,
 	}); err != nil {
 		t.Fatal(err)
 	}

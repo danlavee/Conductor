@@ -21,11 +21,6 @@ import (
 // range matched nothing, which the caller could not otherwise tell from a
 // redaction that happened.
 func (c *Client) Redact(topic string, start, end int64) (Dispatch, error) {
-	releaseOperation, err := c.beginOperation()
-	if err != nil {
-		return Dispatch{}, err
-	}
-	defer releaseOperation()
 	if err := c.validateProtocol(); err != nil {
 		return Dispatch{}, err
 	}

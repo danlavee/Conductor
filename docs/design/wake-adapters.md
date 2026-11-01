@@ -97,9 +97,7 @@ The join snapshot answers the same of everyone at once: each roster entry carrie
 
 It is reported beside the registration record, never stored in it. Registration is durable and self-declared; a held stream is observed at the moment of asking and is false the instant one dies. Persisting it would recreate the failure this design removes — a record asserting someone is listening, outliving the listener.
 
-Because `status` answers from outside the bus, it takes no operation lease and reads no protocol version, staying answerable against an uninitialized root and during a cutover freeze — which is when an operator most needs it; asking must never create the thing being asked about. A join is a genuine bus operation and is admitted like any other.
-
-That tolerance has one edge, and it lands on the field that matters least. The guard reads from the control directory, which outlives a root replacement; registration stats the root, and replacement swaps its generation at the same path while the bus is still frozen — so inside that window a registered agent can report as not registered. Answering during a freeze is worth that price, because the half the query exists for stays sound throughout.
+Because `status` answers from outside the bus, it reads no protocol version and stays answerable against an uninitialized root: asking must never create the thing being asked about. A join is a genuine bus operation.
 
 All three are host-neutral. Host knowledge lives in the adapter subtree, which reaches the bus through the same public client any other caller would use — the inverse of the vendor `watch` flags this design replaced.
 

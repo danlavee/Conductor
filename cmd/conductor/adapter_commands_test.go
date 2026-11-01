@@ -445,6 +445,19 @@ func runAdapterHelper(t *testing.T, root, project, session string, args ...strin
 	return runAdapterProcess(t, root, project, session, append(args, "--session="+session)...)
 }
 
+// The SessionStart hook and install --replace both write under the root before
+// anyone has joined, so what they leave must not make the root look occupied.
+func TestAdapterRecordsDoNotBlockTheFirstJoin(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+	serveSession(t, root, t.TempDir(), "session-1")
+	if err := os.MkdirAll(filepath.Join(root, "backups", "skills"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
+		t.Fatalf("join after the identity hook: %v: %s", err, stderr)
+	}
+}
+
 // serveSession runs the SessionStart hook, which is what makes a session one
 // this adapter serves. Every test that binds needs it for the same reason a
 // real session does: the binding is only worth writing where a hook will read

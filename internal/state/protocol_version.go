@@ -162,6 +162,10 @@ func undeclaredRootIsEmpty(home string) (bool, error) {
 			if err := validateInitSupport(filepath.Join(home, protocolInitDir)); err != nil {
 				return false, err
 			}
+		case "adapters", "backups":
+			// Conductor's own trees that are not bus state: host adapters and
+			// their session records, and the backups install --replace leaves.
+			// Both are routinely written before the first join.
 		default:
 			return false, nil
 		}

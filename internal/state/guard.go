@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 
-	"github.com/danlavee/Conductor/internal/cutover"
 	"github.com/danlavee/Conductor/internal/platform"
 )
 
@@ -26,9 +24,6 @@ import (
 type watchOwner struct {
 	PID          int         `json:"pid"`
 	ProcessStart string      `json:"process_start,omitempty"`
-	Capability   int         `json:"cutover_capability"`
-	Build        string      `json:"build"`
-	Protocol     int         `json:"protocol"`
 	Holder       WatchHolder `json:"holder"`
 }
 
@@ -89,48 +84,14 @@ func (c *Client) AcquireAdapterWatchOwnership(adapter, session string) (func() e
 }
 
 func (c *Client) acquireWatchOwnership(holder WatchHolder) (func() error, error) {
-	releaseOperation, operationErr := c.beginOperation()
-	controlOnly := false
-	if operationErr != nil {
-		var blocked *cutover.BlockedError
-		if !errors.As(operationErr, &blocked) {
-			return nil, operationErr
-		}
-		if blocked.State.Phase != cutover.Replaced {
-			return nil, operationErr
-		}
-		controlOnly = true
+	if err := c.validateProtocol(); err != nil {
+		return nil, err
 	}
-	if releaseOperation != nil {
-		defer releaseOperation()
-	}
-	agent := c.Agent
-	var watchGeneration int64
-	watchParticipant := false
-	if controlOnly {
-		if err := validName(agent); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := c.validateProtocol(); err != nil {
-			return nil, err
-		}
-		var err error
-		agent, err = c.requireAgent()
-		if err != nil {
-			return nil, err
-		}
-		controlState, _, err := cutover.Observe(c.Home)
-		if err != nil {
-			return nil, err
-		}
-		watchParticipant = true
-		watchGeneration = controlState.Generation
-	}
-	guardPath, ownerPath, err := watchGuardPaths(c.Home, agent)
+	agent, err := c.requireAgent()
 	if err != nil {
 		return nil, err
 	}
+	guardPath, ownerPath := watchGuardPaths(c.Home, agent)
 	release, err := platform.AcquireFileMutex(guardPath, 0)
 	if errors.Is(err, platform.ErrMutexTimeout) {
 		return nil, &ProtocolError{Code: "LOCKED", Agent: agent, Text: watchOwnershipHint(ownerPath)}
@@ -140,32 +101,21 @@ func (c *Client) acquireWatchOwnership(holder WatchHolder) (func() error, error)
 	}
 	pid := os.Getpid()
 	processStart, _ := platform.ProcessStartToken(pid)
-	if writeErr := writeJSONAtomic(ownerPath, watchOwner{
-		PID: pid, ProcessStart: processStart, Capability: cutover.Capability,
-		Build: runningBuild(), Protocol: CurrentProtocolVersion, Holder: holder,
-	}); writeErr != nil {
+	if writeErr := writeJSONAtomic(ownerPath, watchOwner{PID: pid, ProcessStart: processStart, Holder: holder}); writeErr != nil {
 		_ = release()
 		return nil, writeErr
 	}
-	c.watchParticipant = watchParticipant
-	c.watchGeneration = watchGeneration
 	return func() error {
 		_ = os.Remove(ownerPath)
-		c.watchParticipant = false
 		return release()
 	}, nil
 }
 
 // watchGuardPaths locates an agent's ownership guard and its diagnostic owner
-// sidecar. Both live in the control directory beside the versioned root, so a
-// claim on an identity outlives a protocol cutover of the state it guards.
-func watchGuardPaths(home, agent string) (guard, owner string, err error) {
-	controlDir, err := cutover.Directory(home)
-	if err != nil {
-		return "", "", err
-	}
-	directory := filepath.Join(controlDir, "watch")
-	return filepath.Join(directory, agent+".guard"), filepath.Join(directory, agent+".owner.json"), nil
+// sidecar.
+func watchGuardPaths(home, agent string) (guard, owner string) {
+	directory := filepath.Join(home, "state", "watch")
+	return filepath.Join(directory, agent+".guard"), filepath.Join(directory, agent+".owner.json")
 }
 
 // WatchStatus is the observable answer to whether an identity can be woken
@@ -189,22 +139,9 @@ type WatchStatus struct {
 // caller's assertion that it is watching, which is exactly the claim that goes
 // stale when a stream dies without saying so.
 //
-// It deliberately does not go through ResolveAgent, and so takes no operation
-// lease and reads no protocol version. Those admit a caller to the bus, and
-// this question is asked from outside it: the times an operator most needs to
-// know who would respond are the times the bus is least willing to say --
-// frozen mid-cutover, or a root that was never initialized at all. The name
-// check it does instead is ResolveAgent's, unchanged, so an identity this
-// accepts is one every other command accepts too.
-//
-// The two fields are not equally trustworthy during a cutover, and the weaker
-// one is the less important one. Wakeable comes from the control directory,
-// which sits beside the versioned root and survives its replacement. Registered
-// stats the root itself, and replacement swaps the root's generation at the
-// same path while the bus is still frozen -- so within that operator-driven
-// window a registered agent can read as Registered:false, indistinguishable
-// from one that never joined. Answering during a freeze is worth that, because
-// the field the query exists for is the one that stays sound.
+// It deliberately reads no protocol version, so it still answers for a root
+// that was never initialized. The name check is ResolveAgent's, unchanged, so
+// an identity this accepts is one every other command accepts too.
 func (c *Client) WatchStatus() (WatchStatus, error) {
 	if strings.TrimSpace(c.Agent) == "" {
 		return WatchStatus{}, errors.New("agent identity is required")
@@ -229,8 +166,6 @@ func (c *Client) WatchStatus() (WatchStatus, error) {
 		status.PID = owner.PID
 		status.Holder = &holder
 	}
-	// Read without the operation lease this command has always refused, so the
-	// answer still arrives while the bus is frozen mid-cutover.
 	subscriptions, err := c.loadSubscription(agent)
 	if err != nil {
 		return WatchStatus{}, err
@@ -245,10 +180,7 @@ func (c *Client) WatchStatus() (WatchStatus, error) {
 // sidecar naming a dead or recycled process means one armed and did not
 // survive -- which is precisely the silent failure the caller is asking about.
 func (c *Client) liveWatchOwner(agent string) (*watchOwner, error) {
-	_, ownerPath, err := watchGuardPaths(c.Home, agent)
-	if err != nil {
-		return nil, err
-	}
+	_, ownerPath := watchGuardPaths(c.Home, agent)
 	var owner watchOwner
 	if err := readJSON(ownerPath, &owner); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -270,13 +202,6 @@ func watchOwnerAlive(owner watchOwner) bool {
 		return current == owner.ProcessStart && platform.ProcessAlive(owner.PID)
 	}
 	return platform.ProcessAlive(owner.PID)
-}
-
-func runningBuild() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
-		return info.Main.Version
-	}
-	return "(devel)"
 }
 
 // watchOwnershipHint reads the current holder's diagnostic sidecar, if one is

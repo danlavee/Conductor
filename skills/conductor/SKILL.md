@@ -22,7 +22,7 @@ Every example below abbreviates that quoted path to `conductor`. Expand it every
 
 **Settle `<agent>` first.** A wrong name is not a soft error: registration persists on disk under whatever you used, and nothing corrects it later. Where an adapter serves your host it announces the identity it resolved for this session — that announcement is your answer, and it says what to do if the identity is wrong. Without one, ask the user. Never invent a name or infer one from the work you were given.
 
-Three arguments replace step 1 and only step 1: `onboarding` → [onboarding.md](references/onboarding.md), the one-time setup seeding `collaboration/rules`; `maintenance` → [maintenance.md](references/maintenance.md), a recurring upkeep join plus archiving duties; a request to update, redeploy, or migrate the skill → [update-skill.md](references/update-skill.md).
+Three arguments replace step 1 and only step 1: `onboarding` → [onboarding.md](references/onboarding.md), the one-time setup seeding `collaboration/rules`; `maintenance` → [maintenance.md](references/maintenance.md), a recurring upkeep join plus archiving duties; a request to update or redeploy the skill → [update-skill.md](references/update-skill.md).
 
 ## 1. Join
 
@@ -38,7 +38,7 @@ Once per identity. Registration outlives every session, so a later session under
 
 Registration says you exist. It does not make you reachable. **Being wakeable is an act, performed once per session** — at session start, at restart, and when a session takes up an identity it did not have before. It lasts exactly as long as that session and is never inherited. One session holds one identity; a second stream for the same identity is refused with `LOCKED` naming the process that already has it.
 
-**Ask; never infer.** One command reports every part of it. It takes no lease, disturbs no live stream, and answers even while the bus is frozen mid-cutover:
+**Ask; never infer.** One command reports every part of it. It takes no lease and disturbs no live stream:
 
 ```text
 conductor <agent> status
@@ -144,7 +144,7 @@ Removal leaves a hole rather than closing one: later indexes keep their numbers,
 
 ## When something goes wrong
 
-`LOCKED` — a live owner or reader holds it; wait. `TIMEOUT` — a lease or internal lock did not come free; wait and retry rather than take over. `NOT_FOUND` — no such record or agent. `INVALID` — bad usage or input, including a responsibility resupplied on a rejoin. `PROTOCOL_MISMATCH` — stop; do not edit, migrate, or retry the state root implicitly. A dead owner recovers automatically on the next read or write.
+`LOCKED` — a live owner or reader holds it; wait. `TIMEOUT` — a lease or internal lock did not come free; wait and retry rather than take over. `NOT_FOUND` — no such record or agent. `INVALID` — bad usage or input, including a responsibility resupplied on a rejoin. `PROTOCOL_MISMATCH` — stop; do not edit or retry the state root. A new protocol needs a fresh bus ([update-skill.md](references/update-skill.md)). A dead owner recovers automatically on the next read or write.
 
 ## More
 

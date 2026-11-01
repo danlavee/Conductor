@@ -2,7 +2,7 @@
 
 Conductor's files are coordination state, not a log of an in-memory service. Each operation reads that state, advances it through a guarded transition, and leaves enough evidence for the next operation to continue.
 
-The root `protocol.json` is the compatibility gate for all of that state. Conductor creates it only for an empty root, validates it before constructing operational directories, and revalidates it at every public stateful operation. A nonempty unversioned root and a missing, malformed, or unsupported declaration fail without implicit migration.
+The root `protocol.json` is the compatibility gate for all of that state. Conductor creates it only for an empty root, validates it before constructing operational directories, and revalidates it at every public stateful operation. A nonempty unversioned root and a missing, malformed, or unsupported declaration fail; nothing migrates.
 
 ## Stable identities
 
@@ -88,26 +88,8 @@ Recovery is opportunistic. `watch` consumes existing signals and never recovers 
 
 These distinctions make repair bounded. A stale cache can be rebuilt from history. A missing inbox append can be reconciled from its event. Neither repair changes the publication itself.
 
-## Replacement cutover
+## Upgrades
 
-Replacement uses a protocol-independent control plane beside, not inside, the logical state root:
-
-```text
-active -> freezing -> frozen -> replaced -> active(new generation)
-```
-
-Every normal SDK operation holds an external crash-released admission lease. `freezing` closes admission; the freeze command drains all leases before publishing the `frozen` barrier. From that point until new-generation activation, acknowledgments, recovery, transactions, membership, subscriptions, publications, cursors, and root-side lock files are all blocked.
-
-A watcher releases its lease between polls. Once it observes the barrier it performs control-only polling and keeps no root handle. A watcher that began in the old active generation emits exactly one `conductor-replaced` activation after replacement, with no summaries or content and no acknowledgment, then exits. A newly started watcher waits for the new active generation without duplicating that activation. Existing unread delivery state is therefore left for the replacement watcher.
-
-The first deployment of this mechanism cannot fence older binaries. Freeze preflight checks active watch ownership metadata and refuses seamless cutover when an active watcher lacks the capability. A pre-replacement validation failure may safely restore active admission; after replacement the same durable cutover identity must be resumed through activation.
-
-Replacement is what divides the barrier in two. `freezing` and `frozen` have swapped nothing yet, so abandoning one costs only the block itself, and those phases carry a lease: an abandonment sits in one of them and costs one lease period. The first operation to arrive after it lapses returns the root to active admission at the same generation, which is the abort that was already available taken on time instead of on a command. `replaced` carries no lease: the trees are swapped, only the matching cutover identity can carry the root forward, and reopening admission there would expose a root no longer described by the generation agents are reading.
-
-A lease alone cannot tell an abandoned barrier from a slow one, and the question it would need to ask — is the freezing process still alive — has no answer here, because the freeze and the replacement deliberately run from different binaries. So the distinction is drawn where the work is instead. Freezing holds the barrier across its own drain, and migration and installation replacement hold it for as long as their trees take, each through a crash-released file mutex; while that hold stands, a lapsed lease reclaims nothing, and when the holding process dies the operating system drops it and the lease recovers the root as intended. Between those commands nothing is held and the lease governs alone, which is the window an abandoned cutover actually sits in.
-
-An operator whose barrier lapses loses it and must freeze again. Every replacement path refuses a lapsed barrier independently — `install --replace` and `migrate` through the frozen check, `cutover replace` through the phase transition itself — so a root nobody happened to touch, whose phase is still `frozen` on disk, is refused as firmly as one already reclaimed. Without that second refusal the transition would carry such a root into `replaced`, the one phase with no lease and no abort, having swapped nothing. The transition refuses a held barrier for the same reason: it records that the trees are swapped, and a replacement still copying them says they are not.
-
-The lease reaches only what a lease-aware binary wrote. A barrier frozen by an older binary carries no deadline and is never reclaimed, and a replacement run from an older binary takes no hold and is not protected from one. Both are failures of the same rule — the cutover is driven by the incoming binary, which is what the [update procedure](../../skills/conductor/references/update-skill.md) directs — and the safe direction was chosen for each: an unreclaimable barrier blocks loudly until a human aborts it, where an unprotected replacement would be a root read mid-swap.
+There is no live replacement and no migration. An upgrade stops every agent, replaces the installed trees, and restarts; a protocol change also starts a fresh state root. The [update procedure](../../skills/conductor/references/update-skill.md) carries the steps.
 
 Exact file ordering and crash windows belong to the [protocol reference](../../skills/conductor/references/protocol.md). The [architecture](architecture.md) explains why these states exist; [runtime boundaries](runtime-boundaries.md) define when delivery leaves Conductor's responsibility.

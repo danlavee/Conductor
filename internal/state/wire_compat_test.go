@@ -1,57 +1,17 @@
 package state
 
-// This file exists because of a real outage, and that outage turned out not
-// to be a one-off. Cursor's JSON tags were renamed (signal_index ->
-// summary_sequence, resource_indexes -> topic_sequences, signal_ranges ->
-// summary_ranges) as part of unrelated feature work, without bumping
-// CurrentProtocolVersion. Every persisted state file is read through
-// readJSON in storage.go, which uses json.Decoder.DisallowUnknownFields()
-// -- strict decoding. Because the protocol version didn't change, deploying
-// the new binary against an existing state root skipped the
-// PROTOCOL_MISMATCH safety gate entirely and instead failed with a raw,
-// confusing decode error the moment any command tried to read an existing
-// agent's cursor file.
+// Every persisted state file is read through readJSON, which decodes
+// strictly. A JSON tag renamed without bumping CurrentProtocolVersion lets a
+// new binary past the PROTOCOL_MISMATCH gate onto an old root, where it fails
+// with a raw decode error instead -- an outage this package has had twice.
 //
-// End-to-end verification of the v2->v3 migration against a real production
-// state root (see internal/migrate) then surfaced a second, earlier
-// instance of the exact same class of bug, also never caught by a protocol
-// bump: Summary and Publication once used resource/index (rather than
-// topic/sequence), and Summary carried an extra "key" field with no current
-// equivalent. That rename predates this file; it is why Event and
-// Publication are covered below alongside Cursor, and it is direct evidence
-// that this class of bug recurs whenever a field rename isn't paired with
-// this test failing and forcing a conscious decision.
+// Each test below decodes a checked-in fixture of a current on-disk document
+// through readJSON. Renaming or removing a tag fails it, forcing the choice
+// at that change: keep the field compatible, or bump CurrentProtocolVersion
+// and update the fixture in the same change. Never just edit the fixture.
 //
-// Each test below decodes a small, checked-in "golden" fixture -- a
-// realistic, current, correct on-disk JSON document -- through the exact
-// same strict-decoding path production code uses (readJSON), for every
-// named struct this package persists and reads back that way. If a future
-// change renames or removes a JSON tag on one of these structs, decoding
-// its fixture here fails immediately (DisallowUnknownFields rejects the
-// fixture's now-unrecognized field), forcing a conscious choice at the
-// point of that change:
-//
-//   - keep the on-disk field backward-compatible, or
-//   - bump CurrentProtocolVersion, add a migration in internal/migrate,
-//     and only then update the fixture to match -- deliberately, in the
-//     same change.
-//
-// A failure here is a meaningful signal, not noise to silence. Do not
-// "fix" it by simply editing the fixture to match a renamed field without
-// doing one of the two things above.
-//
-// state/index.json, record-index.json, and head.json are also decoded
-// through readJSON's strict path, but as unexported, function-local
-// anonymous struct literals with no shared named type. A fixture test
-// cannot bind to those types from outside their function, so it provides
-// no actual protection for them (renaming their tag in production would
-// not make a test here fail); they are intentionally omitted from THIS
-// file for that reason, not because they are risk-free -- head.json in
-// particular turned out to have the exact same resource/index -> topic/
-// sequence drift as Event and Publication in real production data, and
-// internal/migrate's RunV2ToV3 translates it accordingly even though no
-// fixture test here covers it. protocol.json's protocolDocument, by
-// contrast, is a named package-level type and is covered below.
+// Function-local anonymous structs (state/index.json, record-index.json,
+// head.json) cannot be bound from here and are not covered.
 
 import (
 	"os"

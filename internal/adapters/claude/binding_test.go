@@ -3,7 +3,6 @@ package claude
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -173,31 +172,4 @@ func TestServingIsRecordedNotInferred(t *testing.T) {
 	if served, err = ServesSession(root, "session-1"); err != nil || served {
 		t.Fatalf("served = %v, %v; want teardown to clear it", served, err)
 	}
-}
-
-// TestBindingsLiveBesideTheRootRatherThanInsideIt pins the placement, because
-// the reason for it is invisible from the code that reads them: a cutover
-// replaces the root while the sessions holding these bindings keep running,
-// and a binding stored inside the root would be replaced along with it.
-func TestBindingsLiveBesideTheRootRatherThanInsideIt(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "runtime-state")
-	path, err := sessionRecordPath(root, "session-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.HasPrefix(path, root+string(filepath.Separator)) {
-		t.Fatalf("session binding at %s is inside the root a cutover replaces", path)
-	}
-	if filepath.Dir(filepath.Dir(path)) != mustAdapterDirectory(t, root) {
-		t.Fatalf("session binding at %s is not under this adapter's directory", path)
-	}
-}
-
-func mustAdapterDirectory(t *testing.T, root string) string {
-	t.Helper()
-	directory, err := adapterDirectory(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return directory
 }

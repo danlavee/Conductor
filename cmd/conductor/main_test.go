@@ -14,7 +14,6 @@ import (
 	"time"
 
 	conductor "github.com/danlavee/Conductor"
-	"github.com/danlavee/Conductor/internal/cutover"
 	installer "github.com/danlavee/Conductor/internal/install"
 )
 
@@ -28,7 +27,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-const installUsage = "usage: conductor install <absolute-skill-directory> [--replace --root=<absolute-state-root>]"
+const installUsage = "usage: conductor install <absolute-skill-directory> [--replace]"
 
 func TestInstallArgumentFailuresDoNotInitializeRuntime(t *testing.T) {
 	for name, invocation := range map[string]struct {
@@ -40,8 +39,7 @@ func TestInstallArgumentFailuresDoNotInitializeRuntime(t *testing.T) {
 		"relative":    {args: []string{"install", filepath.Join(".agents", "skills", "conductor")}, message: installUsage},
 		"malformed":   {args: []string{"install", filepath.Join(t.TempDir(), ".agents", "skills", "other")}, message: installUsage},
 		"extra":       {args: []string{"install", "first", "second"}, message: "unrecognized option second"},
-		"rootAlone":   {args: []string{"install", "first", "--root=" + filepath.Join(t.TempDir(), "root")}, message: "--root applies only to --replace"},
-		"replaceBare": {args: []string{"install", "first", "--replace"}, message: "--replace requires --root=<absolute-state-root>"},
+		"replaceBare": {args: []string{"install", "first", "--replace"}, message: installUsage},
 	} {
 		t.Run(name, func(t *testing.T) {
 			state := filepath.Join(t.TempDir(), "runtime-state")
@@ -58,45 +56,6 @@ func TestInstallArgumentFailuresDoNotInitializeRuntime(t *testing.T) {
 			}
 		})
 	}
-}
-
-// An unfrozen root is the case the precondition exists for: the tree is about
-// to be overwritten while agents are still running out of it. Both ways a root
-// can fail to be frozen are covered -- one that never cut over at all, and one
-// carrying real cutover state in some other phase -- because they reach the
-// answer by different routes.
-func TestReplaceRefusesAnUnfrozenRoot(t *testing.T) {
-	const want = "replacing an installation requires a frozen cutover root"
-	destination := filepath.Join(t.TempDir(), ".agents", "skills", "conductor")
-
-	t.Run("neverCutOver", func(t *testing.T) {
-		root := t.TempDir()
-		err := run([]string{"install", destination, "--replace", "--root=" + root})
-		if err == nil || err.Error() != want {
-			t.Fatalf("error = %v, want %q", err, want)
-		}
-	})
-
-	t.Run("cutOverThenAborted", func(t *testing.T) {
-		root := t.TempDir()
-		if err := os.WriteFile(filepath.Join(root, "protocol.json"), []byte("{\"version\":4}\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := cutover.Freeze(root, "cut-1", currentVersion(), nil); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := cutover.Abort(root, "cut-1"); err != nil {
-			t.Fatal(err)
-		}
-		current, exists, err := cutover.Observe(root)
-		if err != nil || !exists || current.Phase == cutover.Frozen {
-			t.Fatalf("setup did not produce real cutover state outside frozen: %+v exists=%v error=%v", current, exists, err)
-		}
-		err = run([]string{"install", destination, "--replace", "--root=" + root})
-		if err == nil || err.Error() != want {
-			t.Fatalf("error = %v, want %q", err, want)
-		}
-	})
 }
 
 func TestMissingInstallFolderProcessContract(t *testing.T) {
@@ -440,26 +399,6 @@ func TestVersionDoesNotInitializeRuntime(t *testing.T) {
 	}
 }
 
-func TestVersionExposesCutoverCapability(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "runtime-state")
-	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "version")
-	if err != nil {
-		t.Fatalf("version: %v: %s", err, stderr)
-	}
-	var version struct {
-		CutoverCapability int `json:"cutover_capability"`
-	}
-	if err := json.Unmarshal(stdout, &version); err != nil {
-		t.Fatal(err)
-	}
-	if version.CutoverCapability != cutover.Capability {
-		t.Fatalf("cutover capability = %d", version.CutoverCapability)
-	}
-	if _, err := os.Stat(state); !os.IsNotExist(err) {
-		t.Fatalf("runtime state was initialized: %v", err)
-	}
-}
-
 // The watch surface is host-neutral by construction: a vendor name in the
 // usage string is the first symptom of delivery-to-turn leaking back into
 // Conductor, which is the adapter's job and not the bus's.
@@ -476,48 +415,9 @@ func TestUsageExposesNoVendorWatchTransports(t *testing.T) {
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> [--replace --root=<absolute-state-root>] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace --root=<absolute-state-root>] | conductor cutover <status|freeze|replace|activate|abort> ... | conductor migrate <absolute-source-root> <absolute-destination-root> | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> strike <group/topic> <index> | conductor <agent> redact <group/topic> (<index> | --start=N --end=M) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
+	const want = "usage: conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace] | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> strike <group/topic> <index> | conductor <agent> redact <group/topic> (<index> | --start=N --end=M) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
-	}
-}
-
-func TestMigrateRequiresFrozenSourceAndDoesNotInitializeRuntime(t *testing.T) {
-	source := t.TempDir()
-	destination := filepath.Join(t.TempDir(), "destination")
-	if err := os.WriteFile(filepath.Join(source, "protocol.json"), []byte("{\"version\":4}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	state := filepath.Join(t.TempDir(), "runtime-state")
-	t.Setenv("CONDUCTOR_HOME", state)
-
-	err := run([]string{"migrate", source, destination})
-	if err == nil || err.Error() != "migration requires a frozen cutover source" {
-		t.Fatalf("error = %v", err)
-	}
-	if _, statErr := os.Stat(state); !os.IsNotExist(statErr) {
-		t.Fatalf("runtime state was initialized: %v", statErr)
-	}
-}
-
-func TestMigrateDispatchesOnlyAfterFreezeBarrier(t *testing.T) {
-	source := t.TempDir()
-	destination := filepath.Join(t.TempDir(), "destination")
-	if err := os.WriteFile(filepath.Join(source, "protocol.json"), []byte("{\"version\":4}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cutover.Freeze(source, "cut-1", currentVersion(), nil); err != nil {
-		t.Fatal(err)
-	}
-	state := filepath.Join(t.TempDir(), "runtime-state")
-	t.Setenv("CONDUCTOR_HOME", state)
-
-	err := run([]string{"migrate", source, destination})
-	if err == nil || err.Error() != "migrate supports v1, v2 or v3 source roots, found protocol 4" {
-		t.Fatalf("error = %v", err)
-	}
-	if _, statErr := os.Stat(state); !os.IsNotExist(statErr) {
-		t.Fatalf("runtime state was initialized: %v", statErr)
 	}
 }
 
@@ -599,100 +499,6 @@ func TestOneShotWatchReleasesOwnership(t *testing.T) {
 	}
 	if err := release(); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestCutoverFreezeReplaceFireAndRearm(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "runtime-state")
-	executable := os.Args[0]
-	targetRelease := currentVersion()
-	if _, _, err := runCLIHelper(executable, root, "", "a", "join", "dev"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := runCLIHelper(executable, root, "", "a", "subscribe", "--topic=dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	// No drain: joining leaves nothing behind for the joiner to consume, so the
-	// watcher below starts on an empty stream.
-	watch := exec.Command(executable, "a", "watch")
-	watch.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
-	watch.Env = replaceEnvironment(watch.Env, "CONDUCTOR_HOME", root)
-	var watchOut, watchErr bytes.Buffer
-	watch.Stdout = &watchOut
-	watch.Stderr = &watchErr
-	if err := watch.Start(); err != nil {
-		t.Fatal(err)
-	}
-	controlDir, err := cutover.Directory(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner := filepath.Join(controlDir, "watch", "a.owner.json")
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if _, err := os.Stat(owner); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			_ = watch.Process.Kill()
-			t.Fatal("watcher did not publish cutover capability")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if _, stderr, err := runCLIHelper(executable, root, "", "cutover", "freeze", root, "--id=cut-1", "--release="+targetRelease); err != nil {
-		_ = watch.Process.Kill()
-		t.Fatalf("freeze: %v: %s", err, stderr)
-	}
-	if _, stderr, err := runCLIHelper(executable, root, "", "a", "put", "dev/tasks", "blocked"); err == nil {
-		_ = watch.Process.Kill()
-		t.Fatal("write succeeded while frozen")
-	} else if !bytes.Contains(stderr, []byte("frozen")) {
-		t.Fatalf("blocked write error = %s", stderr)
-	}
-	if _, stderr, err := runCLIHelper(executable, root, "", "cutover", "replace", root, "--id=cut-1"); err != nil {
-		_ = watch.Process.Kill()
-		t.Fatalf("replace: %v: %s", err, stderr)
-	}
-	waited := make(chan error, 1)
-	go func() { waited <- watch.Wait() }()
-	select {
-	case err := <-waited:
-		if err != nil {
-			t.Fatalf("watch: %v: %s", err, watchErr.String())
-		}
-	case <-time.After(3 * time.Second):
-		_ = watch.Process.Kill()
-		t.Fatal("watch did not fire replacement activation")
-	}
-	replaced := json.NewDecoder(bytes.NewReader(watchOut.Bytes()))
-	readArmAcknowledgement(t, replaced)
-	var activation conductor.ReplacementActivation
-	if err := replaced.Decode(&activation); err != nil {
-		t.Fatalf("activation JSON: %v: %s", err, watchOut.String())
-	}
-	if activation.Type != "conductor-replaced" || activation.CutoverID != "cut-1" || activation.Release != targetRelease {
-		t.Fatalf("activation = %#v", activation)
-	}
-	if _, stderr, err := runCLIHelper(executable, root, "", "cutover", "activate", root, "--id=cut-1"); err != nil {
-		t.Fatalf("activate: %v: %s", err, stderr)
-	}
-	// A peer publishes what the rearmed watch delivers: a put never wakes the
-	// agent that made it.
-	if _, _, err := runCLIHelper(executable, root, "", "peer", "join", "review"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := runCLIHelper(executable, root, "", "peer", "put", "dev/tasks", "fresh"); err != nil {
-		t.Fatal(err)
-	}
-	stdout, stderr, err := runCLIHelper(executable, root, "", "a", "watch", "--once")
-	if err != nil {
-		t.Fatalf("rearm: %v: %s", err, stderr)
-	}
-	rearmed := json.NewDecoder(bytes.NewReader(stdout))
-	readArmAcknowledgement(t, rearmed)
-	var batch conductor.BatchDelivery
-	if err := rearmed.Decode(&batch); err != nil || len(batch.Deliveries) == 0 {
-		t.Fatalf("rearmed delivery = %#v, %v: %s", batch, err, stdout)
 	}
 }
 
@@ -789,11 +595,7 @@ func TestStatusReportsRegistrationAndLiveWakeability(t *testing.T) {
 	// The stop is the thing under test here, not just teardown: a dead watcher
 	// must read as unwakeable while its sidecar is still on disk.
 	stopWatch(t, watch)
-	controlDir, err := cutover.Directory(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(controlDir, "watch", "a.owner.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "state", "watch", "a.owner.json")); err != nil {
 		t.Fatalf("killed watcher removed its sidecar, so the stale case is untested: %v", err)
 	}
 	dead := readStatus(t, root)
@@ -851,12 +653,9 @@ func TestJoinSnapshotReportsWhoWouldRespond(t *testing.T) {
 	}
 }
 
-// A wakeability query is asked from outside the bus, and the two ways it could
-// fail to be are both silent. Initializing a protocol root in order to report
-// on it creates the thing being asked about; refusing to answer mid-cutover
-// withholds the answer exactly when an operator most wants it, since a frozen
-// bus is when "would anyone respond" stops being obvious.
-func TestStatusNeitherInitializesNorEntersTheBus(t *testing.T) {
+// A wakeability query is asked from outside the bus: initializing a protocol
+// root in order to report on it would create the thing being asked about.
+func TestStatusDoesNotInitializeTheBus(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
 
 	before := readStatus(t, root)
@@ -865,24 +664,6 @@ func TestStatusNeitherInitializesNorEntersTheBus(t *testing.T) {
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("status initialized the protocol root: %v", err)
-	}
-
-	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
-		t.Fatalf("join: %v: %s", err, stderr)
-	}
-	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "cutover", "freeze", root, "--id=cut-1", "--release="+currentVersion()); err != nil {
-		t.Fatalf("freeze: %v: %s", err, stderr)
-	}
-	// Confirm the freeze is actually in force, so the assertion below is about
-	// status tolerating it rather than about nothing being frozen.
-	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "put", "dev/tasks", "blocked"); err == nil {
-		t.Fatal("write succeeded while frozen")
-	} else if !bytes.Contains(stderr, []byte("frozen")) {
-		t.Fatalf("blocked write error = %s", stderr)
-	}
-	frozen := readStatus(t, root)
-	if !frozen.Registered || frozen.Wakeable {
-		t.Fatalf("status while frozen = %#v", frozen)
 	}
 }
 
@@ -942,11 +723,7 @@ func stopWatch(t *testing.T, watch *exec.Cmd) {
 
 func waitForOwnership(t *testing.T, root string) {
 	t.Helper()
-	controlDir, err := cutover.Directory(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner := filepath.Join(controlDir, "watch", "a.owner.json")
+	owner := filepath.Join(root, "state", "watch", "a.owner.json")
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		if _, err := os.Stat(owner); err == nil {

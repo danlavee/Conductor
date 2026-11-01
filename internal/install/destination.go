@@ -166,13 +166,6 @@ func prepareDestination(destination string, expected manifest, replace bool) (*R
 	if !replace {
 		return nil, nil, fmt.Errorf("install conflict: destination holds Conductor %s and this is %s; replacing an installation is a separate operation", existing.Version, expected.Version)
 	}
-	// Refused rather than handled. Only the state roots this installation
-	// serves can be migrated across a protocol change, and the installer knows
-	// none of them -- replacing the binary would leave that work undone while
-	// looking like it had succeeded.
-	if existing.Protocol != expected.Protocol {
-		return nil, nil, fmt.Errorf("install conflict: installed state protocol %d differs from %d; migrate every state root this installation serves first", existing.Protocol, expected.Protocol)
-	}
 	return nil, &replacement{previousVersion: existing.Version}, nil
 }
 
