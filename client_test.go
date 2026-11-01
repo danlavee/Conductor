@@ -6,7 +6,7 @@ import (
 	conductor "github.com/danlavee/Conductor"
 )
 
-func TestPublicFacadeCreatesEditsAndStrikesRecords(t *testing.T) {
+func TestPublicFacadeCreatesAndEditsRecords(t *testing.T) {
 	client, err := conductor.New(t.TempDir(), "writer")
 	if err != nil {
 		t.Fatal(err)
@@ -19,15 +19,11 @@ func TestPublicFacadeCreatesEditsAndStrikesRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	dispatch, err = client.Edit("messages/team", dispatch.Record().Index, "updated")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dispatch, err = client.Strike("messages/team", dispatch.Record().Index)
-	if err != nil || dispatch.Record().Text != "~~updated~~" {
+	if err != nil || dispatch.Record().Text != "updated" {
 		t.Fatalf("dispatch = %#v, error = %v", dispatch, err)
 	}
 	// The publisher is the only agent here and it is subscribed to nothing, so
-	// the round trip also pins the answer this transaction exists to give: a
+	// the round trip also pins the answer a publication exists to give: a
 	// record that reached nobody says so.
 	if len(dispatch.Recipients) != 0 {
 		t.Fatalf("recipients = %#v; want none for a topic nobody subscribes to", dispatch.Recipients)

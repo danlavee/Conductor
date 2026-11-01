@@ -46,11 +46,11 @@ type Dispatch struct {
 	Recipients []string `json:"recipients"`
 }
 
-// Record answers the one record a single-record verb published. Put, Edit and
-// Strike each stage exactly one, so their callers have no index to choose
-// with. A dispatch that published none -- a redaction, or a range that matched
-// nothing -- answers the zero record, which is unambiguous: index 0 is not a
-// valid record index anywhere in the protocol.
+// Record answers the one record a single-record verb published. Put and Edit
+// each publish exactly one, so their callers have no index to choose with. A
+// dispatch that published none -- one returned with an error before the
+// publication became visible -- answers the zero record, which is unambiguous:
+// index 0 is not a valid record index anywhere in the protocol.
 func (d Dispatch) Record() Record {
 	if len(d.Records) == 0 {
 		return Record{}

@@ -217,14 +217,6 @@ func watchOwnershipHint(ownerPath string) string {
 	return fmt.Sprintf("another watcher already owns this agent (pid %d)", owner.PID)
 }
 
-func (c *Client) acquireTransactionGuard(agent string) (func() error, error) {
-	return c.acquireLeaseGuard(filepath.Join(c.Home, "transactions", agent+".guard"))
-}
-
-func (c *Client) acquireLeaseGuard(guard string) (func() error, error) {
-	return c.acquireStateMutex(guard)
-}
-
 func (c *Client) acquireStateMutex(path string) (func() error, error) {
 	release, err := platform.AcquireFileMutex(path, c.LockTimeout)
 	if errors.Is(err, platform.ErrMutexTimeout) {

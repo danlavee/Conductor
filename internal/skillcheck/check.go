@@ -43,7 +43,7 @@ var requiredSkillFiles = []string{
 // fails a test instead of silently doing nothing.
 var supportedCommands = map[string]bool{
 	"join": true, "leave": true, "subscribe": true, "list": true,
-	"put": true, "edit": true, "strike": true, "redact": true, "get": true, "watch": true, "status": true,
+	"put": true, "edit": true, "get": true, "watch": true, "status": true,
 	"install": true, "verify": true, "version": true, "adapter": true,
 }
 

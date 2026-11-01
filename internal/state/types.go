@@ -1,10 +1,6 @@
 package state
 
-import (
-	"time"
-
-	"github.com/danlavee/Conductor/protocol"
-)
+import "github.com/danlavee/Conductor/protocol"
 
 type Agent = protocol.Agent
 type Record = protocol.Record
@@ -13,27 +9,6 @@ type Dispatch = protocol.Dispatch
 type Summary = protocol.Summary
 type ProtocolError = protocol.Error
 type ProtocolVersionDetail = protocol.ProtocolVersionDetail
-
-// Lock is durable resource-lease metadata.
-type Lock struct {
-	PID          int       `json:"pid"`
-	ProcessStart string    `json:"process_start,omitempty"`
-	LeaseID      uint64    `json:"lease_id"`
-	Agent        string    `json:"agent"`
-	Timestamp    time.Time `json:"timestamp"`
-	TimeoutSec   int       `json:"timeout_sec"`
-}
-
-// Transaction is the durable overlay created by Begin.
-type Transaction struct {
-	Topic    string           `json:"topic"`
-	Agent    string           `json:"agent"`
-	PID      int              `json:"pid"`
-	Started  time.Time        `json:"started"`
-	Sequence int64            `json:"sequence,omitempty"`
-	Records  map[int64]Record `json:"records"`
-	Created  map[int64]bool   `json:"created"`
-}
 
 type IndexRange struct {
 	From int64 `json:"from"`

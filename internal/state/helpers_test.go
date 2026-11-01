@@ -70,6 +70,15 @@ func watchOne(t *testing.T, client *Client) Summary {
 	return summaries[0]
 }
 
+// creates returns n ops that each create a record with text.
+func creates(n int, text string) []Op {
+	ops := make([]Op, n)
+	for i := range ops {
+		ops[i].Text = text
+	}
+	return ops
+}
+
 // drainAllPending acknowledges every summary currently pending for client,
 // however many that turns out to be, so a test can reach a clean slate
 // without hardcoding an assumed startup-signal count.

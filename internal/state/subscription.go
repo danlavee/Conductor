@@ -75,7 +75,7 @@ func (c *Client) updateSubscription(update func(*Subscription)) (Subscription, e
 	if err != nil {
 		return Subscription{}, err
 	}
-	release, err := c.acquireLeaseGuard(filepath.Join(c.Home, "subscriptions", agent+".guard"))
+	release, err := c.acquireStateMutex(filepath.Join(c.Home, "subscriptions", agent+".guard"))
 	if err != nil {
 		return Subscription{}, err
 	}

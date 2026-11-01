@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestConcurrentCreatesAreUniqueWithinTopic(t *testing.T) {
@@ -25,15 +24,12 @@ func TestConcurrentCreatesAreUniqueWithinTopic(t *testing.T) {
 		wg.Add(1)
 		go func(i int, client *Client) {
 			defer wg.Done()
-			for attempt := 0; attempt < 200; attempt++ {
-				dispatch, err := client.Put("parallel/shared", fmt.Sprintf("record-%02d", i))
-				if err == nil {
-					indexes <- dispatch.Record().Index
-					return
-				}
-				time.Sleep(time.Millisecond)
+			dispatch, err := client.Put("parallel/shared", fmt.Sprintf("record-%02d", i))
+			if err != nil {
+				errors <- fmt.Errorf("agent %d: %w", i, err)
+				return
 			}
-			errors <- fmt.Errorf("agent %d never acquired topic", i)
+			indexes <- dispatch.Record().Index
 		}(i, client)
 	}
 	wg.Wait()

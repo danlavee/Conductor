@@ -62,7 +62,7 @@ The skill is used in every environment. The host adapter changes only how a publ
 
 ## Limits
 
-Conductor targets trusted, same-user agents on one Windows or Linux host. Delivery is at least once around crashes. History is not compacted automatically, and abandoned-transaction recovery occurs on the next operation.
+Conductor targets trusted, same-user agents on one Windows or Linux host. Delivery is at least once around crashes. History is not compacted automatically.
 
 Initial release: `v0.1.0`. Latest release: `v0.4.0`.
 

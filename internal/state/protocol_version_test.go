@@ -25,7 +25,7 @@ func TestNewDeclaresProtocolBeforeStateDirectories(t *testing.T) {
 	if string(data) != fmt.Sprintf("{\n  \"version\": %d\n}\n", CurrentProtocolVersion) {
 		t.Fatalf("protocol declaration = %q", data)
 	}
-	for _, name := range []string{"registry", "topics", "locks", "inbox", "events", "cursors", "transactions", "state"} {
+	for _, name := range []string{"registry", "topics", "locks", "inbox", "events", "cursors", "state"} {
 		if info, err := os.Stat(filepath.Join(home, name)); err != nil || !info.IsDir() {
 			t.Fatalf("state directory %s is unavailable: %v", name, err)
 		}
@@ -188,11 +188,7 @@ func TestStatefulBoundariesDoNotRecreateMissingProtocol(t *testing.T) {
 		"watch":        func() error { _, err := client.WatchSinceContext(context.Background(), 0); return err },
 		"ack-summary":  func() error { return client.AcknowledgeSummary(Summary{}) },
 		"watch-owner":  func() error { _, err := client.AcquireWatchOwnership(); return err },
-		"begin":        func() error { return client.Begin("messages/team") },
-		"stage-put":    func() error { _, err := client.StagePut("text"); return err },
-		"commit":       func() error { _, err := client.Commit(); return err },
 		"put":          func() error { _, err := client.Put("messages/team", "text"); return err },
-		"abort":        func() error { return client.Abort() },
 	}
 	for name, check := range checks {
 		t.Run(name, func(t *testing.T) { assertProtocolMismatch(t, check(), nil) })

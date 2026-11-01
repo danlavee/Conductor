@@ -181,6 +181,23 @@ func TestRegistrationRetryRepairsMissingJoinEvent(t *testing.T) {
 	}
 }
 
+func TestLeaveStrikesThroughTheRosterLine(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Join("gone", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Leave("gone"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Join("reader", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.Get(ReadRequest{Topic: collaborationAgentsTopic, Mode: ReadFull})
+	if err != nil || len(result.Records) == 0 || result.Records[0].Text != "~~gone: dev~~" {
+		t.Fatalf("roster = %#v, error = %v", result.Records, err)
+	}
+}
+
 func TestDeregistrationRetryRepairsMissingLeaveEvent(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
@@ -251,52 +268,6 @@ func TestConcurrentJoinsStayOrdered(t *testing.T) {
 	}
 	if len(membership) < 1 {
 		t.Fatalf("expected membership events, got %#v", membership)
-	}
-}
-
-func TestConcurrentBeginAndDeregisterCannotStrandTransaction(t *testing.T) {
-	home := t.TempDir()
-	client := newTestClient(t, home, "")
-	if _, err := client.Join("same", "development"); err != nil {
-		t.Fatal(err)
-	}
-	beginning := newTestClient(t, home, "same")
-	leaving := newTestClient(t, home, "same")
-	start := make(chan struct{})
-	results := make(chan struct {
-		operation string
-		err       error
-	}, 2)
-	go func() {
-		<-start
-		results <- struct {
-			operation string
-			err       error
-		}{"begin", beginning.Begin("dev/tasks")}
-	}()
-	go func() {
-		<-start
-		results <- struct {
-			operation string
-			err       error
-		}{"leave", leaving.Leave("same")}
-	}()
-	close(start)
-	outcomes := map[string]error{}
-	for range 2 {
-		result := <-results
-		outcomes[result.operation] = result.err
-	}
-	if outcomes["begin"] == nil && outcomes["leave"] == nil {
-		t.Fatal("begin and leave both succeeded")
-	}
-	if outcomes["begin"] == nil {
-		assertCode(t, outcomes["leave"], "LOCKED")
-		if err := beginning.Abort(); err != nil {
-			t.Fatal(err)
-		}
-	} else if outcomes["leave"] != nil {
-		t.Fatalf("neither operation completed: begin=%v leave=%v", outcomes["begin"], outcomes["leave"])
 	}
 }
 

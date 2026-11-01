@@ -8,9 +8,9 @@ The root `protocol.json` is the compatibility gate for all of that state. Conduc
 
 An **agent** is a registered name and responsibility. A terminal binding associates that name with one process instance; an SDK caller may supply identity explicitly. A binding is not membership: every operation still requires the registry entry to exist.
 
-A **resource** is a `<topic-group>/<topic>` name. A **record** is exactly a positive topic-local `index` and plain `text`. Conductor assigns the index when creating the record; edit and strike preserve it. One publication may change several records, but only within one resource.
+A **resource** is a `<topic-group>/<topic>` name. A **record** is exactly a positive topic-local `index` and plain `text`. Conductor assigns the index when creating the record, as the topic's highest index plus one; edit preserves it. One publication may change several records, but only within one resource.
 
-A **publication index** identifies global reservation order. Completion may occur out of order, and a crash may leave a gap. Timestamps describe events; they do not order publications or signal delivery.
+A **publication index** identifies global reservation order. Completion may occur out of order across topics, and a crash may leave a gap. Timestamps describe events; they do not order publications or signal delivery.
 
 ## Membership
 
@@ -22,31 +22,24 @@ unregistered -> registered -> departed
 
 Registration validates the identity, serializes against membership changes, writes the registry entry, returns the current roster and published state, and creates a self-inclusive `join` signal. Repeating the same name and responsibility is idempotent. Reusing the name with a different responsibility is rejected.
 
-Departure removes the registry entry and creates a `leave` signal. It is refused while that agent has an open transaction. Prior publications remain; future signals exclude the departed agent.
+Departure removes the registry entry, edits the agent's `collaboration/agents` record to struck-through text, and creates a `leave` signal. Prior publications remain; future signals exclude the departed agent.
 
 ## Publication
 
-A coordinated change moves through five meaningful conditions:
+A publication is one call, made under an OS file lock on its topic:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Buffered: begin
-    Buffered --> Buffered: put, edit, or strike
-    Buffered --> [*]: abort
-    Buffered --> Indexed: commit reserves index
-    Indexed --> Visible: write history and advance head
+    [*] --> Locked: take the topic lock
+    Locked --> [*]: an edited index is missing — NOT_FOUND
+    Locked --> Visible: reserve a publication index, append to history
     Visible --> Announced: write event and inboxes
-    Announced --> Settled: remove transaction and release lease
-    Settled --> [*]
+    Announced --> [*]: release the lock
 ```
 
-These are internal phases, not commands. The CLI opens no transaction a caller can hold: every record command runs one cycle start to finish, and a `--jsonl` load is one cycle carrying many staged records. `begin` acquires the resource lease and creates a durable transaction. `put` allocates a new record index; `edit` replaces text under an existing index; `strike` literally wraps existing text in `~~` markers. Each staged operation updates the transaction and renews the lease. `abort` removes the buffer without making its values visible. A reserved record index may remain unused after abort.
+Under the lock Conductor reads the topic's history, gives each new record the highest index plus one, checks that every edited index exists, takes the next publication index, and appends the publication to `history.jsonl`. The append is the visibility boundary: readers take the same lock, so they see the whole publication or none of it. A `--jsonl` load is one publication carrying many records.
 
-The transaction records which indexes it created. Before commit first reserves a publication index, it verifies that created indexes are absent and edited indexes exist in authoritative current state. Once commit assigns its publication index, the transaction can only be completed by commit retry or recovery.
-
-`commit` reserves an index, writes immutable history, and advances the resource head. The head transition is the visibility boundary: before it, readers see the previous complete state; after it, they see the new complete state.
-
-Conductor then writes an event, appends signals to recipient inboxes, removes the transaction, and releases the lease. A crash after visibility may leave these later steps unfinished. Recovery completes them without creating a second publication.
+Conductor then writes an event and appends signals to recipient inboxes. A crash between the append and the event leaves a publication that is readable but that nobody was woken for; there is no recovery step. The operating system releases the lock of a dead process, so a crash never strands a topic.
 
 Announced is also where the recipient set becomes known, and it is what the publishing act answers with alongside the publication it made. A publisher that only got its own record back could not tell a topic somebody reads from one nobody is subscribed to; both succeed, and the difference is a delivery that never happens. The answer is who was woken, not who is subscribed — an agent is not an addressee of its own act, so the publisher is absent from it even on a topic it subscribes to, and an agent alone on a topic reads an empty audience rather than its own name. The set is not written to history: it is true of the instant it was resolved and the next subscription change falsifies it, so history stores the publication and the answer carries the audience.
 
@@ -56,22 +49,15 @@ Three read views share the same published history:
 
 - **Delta** returns changes after the accepted resource-wide or record-specific cursor.
 - **Historical** returns an inclusive index range without moving that cursor.
-- **Full** reconstructs the current records through the head without moving that cursor.
+- **Full** reconstructs the current records from history without moving that cursor.
 
 A signal is a location hint outside the record model. One watch discovers the current unread summaries and resolves them into a delivery batch up to the shared record cap; `remaining` counts summaries left pending for the next call. Explicit acknowledgement advances only the summaries and topic content actually delivered. Compact acknowledged ranges preserve a late lower publication index even when a higher one finished first.
 
 The SDK-only `WatchSinceContext(ctx, N)` operation is different. It records an intentional discard floor through `N`; a late signal at or below that index remains discarded.
 
-## Ownership and recovery
+## Locking
 
-Readers may coexist. A writer requires exclusive ownership of the resource.
-
-- With no writer, an eligible operation may proceed.
-- An unexpired writer rejects conflicting access as `LOCKED`.
-- An expired lease whose process instance is still alive returns `TIMEOUT`; Conductor does not take over or flush it.
-- An expired lease whose process instance is dead can be claimed for recovery. A later read or write resumes a matching durable transaction or clears abandoned ownership, then retries its own operation.
-
-Recovery is opportunistic. `watch` consumes existing signals and never recovers resource state.
+Every read and write of a topic takes that topic's OS file lock, so operations on one topic run one at a time and a waiter blocks until the lock is free, returning `TIMEOUT` only after the client's lock timeout. Join and leave share one membership lock. All of these are released by the operating system when their holder exits, crashed or not, so there is no lease and nothing to recover.
 
 ## Authority on disk
 
@@ -79,14 +65,13 @@ Recovery is opportunistic. `watch` consumes existing signals and never recovers 
 | --- | --- | --- |
 | State compatibility | Root protocol declaration | Installer and version metadata |
 | Membership | Registry entries | Terminal session bindings |
-| Interrupted write | Transaction and lease | None |
-| Published value | Immutable history through head | None |
-| Record identity | Topic-local record-index allocator | None |
+| Published value | Append-only topic history | None |
+| Record identity | Highest index in topic history | None |
 | Created signal | Event with its recipient set | Per-agent inbox entry |
 | Accepted progress | Cursor | None |
 | Publication order | Global next-index state | Timestamps |
 
-These distinctions make repair bounded. A stale cache can be rebuilt from history. A missing inbox append can be reconciled from its event. Neither repair changes the publication itself.
+These distinctions make repair bounded. A missing inbox append is reconciled from its event, and that repair never changes the publication itself.
 
 ## Upgrades
 

@@ -478,8 +478,8 @@ func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 
 func TestWatchDetectsDeregistrationInsteadOfHangingForever(t *testing.T) {
 	// Deregistering "a" the normal way also force-broadcasts a
-	// collaboration/agents strike commit, and while "a" no longer receives its
-	// own commit, a peer deregistering it would deliver one — which would let
+	// collaboration/agents roster edit, and while "a" no longer receives its
+	// own publication, a peer deregistering it would deliver one — which would let
 	// this watch resolve via an ordinary signal and mask the bug this test
 	// targets. Removing the registry file directly isolates the actual
 	// mechanism: a watch already blocked mid-poll, with no other bus activity

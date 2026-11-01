@@ -21,9 +21,6 @@ func (c *Client) ResolveAgent() (string, error) {
 	if err := validName(c.Agent); err != nil {
 		return "", err
 	}
-	if c.ownerPID == 0 {
-		c.ownerPID = os.Getpid()
-	}
 	return c.Agent, nil
 }
 
@@ -38,11 +35,4 @@ func (c *Client) requireAgent() (string, error) {
 		return "", err
 	}
 	return agent, nil
-}
-
-func (c *Client) ownerProcessID() int {
-	if c.ownerPID != 0 {
-		return c.ownerPID
-	}
-	return os.Getpid()
 }

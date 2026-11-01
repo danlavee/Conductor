@@ -19,7 +19,7 @@ The agent should receive relevant team activity without checking for it, and wit
 
 A delivery carries the resolved content, not just a pointer to it: the publications behind a notification are read before the recipient is woken.
 
-Delivery can restore a team notification that was recorded but not delivered. It cannot recover an unfinished publication — a read or write must encounter that work first.
+Delivery can restore a team notification that was recorded but not delivered. A publication whose writer crashed before recording its notification is never announced; it is readable only by reading the topic.
 
 An adapter may deliberately discard notifications through a known publication number and wait only for something newer. Older notifications, including any that arrive late, then stay skipped. This is an explicit choice and is not the normal path.
 

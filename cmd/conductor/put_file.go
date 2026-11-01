@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -41,18 +40,15 @@ func resolveText(operand string) (string, error) {
 	return text, nil
 }
 
-// putJSONL loads a JSON string per line as one record each, in one atomic
-// transaction.
+// putJSONL loads a JSON string per line as one record each, in one
+// publication.
 func putJSONL(client *conductor.Client, topic, path string) (conductor.Dispatch, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return conductor.Dispatch{}, err
 	}
 	defer file.Close()
-	if err := client.Begin(topic); err != nil {
-		return conductor.Dispatch{}, err
-	}
-	staged := 0
+	var ops []conductor.Op
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -61,25 +57,15 @@ func putJSONL(client *conductor.Client, topic, path string) (conductor.Dispatch,
 		}
 		var text string
 		if err := json.Unmarshal([]byte(line), &text); err != nil {
-			return conductor.Dispatch{}, abortWith(client, fmt.Errorf("%s: line is not a JSON string: %w", path, err))
+			return conductor.Dispatch{}, fmt.Errorf("%s: line is not a JSON string: %w", path, err)
 		}
-		if _, err := client.StagePut(text); err != nil {
-			return conductor.Dispatch{}, abortWith(client, err)
-		}
-		staged++
+		ops = append(ops, conductor.Op{Text: text})
 	}
 	if err := scanner.Err(); err != nil {
-		return conductor.Dispatch{}, abortWith(client, err)
+		return conductor.Dispatch{}, err
 	}
-	if staged == 0 {
-		return conductor.Dispatch{}, abortWith(client, fmt.Errorf("%s: no non-blank lines to load", path))
+	if len(ops) == 0 {
+		return conductor.Dispatch{}, fmt.Errorf("%s: no non-blank lines to load", path)
 	}
-	return client.Commit()
-}
-
-func abortWith(client *conductor.Client, cause error) error {
-	if abortErr := client.Abort(); abortErr != nil {
-		return errors.Join(cause, fmt.Errorf("abort failed: %w", abortErr))
-	}
-	return cause
+	return client.Publish(topic, ops)
 }

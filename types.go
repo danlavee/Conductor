@@ -21,6 +21,7 @@ type ReadRequest = state.ReadRequest
 type ReadResult = state.ReadResult
 type Delivery = state.Delivery
 type BatchDelivery = state.BatchDelivery
+type Op = state.Op
 
 const (
 	ReadRange = state.ReadRange

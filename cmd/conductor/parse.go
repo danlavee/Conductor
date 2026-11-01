@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -15,40 +14,6 @@ func parseRecordIndex(raw string) (int64, error) {
 		return 0, errors.New("record index must be a positive integer")
 	}
 	return index, nil
-}
-
-func parseRedact(args []string) (topic string, start, end int64, err error) {
-	if len(args) < 2 || len(args) > 3 {
-		return "", 0, 0, usageError()
-	}
-	topic = args[0]
-	if len(args) == 2 {
-		index, err := parseRecordIndex(args[1])
-		if err != nil {
-			return "", 0, 0, err
-		}
-		return topic, index, index, nil
-	}
-
-	for _, argument := range args[1:] {
-		if value, ok := strings.CutPrefix(argument, "--start="); ok {
-			start, err = strconv.ParseInt(value, 10, 64)
-			if err != nil {
-				return "", 0, 0, fmt.Errorf("invalid --start: %w", err)
-			}
-		} else if value, ok := strings.CutPrefix(argument, "--end="); ok {
-			end, err = strconv.ParseInt(value, 10, 64)
-			if err != nil {
-				return "", 0, 0, fmt.Errorf("invalid --end: %w", err)
-			}
-		} else {
-			return "", 0, 0, usageError()
-		}
-	}
-	if start <= 0 || end <= 0 || end < start {
-		return "", 0, 0, errors.New("invalid redact range")
-	}
-	return topic, start, end, nil
 }
 
 func parseGet(args []string) (conductor.ReadRequest, error) {
@@ -118,7 +83,7 @@ func parseGet(args []string) (conductor.ReadRequest, error) {
 
 // usageText is the one statement of the surface, reached two ways: printed on
 // request, and carried by the error a malformed command returns.
-const usageText = "usage: conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace] | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> strike <group/topic> <index> | conductor <agent> redact <group/topic> (<index> | --start=N --end=M) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
+const usageText = "usage: conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace] | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
 
 // usageResult keeps the surface on the same wire as every other answer. stdout
 // carries JSON and nothing else, so a reader that decodes every response needs

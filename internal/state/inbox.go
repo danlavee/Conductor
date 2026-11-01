@@ -12,7 +12,7 @@ import (
 
 func (c *Client) appendInbox(agent string, line []byte) error {
 	guard := filepath.Join(c.Home, "inbox", ".locks", agent+".guard")
-	release, err := c.acquireLeaseGuard(guard)
+	release, err := c.acquireStateMutex(guard)
 	if err != nil {
 		return err
 	}

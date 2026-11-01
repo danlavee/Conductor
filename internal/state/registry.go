@@ -37,14 +37,11 @@ func (c *Client) Join(name, responsibility string) (snapshot Snapshot, err error
 		responsibility = existing.Responsibility
 	}
 
-	if err := c.acquireMembership(name); err != nil {
+	release, err := c.lockResource(membershipResource)
+	if err != nil {
 		return Snapshot{}, err
 	}
-	defer func() {
-		if releaseErr := c.releaseWrite("_registry/membership", name); err == nil && releaseErr != nil {
-			err = releaseErr
-		}
-	}()
+	defer release()
 
 	if exists {
 		c.Agent = name
@@ -87,8 +84,8 @@ func (c *Client) Join(name, responsibility string) (snapshot Snapshot, err error
 	return snapshot, nil
 }
 
-// Leave removes an agent after any active transaction has been resolved.
-func (c *Client) Leave(name string) (err error) {
+// Leave removes an agent.
+func (c *Client) Leave(name string) error {
 	if err := c.validateProtocol(); err != nil {
 		return err
 	}
@@ -96,16 +93,14 @@ func (c *Client) Leave(name string) (err error) {
 		return err
 	}
 	c.Agent = name
-	if err := c.acquireMembership(name); err != nil {
+	release, err := c.lockResource(membershipResource)
+	if err != nil {
 		return err
 	}
-	defer func() {
-		if releaseErr := c.releaseWrite("_registry/membership", name); err == nil && releaseErr != nil {
-			err = releaseErr
-		}
-	}()
+	defer release()
 	path := filepath.Join(c.Home, "registry", name+".json")
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+	var agent Agent
+	if err := readJSON(path, &agent); errors.Is(err, os.ErrNotExist) {
 		latest, eventErr := c.latestMembershipType(name)
 		if eventErr != nil {
 			return eventErr
@@ -118,16 +113,13 @@ func (c *Client) Leave(name string) (err error) {
 			return eventErr
 		}
 		return &ProtocolError{Code: "NOT_FOUND", Text: "agent does not exist"}
+	} else if err != nil {
+		return err
 	}
-	if _, statErr := os.Stat(c.transactionPath(name)); statErr == nil {
-		return &ProtocolError{Code: "LOCKED", Agent: name, Text: "agent has an active transaction; commit or abort it before leaving"}
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return statErr
-	}
-	// Strike the roster record before removing anything else, so a crash
+	// Retire the roster record before removing anything else, so a crash
 	// partway through deregistration never leaves the collaboration/agents
 	// index mapping unreachable.
-	if err := c.strikeRosterRecord(name); err != nil {
+	if err := c.retireRosterRecord(agent); err != nil {
 		return err
 	}
 	if err := removeEventually(path); err != nil {
@@ -249,17 +241,13 @@ func (c *Client) FullSnapshot() (Snapshot, error) {
 				continue
 			}
 			topicName := group.Name() + "/" + topic.Name()
-			release, err := c.acquireRead(topicName)
+			release, err := c.lockResource(topicName)
 			if err != nil {
 				return Snapshot{}, err
 			}
 			history, err := c.readHistory(topicName)
-			releaseErr := release()
-			if err != nil {
+			if err := errors.Join(err, release()); err != nil {
 				return Snapshot{}, err
-			}
-			if releaseErr != nil {
-				return Snapshot{}, releaseErr
 			}
 			records := materialize(history)
 			if len(records) > 0 {
@@ -316,20 +304,8 @@ func (c *Client) latestMembershipType(agent string) (string, error) {
 	return latest, nil
 }
 
-func (c *Client) acquireMembership(agent string) error {
-	deadline := time.Now().Add(c.LockTimeout)
-	for {
-		if _, err := c.acquireWrite("_registry/membership", agent); err == nil {
-			return nil
-		} else {
-			var protocol *ProtocolError
-			if !errors.As(err, &protocol) || protocol.Code != "LOCKED" || time.Now().After(deadline) {
-				return err
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-	}
-}
+// membershipResource serializes Join and Leave across every agent.
+const membershipResource = "_registry/membership"
 
 // rosterIndexRecord is the durable mapping from a registered agent's name to
 // its record index on the collaboration/agents topic. It lives outside
@@ -381,8 +357,8 @@ func rosterText(name, responsibility string) string {
 // collaboration/agents, publishing one if (and only if) the durable index
 // mapping shows none exists yet. It is idempotent so Register can call it
 // both for a brand-new agent and when repairing a partially completed
-// registration. The caller must already hold the agent's membership lock and
-// have c.Agent set to name.
+// registration. The caller must already hold the membership lock and have
+// c.Agent set to name.
 func (c *Client) ensureRosterRecord(name, responsibility string) error {
 	index, err := c.loadRosterIndex(name)
 	if err != nil {
@@ -391,47 +367,33 @@ func (c *Client) ensureRosterRecord(name, responsibility string) error {
 	if index > 0 {
 		return nil
 	}
-	if err := c.beginLocked(name, collaborationAgentsTopic); err != nil {
-		return err
-	}
-	record, err := c.StagePut(rosterText(name, responsibility))
-	if err != nil {
-		if abortErr := c.Abort(); abortErr != nil {
-			return errors.Join(err, abortErr)
+	dispatch, err := c.Put(collaborationAgentsTopic, rosterText(name, responsibility))
+	// A wake failure still answers with the appended record. Map it anyway, or
+	// a retried join would publish the agent's line a second time.
+	if record := dispatch.Record(); record.Index > 0 {
+		if saveErr := c.saveRosterIndex(name, record.Index); saveErr != nil {
+			return saveErr
 		}
-		return err
 	}
-	if _, err := c.commit(); err != nil {
-		return err
-	}
-	return c.saveRosterIndex(name, record.Index)
+	return err
 }
 
-// strikeRosterRecord strikes name's current collaboration/agents record, if
-// the durable index mapping still shows one exists, and then clears the
+// retireRosterRecord edits agent's collaboration/agents record to struck-through
+// text, if the durable index mapping still shows one exists, and then clears the
 // mapping. It is a no-op when no record is known (nothing was ever
-// published, or a previous call already struck and cleared it). The caller
-// must already hold the agent's membership lock and have c.Agent set to
-// name.
-func (c *Client) strikeRosterRecord(name string) error {
-	index, err := c.loadRosterIndex(name)
+// published, or a previous call already retired and cleared it). The caller
+// must already hold the membership lock and have c.Agent set to the agent.
+func (c *Client) retireRosterRecord(agent Agent) error {
+	index, err := c.loadRosterIndex(agent.Name)
 	if err != nil {
 		return err
 	}
 	if index == 0 {
 		return nil
 	}
-	if err := c.beginLocked(name, collaborationAgentsTopic); err != nil {
+	struck := "~~" + rosterText(agent.Name, agent.Responsibility) + "~~"
+	if _, err := c.Edit(collaborationAgentsTopic, index, struck); err != nil {
 		return err
 	}
-	if _, err := c.StageStrike(index); err != nil {
-		if abortErr := c.Abort(); abortErr != nil {
-			return errors.Join(err, abortErr)
-		}
-		return err
-	}
-	if _, err := c.commit(); err != nil {
-		return err
-	}
-	return c.removeRosterIndex(name)
+	return c.removeRosterIndex(agent.Name)
 }

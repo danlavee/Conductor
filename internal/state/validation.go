@@ -19,16 +19,9 @@ func validateAgent(agent *Agent) error {
 	return nil
 }
 
-func (lock *Lock) validate() error {
-	if lock.PID <= 0 || lock.ProcessStart == "" || lock.LeaseID == 0 || lock.TimeoutSec <= 0 || lock.Timestamp.IsZero() {
-		return errors.New("invalid lock state")
-	}
-	return validName(lock.Agent)
-}
-
 func validatePublication(publication *Publication) error {
 	if publication.Sequence <= 0 || publication.Timestamp.IsZero() || len(publication.Records) == 0 {
-		return errors.New("invalid commit history state")
+		return errors.New("invalid publication in history")
 	}
 	if err := validTopic(publication.Topic); err != nil {
 		return err
@@ -37,32 +30,6 @@ func validatePublication(publication *Publication) error {
 		return err
 	}
 	return validateRecords(publication.Records)
-}
-
-func (transaction *Transaction) validate() error {
-	if transaction.PID <= 0 || transaction.Started.IsZero() || transaction.Sequence < 0 || transaction.Records == nil || transaction.Created == nil {
-		return errors.New("invalid transaction state")
-	}
-	if err := validTopic(transaction.Topic); err != nil {
-		return err
-	}
-	if err := validName(transaction.Agent); err != nil {
-		return err
-	}
-	for index, record := range transaction.Records {
-		if index != record.Index {
-			return errors.New("transaction record key does not match its index")
-		}
-	}
-	for index, created := range transaction.Created {
-		if !created {
-			return errors.New("transaction created marker must be true")
-		}
-		if _, ok := transaction.Records[index]; !ok {
-			return errors.New("transaction created marker has no record")
-		}
-	}
-	return validateRecords(sortedRecords(transaction.Records))
 }
 
 func (cursor *Cursor) validate() error {

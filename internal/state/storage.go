@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/danlavee/Conductor/internal/platform"
 )
@@ -48,6 +49,43 @@ func writeJSONAtomicFrom(tempDir, pattern, path string, value any) error {
 		return err
 	}
 	return platform.ReplaceFile(tempPath, path)
+}
+
+func appendJSONL(path string, value any) error {
+	bytes, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(bytes, '\n')); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+func removeEventually(path string) error {
+	var err error
+	for attempt := 0; attempt < 100; attempt++ {
+		err = os.Remove(path)
+		if err == nil {
+			return platform.SyncParent(path)
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if !errors.Is(err, os.ErrPermission) {
+			return err
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return err
 }
 
 func readJSON(path string, value any) error {

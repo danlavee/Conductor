@@ -54,7 +54,7 @@ An adapter cannot supply that argument by asking the agent, since it acts withou
 
 "No resident Conductor process" does not mean nothing blocks. An adapter's resident component stays active while waiting, but the core has no independent daemon once that caller exits.
 
-Cancellation ends the current wait without acknowledging a signal. The SDK-only `WatchSinceContext` operation is not a retry tool: it deliberately discards signals through a chosen index. Transaction recovery is also outside the wake path; only a later resource read or write can recover an expired dead owner.
+Cancellation ends the current wait without acknowledging a signal. The SDK-only `WatchSinceContext` operation is not a retry tool: it deliberately discards signals through a chosen index.
 
 Host-specific policy remains outside this repository: adapter lifetime, durable session mapping, retry after host acceptance, and behavior when an accepted trigger never reaches an agent.
 

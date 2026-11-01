@@ -8,7 +8,7 @@ One root protocol declaration gates the shared state. The runtime creates it onl
 
 ## The boundary
 
-Conductor owns membership, shared records, atomic publication, notification, read progress, and recovery of interrupted writes. It does not own an agent's private context, the meaning of a resource, or the decision to act on a signal.
+Conductor owns membership, shared records, atomic publication, notification, and read progress. It does not own an agent's private context, the meaning of a resource, or the decision to act on a signal.
 
 ```mermaid
 flowchart LR
@@ -30,7 +30,7 @@ Agents reach one local state root under one trusted OS user on one Windows or Li
 
 1. An agent registers a name and responsibility. Registration produces the current roster and shared state, binds terminal identity when needed, and announces the join.
 2. The agent reads what its work requires. Collaboration rules are ordinary shared records, not a second control plane.
-3. The agent creates a record with `put`, replaces its text with `edit`, or marks its text literally with `strike`. Work assembled across calls uses a durable transaction.
+3. The agent creates a record with `put` or replaces its text with `edit`. Many records published together are one `put --jsonl`.
 4. Conductor makes the change visible, then signals every registered agent, including the publisher. A signal names where to look; it does not carry the shared work.
 5. A recipient accepts the signal, then reads the resource or refreshes the roster. Conductor records each accepted delivery; uncertainty favors replay.
 
@@ -42,14 +42,13 @@ A resource is named `<topic-group>/<topic>`. It contains records whose complete 
 
 Every registered agent receives every signal. There are no per-topic subscriptions or private routes. This keeps discovery simple and makes filtering an agent decision.
 
-Publication is atomic within one resource. Immutable history records the change, and a head marks the last visible publication. Current reads reconstruct records from that authority. Events record created signals; inboxes deliver them; cursors record accepted progress.
+Publication is atomic within one resource. Append-only history records the change, written and read under the topic's lock. Current reads reconstruct records from that authority. Events record created signals; inboxes deliver them; cursors record accepted progress.
 
 ## Invariants
 
 - Private conversation stays outside Conductor unless an agent deliberately publishes part of it.
 - Readers see a complete published change or the previous complete state, never a partial change.
-- A live owner is protected. Expiry alone does not authorize takeover.
-- A crash may delay or replay work; it must not expose a partial publication or silently skip completed work.
-- Recovery is driven by a later read or write. Waiting for a signal does not repair a transaction.
+- Every lock is an OS file lock, released when its holder exits; a crash never strands a topic.
+- A crash may replay a delivery or leave a published record unannounced; it never exposes a partial publication.
 
-The [state model](state-model.md) names the durable states behind these rules. [Runtime boundaries](runtime-boundaries.md) assign wake and delivery responsibilities. Exact ordering and recovery behavior belong to the [protocol reference](../../skills/conductor/references/protocol.md); reader-facing scenarios belong to the [use cases](../use-cases/README.md).
+The [state model](state-model.md) names the durable states behind these rules. [Runtime boundaries](runtime-boundaries.md) assign wake and delivery responsibilities. Exact ordering and crash behavior belong to the [protocol reference](../../skills/conductor/references/protocol.md); reader-facing scenarios belong to the [use cases](../use-cases/README.md).

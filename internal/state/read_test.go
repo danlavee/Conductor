@@ -1,13 +1,6 @@
 package state
 
-import (
-	"bufio"
-	"bytes"
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestReadModesAndIndependentRecordCursors(t *testing.T) {
 	home := t.TempDir()
@@ -85,7 +78,7 @@ func TestStruckRecordRemainsInFullAndDelta(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := dispatch.Record()
-	if _, err := client.Strike("collaboration/shared", record.Index); err != nil {
+	if _, err := client.Edit("collaboration/shared", record.Index, "~~plain~~"); err != nil {
 		t.Fatal(err)
 	}
 	full, err := client.Get(ReadRequest{Topic: "collaboration/shared", RecordIndex: record.Index, Mode: ReadFull})
@@ -190,32 +183,7 @@ func TestDeltaAlwaysIncludesFirstOversizedPublicationWhole(t *testing.T) {
 	if _, err := client.SubscribeTopic("messages/big-batch"); err != nil {
 		t.Fatal(err)
 	}
-	lines := ""
-	for i := 0; i < DefaultReadLimit+2; i++ {
-		encoded, err := json.Marshal("x")
-		if err != nil {
-			t.Fatal(err)
-		}
-		lines += string(encoded) + "\n"
-	}
-	path := filepath.Join(t.TempDir(), "bulk.jsonl")
-	if err := os.WriteFile(path, []byte(lines), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Begin("messages/big-batch"); err != nil {
-		t.Fatal(err)
-	}
-	scanner := bufio.NewScanner(bytes.NewReader([]byte(lines)))
-	for scanner.Scan() {
-		var text string
-		if err := json.Unmarshal(scanner.Bytes(), &text); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := client.StagePut(text); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := client.Commit(); err != nil {
+	if _, err := client.Publish("messages/big-batch", creates(DefaultReadLimit+2, "x")); err != nil {
 		t.Fatal(err)
 	}
 

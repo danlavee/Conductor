@@ -112,14 +112,6 @@ func TestRecordOperationProcessContract(t *testing.T) {
 	if err := json.Unmarshal(stdout, &edited); err != nil || edited.Record().Index != 1 || edited.Record().Text != "updated" {
 		t.Fatalf("edited dispatch = %#v, error = %v", edited, err)
 	}
-	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "strike", "messages/team", "1")
-	if err != nil || len(stderr) != 0 {
-		t.Fatalf("strike error = %v, stderr = %q", err, stderr)
-	}
-	var struck conductor.Dispatch
-	if err := json.Unmarshal(stdout, &struck); err != nil || struck.Record().Index != 1 || struck.Record().Text != "~~updated~~" {
-		t.Fatalf("struck dispatch = %#v, error = %v", struck, err)
-	}
 }
 
 // A body given as a file is published verbatim, so nothing an agent writes
@@ -170,7 +162,7 @@ func TestFileOperandCarriesTextVerbatim(t *testing.T) {
 	}
 }
 
-func TestPutJSONLBulkLoadsAsOneTransaction(t *testing.T) {
+func TestPutJSONLBulkLoadsAsOnePublication(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
 	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
 		t.Fatal(err)
@@ -235,16 +227,6 @@ func TestPutJSONLMalformedLineAbortsWithoutPartialRecords(t *testing.T) {
 	}
 	if len(full.Records) != 0 {
 		t.Fatalf("full records = %#v, want none after aborted bulk load", full.Records)
-	}
-
-	// The failed bulk load must not leave a dangling transaction or lock
-	// behind. Nothing can ask that directly any more -- the CLI opens no
-	// transaction of its own -- so it is asked the way a caller would feel it:
-	// the next write to the same topic succeeds immediately rather than
-	// blocking on a lease nobody holds.
-	stdout, stderr, err = runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "recovered")
-	if err != nil || len(stderr) != 0 || len(stdout) == 0 {
-		t.Fatalf("put after aborted bulk load error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
 	}
 }
 
@@ -415,7 +397,7 @@ func TestUsageExposesNoVendorWatchTransports(t *testing.T) {
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace] | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> strike <group/topic> <index> | conductor <agent> redact <group/topic> (<index> | --start=N --end=M) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
+	const want = "usage: conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace] | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}
@@ -823,43 +805,3 @@ func TestParseRecordIndex(t *testing.T) {
 	}
 }
 
-func TestParseRedact(t *testing.T) {
-	tests := []struct {
-		name      string
-		args      []string
-		wantTopic string
-		wantStart int64
-		wantEnd   int64
-		wantError string
-	}{
-		{name: "single record", args: []string{"dev/tasks", "7"}, wantTopic: "dev/tasks", wantStart: 7, wantEnd: 7},
-		{name: "range", args: []string{"dev/tasks", "--end=9", "--start=2"}, wantTopic: "dev/tasks", wantStart: 2, wantEnd: 9},
-		{name: "missing arguments", args: []string{"dev/tasks"}, wantError: usageError().Error()},
-		{name: "too many arguments", args: []string{"dev/tasks", "1", "2", "3"}, wantError: usageError().Error()},
-		{name: "invalid record", args: []string{"dev/tasks", "zero"}, wantError: "record index must be a positive integer"},
-		{name: "invalid start", args: []string{"dev/tasks", "--start=zero", "--end=2"}, wantError: `invalid --start: strconv.ParseInt: parsing "zero": invalid syntax`},
-		{name: "invalid end", args: []string{"dev/tasks", "--start=1", "--end=zero"}, wantError: `invalid --end: strconv.ParseInt: parsing "zero": invalid syntax`},
-		{name: "unknown option", args: []string{"dev/tasks", "--start=1", "--last=2"}, wantError: usageError().Error()},
-		{name: "missing bound", args: []string{"dev/tasks", "--start=1", "--start=2"}, wantError: "invalid redact range"},
-		{name: "zero bound", args: []string{"dev/tasks", "--start=0", "--end=2"}, wantError: "invalid redact range"},
-		{name: "reversed range", args: []string{"dev/tasks", "--start=3", "--end=2"}, wantError: "invalid redact range"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			topic, start, end, err := parseRedact(test.args)
-			if test.wantError != "" {
-				if err == nil || err.Error() != test.wantError {
-					t.Fatalf("error = %v, want %q", err, test.wantError)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if topic != test.wantTopic || start != test.wantStart || end != test.wantEnd {
-				t.Fatalf("parseRedact() = %q, %d, %d; want %q, %d, %d", topic, start, end, test.wantTopic, test.wantStart, test.wantEnd)
-			}
-		})
-	}
-}

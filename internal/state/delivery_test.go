@@ -27,16 +27,7 @@ func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 	// the same pair but reaches everyone except reader. Drain whatever landed
 	// before exercising the dev/tasks delta below.
 	drainAllPending(t, reader)
-	if err := writer.Begin("dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.StagePut("one"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.StagePut("two"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.Commit(); err != nil {
+	if _, err := writer.Publish("dev/tasks", []Op{{Text: "one"}, {Text: "two"}}); err != nil {
 		t.Fatal(err)
 	}
 	summary := watchOne(t, reader)
@@ -490,15 +481,7 @@ func TestBatchPersistsTopicOnlyProgressWithoutAcknowledgingRemainingSummary(t *t
 	}
 	drainAllPending(t, reader)
 
-	if err := writer.Begin("dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	for range DefaultReadLimit + 1 {
-		if _, err := writer.StagePut("old"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	oldPublication, err := writer.Commit()
+	oldPublication, err := writer.Publish("dev/tasks", creates(DefaultReadLimit+1, "old"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -663,15 +646,7 @@ func TestResolveBatchAlwaysIncludesFirstDeliveryWhole(t *testing.T) {
 
 	// One oversized publication (more records than the cap on its own),
 	// followed by one ordinary one.
-	if err := writer.Begin("dev/tasks"); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < DefaultReadLimit+2; i++ {
-		if _, err := writer.StagePut("x"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := writer.Commit(); err != nil {
+	if _, err := writer.Publish("dev/tasks", creates(DefaultReadLimit+2, "x")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := writer.Put("dev/tasks", "y"); err != nil {

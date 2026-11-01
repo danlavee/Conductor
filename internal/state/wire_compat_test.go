@@ -10,8 +10,8 @@ package state
 // at that change: keep the field compatible, or bump CurrentProtocolVersion
 // and update the fixture in the same change. Never just edit the fixture.
 //
-// Function-local anonymous structs (state/index.json, record-index.json,
-// head.json) cannot be bound from here and are not covered.
+// Function-local anonymous structs (state/index.json) cannot be bound from
+// here and are not covered.
 
 import (
 	"os"
@@ -89,60 +89,6 @@ func TestWireCompatPublication(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Publication = %#v, want %#v", got, want)
-	}
-}
-
-// Lock, written to locks/<encoded>.lock and to reader marker files.
-const lockFixture = `{
-  "pid": 4242,
-  "process_start": "133700000000000000",
-  "lease_id": 5,
-  "agent": "agent-a",
-  "timestamp": "2026-07-21T12:00:00Z",
-  "timeout_sec": 180
-}
-`
-
-func TestWireCompatLock(t *testing.T) {
-	got := decodeWireFixture[Lock](t, lockFixture)
-	want := Lock{
-		PID:          4242,
-		ProcessStart: "133700000000000000",
-		LeaseID:      5,
-		Agent:        "agent-a",
-		Timestamp:    mustParseTime(t, "2026-07-21T12:00:00Z"),
-		TimeoutSec:   180,
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("Lock = %#v, want %#v", got, want)
-	}
-}
-
-// Transaction, written to transactions/<agent>.json.
-const transactionFixture = `{
-  "topic": "dev/tasks",
-  "agent": "agent-a",
-  "pid": 4242,
-  "started": "2026-07-21T12:00:00Z",
-  "sequence": 3,
-  "records": {"1": {"index": 1, "text": "hello"}},
-  "created": {"1": true}
-}
-`
-
-func TestWireCompatTransaction(t *testing.T) {
-	got := decodeWireFixture[Transaction](t, transactionFixture)
-	want := Transaction{
-		Topic:    "dev/tasks",
-		Agent:    "agent-a",
-		PID:      4242,
-		Started:  mustParseTime(t, "2026-07-21T12:00:00Z"),
-		Sequence: 3,
-		Records:  map[int64]Record{1: {Index: 1, Text: "hello"}},
-		Created:  map[int64]bool{1: true},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("Transaction = %#v, want %#v", got, want)
 	}
 }
 

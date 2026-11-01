@@ -2,13 +2,13 @@
 
 Exact, non-obvious mechanism facts only — anything already implied by `SKILL.md`, `delivery.md`, or `limitations.md` isn't repeated here.
 
-- Each topic has its own monotonic record-index allocator; a separate global sequence orders publications and summaries across all topics. Neither is guaranteed contiguous.
+- A new record takes the topic's highest index plus one; a separate global sequence orders publications and summaries across all topics and is not guaranteed contiguous.
 - A delta read narrowed to a single record index keeps its own cursor, separate from the topic's.
 - A publication is the public atomic result of one topic commit: `sequence`, `topic`, `agent`, `timestamp`, and the changed `records`. A summary identifies it without carrying its content.
-- The publishing command answers with that publication plus `recipients`, the agents woken for it. Recipients are resolved at commit from who is subscribed to that topic at that instant — every registered agent for `collaboration`'s `rules` and `agents`, which broadcast — less the publisher, which is never woken by its own act and so never appears in its own answer. They are not persisted: history replays the publication alone, because a stored audience would be a claim the next subscription change falsifies. A commit that publishes nothing, which is what `redact` does, answers with no `records`; a `redact` whose range matched nothing answers with no `sequence` either.
+- The publishing command answers with that publication plus `recipients`, the agents woken for it. Recipients are resolved at commit from who is subscribed to that topic at that instant — every registered agent for `collaboration`'s `rules` and `agents`, which broadcast — less the publisher, which is never woken by its own act and so never appears in its own answer. They are not persisted: history replays the publication alone, because a stored audience would be a claim the next subscription change falsifies.
 - `protocol.json` gates the state root. A missing, malformed, or mismatched declaration returns `PROTOCOL_MISMATCH` before anything else runs. There is no migration: a new protocol starts a fresh state root. Every JSON-tagged struct persisted to disk is covered by a checked-in wire-compatibility test; renaming or removing a field on one is a build-time signal to bump the protocol version.
-- Every record command is one transaction of its own; the CLI opens none you can hold. A `--jsonl` load is the only multi-record one: later lines see earlier staged values, and the whole file becomes one publication or none of it does.
-- A dead owner's topic lease is reclaimed by the next operation that takes a read or write lock on that topic, and the reclaim commits whatever its transaction had staged, half-written or not. Any read counts: a `get`, a `join` (which reads every topic on the bus, so one join can reclaim across all of them at once), or a `watch` resolving an `update` delivery, since resolving reads the topic. Only the bare wait for a signal takes no topic lock.
+- Every record command is one publication, written under an OS file lock on its topic that the operating system releases if the process dies. A `--jsonl` load is the only multi-record one: the whole file becomes one publication or none of it does.
+- A publication is visible the moment it is appended to history; waking its recipients follows. A crash between the two leaves a record `get` returns but no one was woken for.
 - A blocked `watch` rechecks its own agent's join status on every poll tick; if it leaves while the call is waiting, `watch` returns `NOT_FOUND` immediately rather than blocking forever.
 - Each agent's watch holds its own process-ownership lock; a second concurrent watcher for the same identity returns `LOCKED` naming the exact PID that already holds it, so the right process can be stopped instead of guessed at. This is what makes restoration blind-safe: any number of attempts, from any source, converge on one live stream, and a redundant attempt fails fast instead of double-delivering.
 - `status` reports whether an identity is currently wakeable, what holds its stream, what the agent is subscribed to, and what adapter serves this session, without acquiring the ownership lock and without disturbing a live stream. Every part is derived from observable state, never from a caller's assertion. The holder is recorded by whatever acquired ownership; a record written before holders existed reads as `unknown` rather than being guessed at. An adapter is reported only where one recorded serving this session, so absence is the answer that none does — never an unread one that might.
@@ -18,8 +18,8 @@ Exact, non-obvious mechanism facts only — anything already implied by `SKILL.m
 
 | Code | Meaning |
 | --- | --- |
-| `LOCKED` | A live writer, transaction, reader, or watcher already owns the boundary |
-| `TIMEOUT` | Something did not come free: a lease whose owner is still alive, a dead owner's lease whose reclaim failed, or an internal mutex |
+| `LOCKED` | A live watcher already holds this identity's stream |
+| `TIMEOUT` | A topic or internal lock did not come free in time |
 | `NOT_FOUND` | The requested record or agent doesn't exist |
 | `PROTOCOL_MISMATCH` | The state root uses a different protocol version |
 | `INVALID` | Usage, input, or persisted state is invalid |

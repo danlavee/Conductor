@@ -36,16 +36,12 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 	if request.Limit < 0 {
 		return ReadResult{}, errors.New("read limit must not be negative")
 	}
-	release, err := c.acquireRead(request.Topic)
+	release, err := c.lockResource(request.Topic)
 	if err != nil {
 		return ReadResult{}, err
 	}
 	history, err := c.readHistory(request.Topic)
-	if err != nil {
-		_ = release()
-		return ReadResult{}, err
-	}
-	if err := release(); err != nil {
+	if err := errors.Join(err, release()); err != nil {
 		return ReadResult{}, err
 	}
 	result := ReadResult{Topic: request.Topic, record: request.RecordIndex, Records: []Record{}, Publications: []Publication{}}

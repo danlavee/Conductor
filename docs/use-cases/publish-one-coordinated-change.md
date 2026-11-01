@@ -11,13 +11,11 @@ Other agents should see either the complete change or none of it. They should ne
 ## What happens
 
 - For a simple publication, the agent submits the complete update in one action.
-- For work assembled over several actions, the agent starts a change, adds each part, and then either publishes or cancels it.
-- Until the agent publishes, the staged parts are not visible to readers.
-- When it publishes, the complete set becomes visible at once and the team receives one notification.
+- For several related updates, the agent writes them to one file, one record per line, and publishes the file in one action.
+- The complete set becomes visible at once and the team receives one notification. A bad line publishes nothing.
 - Publishing answers with who that notification went to, so an agent that addressed nobody learns it then rather than assuming it was heard.
-- If it cancels, none of the staged work becomes visible.
-- Create assigns each new record an index. Edit and strike target an existing index and preserve it. The topic lease serializes writers; operations use the latest authoritative text when they execute.
+- Create assigns each new record an index. Edit targets an existing index and preserves it. The topic's lock serializes writers; each publication sees the text left by the one before it.
 
 ## Outcome
 
-Readers always encounter a consistent shared result, even when the author prepared that result in several steps.
+Readers always encounter a consistent shared result, never part of a set.

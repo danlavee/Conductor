@@ -85,10 +85,7 @@ func runAgentCommand(agent, command string, rest []string) error {
 			return conductor.WriteJSON(os.Stdout, topics)
 		}
 		return usageError()
-	// Every record verb names its topic. There is no second, topic-less form:
-	// the staged one existed only inside a transaction the CLI no longer
-	// opens, and its absence is what makes each of these one unambiguous
-	// shape rather than two distinguished by argument count.
+	// Every record verb names its topic and publishes at once.
 	case "put":
 		if len(rest) != 2 {
 			return usageError()
@@ -117,24 +114,6 @@ func runAgentCommand(agent, command string, rest []string) error {
 			return err
 		}
 		return writeDispatch(client.Edit(rest[0], index, text))
-	case "strike":
-		if len(rest) != 2 {
-			return usageError()
-		}
-		index, err := parseRecordIndex(rest[1])
-		if err != nil {
-			return err
-		}
-		return writeDispatch(client.Strike(rest[0], index))
-	case "redact":
-		topic, start, end, err := parseRedact(rest)
-		if err != nil {
-			return err
-		}
-		// The old answer echoed the arguments back and said "redacted" whether
-		// or not the range matched anything. The dispatch says what actually
-		// happened: a sequence and the agents told, or nothing on both counts.
-		return writeDispatch(client.Redact(topic, start, end))
 	case "get":
 		request, err := parseGet(rest)
 		if err != nil {

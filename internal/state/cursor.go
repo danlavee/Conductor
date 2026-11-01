@@ -37,7 +37,7 @@ func recordCursorSlot(topic string, recordIndex int64) string {
 }
 
 func (c *Client) updateCursor(agent string, update func(*Cursor)) error {
-	release, err := c.acquireLeaseGuard(filepath.Join(c.Home, "cursors", agent+".guard"))
+	release, err := c.acquireStateMutex(filepath.Join(c.Home, "cursors", agent+".guard"))
 	if err != nil {
 		return err
 	}
