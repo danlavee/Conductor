@@ -59,22 +59,12 @@ func TestCommitSequenceAndRecordIndexesAreIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := client.Put("group/two", "second")
+	// An edit is a new publication of the same record.
+	edited, err := client.Edit("group/one", first.Record().Index, "edited")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Record().Index != 1 || second.Record().Index != 1 {
-		t.Fatalf("record indexes are not topic-local: %#v %#v", first, second)
-	}
-	one, err := client.readHistory("group/one")
-	if err != nil {
-		t.Fatal(err)
-	}
-	two, err := client.readHistory("group/two")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if one[0].Sequence == first.Record().Index || two[0].Sequence == second.Record().Index || one[0].Sequence == two[0].Sequence {
-		t.Fatalf("commit sequences conflated with records: one=%d two=%d", one[0].Sequence, two[0].Sequence)
+	if edited.Record().Index != first.Record().Index || edited.Sequence != first.Sequence+1 {
+		t.Fatalf("commit sequences conflated with records: %#v then %#v", first, edited)
 	}
 }

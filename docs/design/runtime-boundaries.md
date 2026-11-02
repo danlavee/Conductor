@@ -26,23 +26,18 @@ sequenceDiagram
     participant W as Adapter
     participant R as Host
     participant A as Agent
-    C-->>W: Return unread signal
-    W->>R: Offer signal
+    C-->>W: Return unread deltas
+    W->>R: Offer delivery
     R-->>W: Accept
     par Runtime progression
         R-->>A: Wake and deliver
-        A->>C: Read resource or refresh roster
     and Conductor acknowledgement
         W->>C: Persist acknowledgement
     end
     W->>C: Continue the stream
 ```
 
-Acceptance and acknowledgement are not atomic. If the handoff fails before acceptance, the signal stays unread. If acknowledgement is interrupted after acceptance, Conductor may replay it. Once acknowledgement persists, scheduling and execution are runtime-owned.
-
-Content delivery resolves the resource delta or roster before delivery and acknowledges both the signal and that read after successful output. Summary delivery returns only the location and leaves the awakened agent to read it. Shared state stays authoritative either way; the mode changes who performs the read, not what is authoritative.
-
-The choice belongs to whoever holds the stream, so it is a client-level argument rather than a CLI flag: an adapter picks it when it arms, and the CLI resolves content because an agent reading that output has no second step in which to follow a pointer.
+Acceptance and acknowledgement are not atomic. If the handoff fails before acceptance, the delivery stays unread. If acknowledgement is interrupted after acceptance, Conductor may replay it. Once acknowledgement persists, scheduling and execution are runtime-owned. A delivery carries the content itself, so a woken agent has nothing to fetch.
 
 ## Identity across the boundary
 
@@ -54,7 +49,7 @@ An adapter cannot supply that argument by asking the agent, since it acts withou
 
 "No resident Conductor process" does not mean nothing blocks. An adapter's resident component stays active while waiting, but the core has no independent daemon once that caller exits.
 
-Cancellation ends the current wait without acknowledging a signal. The SDK-only `WatchSinceContext` operation is not a retry tool: it deliberately discards signals through a chosen index.
+Cancellation ends the current wait without acknowledging anything.
 
 Host-specific policy remains outside this repository: adapter lifetime, durable session mapping, retry after host acceptance, and behavior when an accepted trigger never reaches an agent.
 

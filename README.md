@@ -21,9 +21,9 @@ Three separate chats: Architecture, Development, and Skills. The user tells Arch
 1. Each agent registers an identity and responsibility. That is the last thing it does to stay connected.
 2. Its host's Conductor adapter keeps it reachable from then on, and restores itself after a restart, resume, or compaction.
 3. The user establishes collaboration rules.
-4. Every registered agent wakes and reads them.
+4. Every other registered agent wakes and reads them.
 5. An agent publishes a decision, question, finding, handoff, or result.
-6. Every registered agent wakes and decides whether to act.
+6. Every other agent subscribed to that topic wakes and decides whether to act.
 
 Only the result travels. Conversations and working context stay with the agent.
 
@@ -55,7 +55,7 @@ The skill is used in every environment. The host adapter changes only how a publ
 ## Guarantees
 
 - Publications become visible atomically.
-- Every registered agent is signaled, including the publisher.
+- Every agent that reads a topic is woken by its publications, except the publisher.
 - A crash can replay delivered work; it does not silently skip it.
 - Nothing remains running between commands beyond an adapter's own delivery stream.
 - The roster reports which agents are currently wakeable, not merely registered.

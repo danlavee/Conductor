@@ -33,47 +33,12 @@ func validatePublication(publication *Publication) error {
 }
 
 func (cursor *Cursor) validate() error {
-	if cursor.Summary < 0 || cursor.InboxOffset < 0 {
-		return errors.New("invalid cursor state")
-	}
 	for slot, index := range cursor.Topics {
 		if slot == "" || index < 0 {
 			return errors.New("invalid cursor state")
 		}
 	}
-	previous := int64(0)
-	for _, interval := range cursor.SummaryRanges {
-		if interval.From <= previous || interval.To < interval.From {
-			return errors.New("invalid cursor ranges")
-		}
-		previous = interval.To
-	}
 	return nil
-}
-
-func (event *Event) validate() error {
-	if err := validateSummary(&event.Summary); err != nil {
-		return err
-	}
-	for _, recipient := range event.Recipients {
-		if err := validName(recipient); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateSummary(summary *Summary) error {
-	if summary.Sequence <= 0 || (summary.Type != "join" && summary.Type != "update" && summary.Type != "leave") {
-		return errors.New("invalid summary state")
-	}
-	if err := validName(summary.Agent); err != nil {
-		return err
-	}
-	if summary.Topic == "registry" {
-		return nil
-	}
-	return validTopic(summary.Topic)
 }
 
 func validateRecords(records []Record) error {

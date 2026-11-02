@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -84,7 +85,29 @@ func (c *Client) updateSubscription(update func(*Subscription)) (Subscription, e
 	if err != nil {
 		return Subscription{}, err
 	}
+	before, err := c.topicsReadableBy(subscription)
+	if err != nil {
+		return Subscription{}, err
+	}
 	update(&subscription)
+	after, err := c.topicsReadableBy(subscription)
+	if err != nil {
+		return Subscription{}, err
+	}
+	// A subscription is not retroactive: what a topic already holds is read
+	// with get, never delivered, so its cursor starts at the current head.
+	heads := map[string]int64{}
+	for _, topic := range after {
+		if slices.Contains(before, topic) {
+			continue
+		}
+		if heads[topic], err = c.topicHead(topic); err != nil {
+			return Subscription{}, err
+		}
+	}
+	if err := c.acknowledgeHeads(agent, heads); err != nil {
+		return Subscription{}, err
+	}
 	sort.Strings(subscription.TopicGroups)
 	sort.Strings(subscription.Topics)
 	if err := writeJSONAtomic(c.subscriptionPath(agent), subscription); err != nil {
@@ -102,14 +125,9 @@ func (c *Client) loadSubscription(agent string) (Subscription, error) {
 	return subscription, err
 }
 
-// isSubscribed answers whether a topic's content is the agent's to read. The
-// forced-broadcast topics are, unconditionally, because publication already
-// addressed them to every registered agent -- and the two decisions have to
-// agree. When they disagreed, a broadcast was delivered to an agent that could
-// not then read it: the delta came back empty, so it covered no summary and
-// advanced no cursor, and the same signal was redelivered on every watch
-// forever. Under an adapter that turns a delivery into a turn, that is an
-// endless wake loop rather than a merely redundant signal.
+// isSubscribed answers whether a topic's content is the agent's to read, and
+// so whether a publication there wakes it. The forced-broadcast topics are,
+// unconditionally.
 func (c *Client) isSubscribed(agent, topic string) (bool, error) {
 	if forcedBroadcastTopic(topic) {
 		return true, nil
@@ -119,25 +137,70 @@ func (c *Client) isSubscribed(agent, topic string) (bool, error) {
 		return false, err
 	}
 	group := strings.SplitN(topic, "/", 2)[0]
-	return contains(subscription.Topics, topic) || contains(subscription.TopicGroups, group), nil
+	return slices.Contains(subscription.Topics, topic) || slices.Contains(subscription.TopicGroups, group), nil
 }
 
-func (c *Client) subscribedRecipientNames(topic string) ([]string, error) {
+// readersOf names every registered agent a publication on topic wakes. The
+// publisher is never one: an agent is not an addressee of its own act, and an
+// agent alone on a topic it created must not read its own name back as an
+// audience.
+func (c *Client) readersOf(topic, publisher string) ([]string, error) {
 	agents, err := c.ListAgents()
 	if err != nil {
 		return nil, err
 	}
-	recipients := make([]string, 0, len(agents))
+	readers := []string{}
 	for _, agent := range agents {
+		if agent.Name == publisher {
+			continue
+		}
 		subscribed, err := c.isSubscribed(agent.Name, topic)
 		if err != nil {
 			return nil, err
 		}
 		if subscribed {
-			recipients = append(recipients, agent.Name)
+			readers = append(readers, agent.Name)
 		}
 	}
-	return recipients, nil
+	return readers, nil
+}
+
+// readableTopics lists, sorted, every topic whose delta is the agent's to
+// read: the forced-broadcast topics, its subscribed topics, and every topic
+// that currently exists in its subscribed groups.
+func (c *Client) readableTopics(agent string) ([]string, error) {
+	subscription, err := c.loadSubscription(agent)
+	if err != nil {
+		return nil, err
+	}
+	return c.topicsReadableBy(subscription)
+}
+
+func (c *Client) topicsReadableBy(subscription Subscription) ([]string, error) {
+	topics := append([]string{collaborationRulesTopic, collaborationAgentsTopic}, subscription.Topics...)
+	for _, group := range subscription.TopicGroups {
+		listed, err := c.ListTopics(group)
+		if err != nil {
+			return nil, err
+		}
+		topics = append(topics, listed...)
+	}
+	slices.Sort(topics)
+	return slices.Compact(topics), nil
+}
+
+// topicHead answers the sequence of the topic's last publication, zero when it
+// has none.
+func (c *Client) topicHead(topic string) (int64, error) {
+	release, err := c.lockResource(topic)
+	if err != nil {
+		return 0, err
+	}
+	history, err := c.readHistory(topic)
+	if err := errors.Join(err, release()); err != nil || len(history) == 0 {
+		return 0, err
+	}
+	return history[len(history)-1].Sequence, nil
 }
 
 func (c *Client) subscriptionPath(agent string) string {
@@ -145,10 +208,8 @@ func (c *Client) subscriptionPath(agent string) string {
 }
 
 func appendUnique(values []string, value string) []string {
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
+	if slices.Contains(values, value) {
+		return values
 	}
 	return append(values, value)
 }

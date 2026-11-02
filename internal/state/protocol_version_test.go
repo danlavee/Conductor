@@ -2,7 +2,6 @@ package state
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -25,7 +24,7 @@ func TestNewDeclaresProtocolBeforeStateDirectories(t *testing.T) {
 	if string(data) != fmt.Sprintf("{\n  \"version\": %d\n}\n", CurrentProtocolVersion) {
 		t.Fatalf("protocol declaration = %q", data)
 	}
-	for _, name := range []string{"registry", "topics", "locks", "inbox", "events", "cursors", "state"} {
+	for _, name := range []string{"registry", "topics", "locks", "cursors", "state"} {
 		if info, err := os.Stat(filepath.Join(home, name)); err != nil || !info.IsDir() {
 			t.Fatalf("state directory %s is unavailable: %v", name, err)
 		}
@@ -130,7 +129,7 @@ func TestStatefulBoundariesDoNotRecreateMissingProtocol(t *testing.T) {
 		"ack-snapshot": func() error { return client.AcknowledgeSnapshot(Snapshot{}) },
 		"get":          func() error { _, err := client.Get(ReadRequest{Topic: "messages/team", Mode: ReadFull}); return err },
 		"ack-read":     func() error { return client.AcknowledgeRead(ReadResult{}) },
-		"watch":        func() error { _, err := client.WatchSinceContext(context.Background(), 0); return err },
+		"watch":        func() error { _, err := client.Watch(); return err },
 		"watch-owner":  func() error { _, err := client.AcquireWatchOwnership(); return err },
 		"put":          func() error { _, err := client.Put("messages/team", "text"); return err },
 	}

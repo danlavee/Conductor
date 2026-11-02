@@ -2,6 +2,7 @@ package state
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,6 +70,41 @@ func appendJSONL(path string, value any) error {
 	return f.Sync()
 }
 
+// trimUnterminatedTail drops a crash-torn final line from a newline-delimited
+// file. It does not move the file offset; an appender seeks to the end itself.
+func trimUnterminatedTail(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil || info.Size() == 0 {
+		return err
+	}
+	last := []byte{0}
+	if _, err := file.ReadAt(last, info.Size()-1); err != nil {
+		return err
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+
+	var size int64
+	buf := make([]byte, 4096)
+	offset := info.Size()
+	for offset > 0 {
+		chunkSize := int64(len(buf))
+		if offset < chunkSize {
+			chunkSize = offset
+		}
+		offset -= chunkSize
+		if _, err := file.ReadAt(buf[:chunkSize], offset); err != nil {
+			return err
+		}
+		if index := bytes.LastIndexByte(buf[:chunkSize], '\n'); index != -1 {
+			size = offset + int64(index) + 1
+			break
+		}
+	}
+	return file.Truncate(size)
+}
+
 func removeEventually(path string) error {
 	var err error
 	for attempt := 0; attempt < 100; attempt++ {
@@ -110,8 +146,6 @@ func readJSON(path string, value any) error {
 		return validateAgent(typed)
 	case *Publication:
 		return validatePublication(typed)
-	case *Summary:
-		return validateSummary(typed)
 	default:
 		if validator, ok := value.(stateValidator); ok {
 			return validator.validate()
@@ -155,8 +189,6 @@ func validTopic(topic string) error {
 	}
 	return validName(parts[1])
 }
-
-func indexName(index int64) string { return fmt.Sprintf("%020d.json", index) }
 
 func sortedRecords(values map[int64]Record) []Record {
 	indexes := make([]int64, 0, len(values))

@@ -117,7 +117,7 @@ func TestArmDeliversPendingWorkAndReleasesOwnership(t *testing.T) {
 	if err != nil || outcome != Delivered {
 		t.Fatalf("outcome = %q, %v", outcome, err)
 	}
-	var batch conductor.BatchDelivery
+	var batch conductor.Batch
 	if err := json.Unmarshal(payload.Bytes(), &batch); err != nil || len(batch.Deliveries) == 0 {
 		t.Fatalf("payload = %q: %v", payload.String(), err)
 	}
@@ -272,9 +272,9 @@ func joined(t *testing.T, root string) *conductor.Client {
 	if _, err := client.Join("planner", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	// An agent's own join never reaches its own inbox, so a peer supplies the
-	// pending work these tests arm against. Registration force-broadcasts to
-	// collaboration/agents, which reaches every agent without a subscription.
+	// An agent is not woken by its own join, so a peer supplies the pending
+	// work these tests arm against: its roster line on collaboration/agents,
+	// which every agent reads without a subscription.
 	peer, err := conductor.New(root, "peer")
 	if err != nil {
 		t.Fatal(err)

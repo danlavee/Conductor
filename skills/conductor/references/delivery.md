@@ -4,11 +4,7 @@ Being wakeable is an act performed once per session, never a state left running 
 
 ## What arrives
 
-A delivery names what changed and, by default, carries the resolved content, up to a shared record cap, reporting anything left over in `remaining`. That surplus is not lost and is not yours to chase — it arrives in the next delivery.
-
-A summary identifies a publication without carrying it. Content delivery resolves the publication behind the summary before the recipient is woken, so a delivery you receive is already readable; you are not being handed a pointer to go fetch.
-
-A delta that resolves to nothing omits its `publications` key rather than carrying an empty list — a signal whose content you had already read out of band arrives this way, once, and is then drained. Treat a missing key as no work to do, not as a malformed delivery.
+A delivery is `{"deliveries": [...], "remaining": N}`: one delta per topic with other agents' unread publications, up to a shared record cap. Anything left over is counted in `remaining`; it is not lost and is not yours to chase — it arrives in the next delivery. A join or leave arrives as a change to `collaboration/agents`.
 
 ## Which host you are on
 

@@ -25,12 +25,12 @@ sequenceDiagram
     User->>A: "Join with name and responsibility"
     A->>C: "register"
     C->>D: "Take the membership lock and write registry entry"
-    C->>D: "Publish indexed join event and inbox signals"
+    C->>D: "Publish the roster line on collaboration/agents"
     D-->>C: "Roster and complete current snapshot"
     C-->>A: "Agents and published records"
     W->>C: "watch"
-    C-->>W: "join signal"
-    W-->>B: "Deliver signal"
+    C-->>W: "Roster line delta"
+    W-->>B: "Deliver"
 
     alt "One record"
         A->>C: "put topic text"
@@ -38,25 +38,21 @@ sequenceDiagram
         A->>C: "put topic --jsonl=path"
     end
 
-    C->>D: "Take the topic lock"
-    C->>D: "Reserve publication index and append to history"
-    C->>D: "Write event and every inbox, release the lock"
+    C->>D: "Take the topic lock, append to history, release"
     C-->>A: "Resulting records and recipients"
 
     W->>C: "watch"
+    C->>D: "Read deltas of grown topics after B's cursors"
     C-->>W: "Capped delivery batch plus remaining"
-    W-->>B: "Deliver resolved batch"
-    B->>C: "get resource"
-    C->>D: "Read changes after B's cursor"
-    C-->>B: "Delta result"
-    B->>C: "Acknowledge after accepting result"
-    C->>D: "Advance B's cursor"
+    W-->>B: "Deliver"
+    W->>C: "Acknowledge after the host accepts"
+    C->>D: "Advance B's cursors"
 
-    A->>C: "deregister"
-    C->>D: "Remove registry entry and publish leave"
+    A->>C: "leave"
+    C->>D: "Strike the roster line, remove registry entry"
     W->>C: "watch"
-    C-->>W: "leave signal"
-    W-->>B: "Deliver signal"
+    C-->>W: "Struck roster line delta"
+    W-->>B: "Deliver"
 ```
 
 The wake owner is either the receiving agent or a harness adapter acting for it.
@@ -91,15 +87,10 @@ Operations on one topic serialize on its OS file lock; a waiter blocks, and retu
 
 ```mermaid
 flowchart TD
-    S["Publish takes the topic lock"] --> H["Publication appended: visible"]
-    H --> E["Event written"]
-    E --> N["Signals appended to inboxes"]
-    N --> R["Lock released"]
+    S["Publish takes the topic lock"] --> H["Publication appended: visible and waking"]
+    H --> R["Lock released"]
+    W["Watch delivers"] --> A["Cursor acknowledged"]
 
-    S -. "Crash" .-> RS["Nothing published; the OS frees the lock"]
-    H -. "Crash" .-> RH["Readable with get; nobody was woken"]
-    E -. "Crash" .-> RN["Watch reads the event and repairs the missing inbox delivery"]
-    N -. "Crash before acknowledgement" .-> RR["Delivery may replay; it is not silently lost"]
+    S -. "Crash" .-> RS["Nothing published; a torn tail is trimmed; the OS frees the lock"]
+    W -. "Crash before acknowledgement" .-> RR["Delivery replays; it is not silently lost"]
 ```
-
-Publications on different topics take different locks, so a lower publication index may finish after a higher one; acknowledged index ranges retain the late lower signal. The SDK-only `WatchSinceContext(ctx, index)` operation deliberately discards that index and all lower signal indexes, including a lower index that arrives late.

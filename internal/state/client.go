@@ -58,7 +58,7 @@ func New(home, agent string) (*Client, error) {
 	if err := initializeProtocol(home); err != nil {
 		return nil, err
 	}
-	for _, dir := range []string{"registry", "topics", "subscriptions", "locks", "inbox", "events", "cursors", "state"} {
+	for _, dir := range []string{"registry", "topics", "subscriptions", "locks", "cursors", "state"} {
 		if err := os.MkdirAll(filepath.Join(home, dir), 0o700); err != nil {
 			return nil, err
 		}

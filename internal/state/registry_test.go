@@ -108,9 +108,6 @@ func TestRegisterPutGetAndDiskState(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertJSONFile(t, filepath.Join(home, "topics", "messages", "team", "history.jsonl"))
-	assertJSONFile(t, filepath.Join(home, "state", "index.json"))
-	assertJSONFile(t, filepath.Join(home, "events", indexName(1)))
-	assertJSONFile(t, filepath.Join(home, "events", indexName(2)))
 }
 
 func TestIdentityIsNeverInferredFromSoleRegistration(t *testing.T) {
@@ -165,19 +162,33 @@ func TestDuplicateNameCannotOverwriteResponsibility(t *testing.T) {
 	}
 }
 
-func TestRegistrationRetryRepairsMissingJoinEvent(t *testing.T) {
+// rosterPublications counts the publications on collaboration/agents.
+func rosterPublications(t *testing.T, client *Client) int {
+	t.Helper()
+	history, err := client.readHistory(collaborationAgentsTopic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(history)
+}
+
+// A join that crashed after registering but before its roster line is
+// finished by repeating it, and repeating it again publishes nothing.
+func TestJoinRetryPublishesAMissingRosterLineOnce(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
 	agent := Agent{Name: "retry", Responsibility: "dev", Timestamp: time.Now().UTC()}
 	if err := writeJSONAtomic(filepath.Join(home, "registry", "retry.json"), agent); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Join("retry", ""); err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if _, err := client.Join("retry", ""); err != nil {
+			t.Fatal(err)
+		}
 	}
-	latest, err := client.latestMembershipType("retry")
-	if err != nil || latest != "join" {
-		t.Fatalf("registration retry did not repair join: %q, %v", latest, err)
+	result, err := client.Get(ReadRequest{Topic: collaborationAgentsTopic, Mode: ReadFull})
+	if err != nil || len(result.Records) != 1 || result.Records[0].Text != "retry: dev" || rosterPublications(t, client) != 1 {
+		t.Fatalf("roster = %#v, error = %v", result.Records, err)
 	}
 }
 
@@ -198,22 +209,28 @@ func TestLeaveStrikesThroughTheRosterLine(t *testing.T) {
 	}
 }
 
-func TestDeregistrationRetryRepairsMissingLeaveEvent(t *testing.T) {
+// A leave that crashed after striking the roster line is finished by
+// repeating it, without striking the line again.
+func TestLeaveRetryFinishesWithoutStrikingAgain(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
-	if _, err := client.Join("retry", "dev"); err != nil {
+	snapshot, err := client.Join("retry", "dev")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(home, "registry", "retry.json")); err != nil {
+	if err := client.retireRosterRecord(snapshot.Agents[0].Agent); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.Leave("retry"); err != nil {
 		t.Fatal(err)
 	}
-	latest, err := client.latestMembershipType("retry")
-	if err != nil || latest != "leave" {
-		t.Fatalf("deregistration retry did not repair leave: %q, %v", latest, err)
+	if _, err := os.Stat(filepath.Join(home, "registry", "retry.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("registration survived the leave: %v", err)
 	}
+	if got := rosterPublications(t, client); got != 2 {
+		t.Fatalf("roster publications = %d, want the join and one strike", got)
+	}
+	assertCode(t, client.Leave("retry"), "NOT_FOUND")
 }
 
 func TestRegistrationSnapshotFailureDoesNotCreateMembership(t *testing.T) {
@@ -256,18 +273,8 @@ func TestConcurrentJoinsStayOrdered(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	events, err := initial.unreadEvents(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	membership := make([]Event, 0, len(events))
-	for _, event := range events {
-		if event.Summary.Topic == "registry" {
-			membership = append(membership, event)
-		}
-	}
-	if len(membership) < 1 {
-		t.Fatalf("expected membership events, got %#v", membership)
+	if got := rosterPublications(t, initial); got != 1 {
+		t.Fatalf("roster publications = %d, want one for the one agent", got)
 	}
 }
 

@@ -64,7 +64,7 @@ conductor <agent> watch --once
 
 **`subscriptions`** — what reaches you. `collaboration`'s `rules` and `agents` arrive whether or not they appear here; nothing else does. An empty set means those two and nothing more, however many topics the bus holds and however complete your roster entry looks. Being held and being subscribed are separate, and an agent is only reachable with both.
 
-**For everyone else**, the roster `join` hands you — and the one a later join or leave delivers — carries each agent's `wakeable` and the same `holder` described above, as they stood at that moment. Publishing to an agent that is not wakeable still records the publication — nothing is ever lost — but nothing reads it until that agent's next session performs the act. Only `"kind": "adapter"` is likely to still be true later; `self` is one delivery from being false, `unknown` says nothing about how long it lasts, and an entry with no `holder` is not wakeable at all. Prefer an adapter-held agent when the work needs an answer, and say so plainly when you address one that is not.
+**For everyone else**, the roster `join` hands you carries each agent's `wakeable` and the same `holder` described above, as they stood at that moment; a later join or leave arrives as a change to `collaboration/agents`. Publishing to an agent that is not wakeable still records the publication — nothing is ever lost — but nothing reads it until that agent's next session performs the act. Only `"kind": "adapter"` is likely to still be true later; `self` is one delivery from being false, `unknown` says nothing about how long it lasts, and an entry with no `holder` is not wakeable at all. Prefer an adapter-held agent when the work needs an answer, and say so plainly when you address one that is not.
 
 ## 3. Read what you missed
 
@@ -130,7 +130,7 @@ Every line becomes its own record in a single publication, or none of them does.
 
 ## Leaving
 
-`conductor <agent> leave` permanently offboards you: roster entry removed, subscriptions deleted from disk, your own line on `collaboration/agents` struck, and a leave signal published. Everything else you published stays exactly as it is. Do not run it at the end of an ordinary session — only when the identity is being decommissioned. Rejoining starts with no subscriptions.
+`conductor <agent> leave` permanently offboards you: your line on `collaboration/agents` struck — which is how the others learn of it — then roster entry and subscriptions deleted. Everything else you published stays exactly as it is. Do not run it at the end of an ordinary session — only when the identity is being decommissioned. Rejoining starts with no subscriptions.
 
 ## When something goes wrong
 

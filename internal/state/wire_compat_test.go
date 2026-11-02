@@ -9,9 +9,6 @@ package state
 // through readJSON. Renaming or removing a tag fails it, forcing the choice
 // at that change: keep the field compatible, or bump CurrentProtocolVersion
 // and update the fixture in the same change. Never just edit the fixture.
-//
-// Function-local anonymous structs (state/index.json) cannot be bound from
-// here and are not covered.
 
 import (
 	"encoding/json"
@@ -67,7 +64,7 @@ func TestWireCompatAgent(t *testing.T) {
 	}
 }
 
-// Publication, written to topics/<group>/<topic>/history/<seq>.json.
+// Publication, written as one line of topics/<group>/<topic>/history.jsonl.
 const publicationFixture = `{
   "sequence": 7,
   "topic": "dev/tasks",
@@ -94,19 +91,14 @@ func TestWireCompatPublication(t *testing.T) {
 }
 
 // Decoding catches a renamed tag but not a field leaking into what agents
-// read, so the encoded shapes of Record and Summary are pinned too.
-func TestWireShapeRecordAndSummary(t *testing.T) {
-	for value, want := range map[any]string{
-		Record{Index: 7, Text: "plain text"}:                                      `{"index":7,"text":"plain text"}`,
-		Summary{Type: "update", Topic: "dev/tasks", Sequence: 4, Agent: "writer"}: `{"type":"update","topic":"dev/tasks","sequence":4,"agent":"writer"}`,
-	} {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(encoded) != want {
-			t.Fatalf("%T JSON = %s, want %s", value, encoded, want)
-		}
+// read, so the encoded shape of Record is pinned too.
+func TestWireShapeRecord(t *testing.T) {
+	encoded, err := json.Marshal(Record{Index: 7, Text: "plain text"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `{"index":7,"text":"plain text"}` {
+		t.Fatalf("record JSON = %s", encoded)
 	}
 }
 
@@ -114,21 +106,13 @@ func TestWireShapeRecordAndSummary(t *testing.T) {
 // the incident this file exists to prevent a repeat of. See the package
 // comment above.
 const cursorFixture = `{
-  "summary_sequence": 12,
-  "summary_ranges": [{"from": 1, "to": 12}],
-  "inbox_offset": 4,
-  "topic_sequences": {"dev/tasks": 9}
+  "topic_sequences": {"dev/tasks": 9, "dev/tasks#2": 4}
 }
 `
 
 func TestWireCompatCursor(t *testing.T) {
 	got := decodeWireFixture[Cursor](t, cursorFixture)
-	want := Cursor{
-		Summary:       12,
-		SummaryRanges: []IndexRange{{From: 1, To: 12}},
-		InboxOffset:   4,
-		Topics:        map[string]int64{"dev/tasks": 9},
-	}
+	want := Cursor{Topics: map[string]int64{"dev/tasks": 9, "dev/tasks#2": 4}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Cursor = %#v, want %#v", got, want)
 	}
@@ -149,47 +133,6 @@ func TestWireCompatSubscription(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Subscription = %#v, want %#v", got, want)
-	}
-}
-
-// Event, written to events/<seq>.json.
-const eventFixture = `{
-  "summary": {
-    "type": "update",
-    "topic": "dev/tasks",
-    "sequence": 12,
-    "agent": "agent-a"
-  },
-  "recipients": ["agent-b", "agent-c"]
-}
-`
-
-func TestWireCompatEvent(t *testing.T) {
-	got := decodeWireFixture[Event](t, eventFixture)
-	want := Event{
-		Summary: Summary{
-			Type:     "update",
-			Topic:    "dev/tasks",
-			Sequence: 12,
-			Agent:    "agent-a",
-		},
-		Recipients: []string{"agent-b", "agent-c"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("Event = %#v, want %#v", got, want)
-	}
-}
-
-// rosterIndexRecord, written to
-// state/collaboration-agents-index/<agent>.json.
-const rosterIndexRecordFixture = `{"index": 3}
-`
-
-func TestWireCompatRosterIndexRecord(t *testing.T) {
-	got := decodeWireFixture[rosterIndexRecord](t, rosterIndexRecordFixture)
-	want := rosterIndexRecord{Index: 3}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("rosterIndexRecord = %#v, want %#v", got, want)
 	}
 }
 

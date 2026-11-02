@@ -226,7 +226,7 @@ func arm(ctx context.Context, client *conductor.Client, session string, out io.W
 	defer cancel()
 	go awaitStreamEnd(streamCtx, path, session, target, client.PollInterval, cancel)
 
-	summaries, err := client.WatchContext(streamCtx)
+	batch, err := client.WatchContext(streamCtx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) && ctx.Err() == nil {
 			if !target.alive() {
@@ -240,14 +240,10 @@ func arm(ctx context.Context, client *conductor.Client, session string, out io.W
 	if !target.alive() {
 		return Orphaned, nil
 	}
-	batch, err := client.ResolveBatch(summaries)
-	if err != nil {
-		return "", err
-	}
 	if err := conductor.WriteJSON(out, batch); err != nil {
 		return "", err
 	}
-	return Delivered, client.AcknowledgeBatch(batch)
+	return Delivered, client.AcknowledgeRead(batch.Deliveries...)
 }
 
 // Release ends the stream this session owns, and is a no-op when it owns none.

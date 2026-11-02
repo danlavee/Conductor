@@ -16,9 +16,6 @@ func (c *Client) loadCursor(agent string) (Cursor, error) {
 	if cursor.Topics == nil {
 		cursor.Topics = map[string]int64{}
 	}
-	if len(cursor.SummaryRanges) == 0 && cursor.Summary > 0 {
-		cursor.SummaryRanges = []IndexRange{{From: 1, To: cursor.Summary}}
-	}
 	return cursor, err
 }
 

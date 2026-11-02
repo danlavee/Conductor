@@ -45,9 +45,8 @@ func (c *Client) Edit(topic string, index int64, text string) (Dispatch, error) 
 // publishing it did, recipients included.
 //
 // The topic's mutex makes the publication atomic with respect to every other
-// writer and reader of the topic. A crash after the history append but before
-// the wake is written leaves the publication readable with get but announced
-// to nobody.
+// writer and reader of the topic, and gives it the topic's next sequence. The
+// append is both the publication and its wake: a watcher finds it in history.
 func (c *Client) Publish(topic string, ops []Op) (Dispatch, error) {
 	if err := c.validateProtocol(); err != nil {
 		return Dispatch{}, err
@@ -89,7 +88,11 @@ func (c *Client) Publish(topic string, ops []Op) (Dispatch, error) {
 			records[op.Index] = Record{Index: op.Index, Text: op.Text}
 		}
 	}
-	sequence, err := c.nextIndex()
+	sequence := int64(1)
+	if len(history) > 0 {
+		sequence = history[len(history)-1].Sequence + 1
+	}
+	recipients, err := c.readersOf(topic, agent)
 	if err != nil {
 		return Dispatch{}, err
 	}
@@ -97,10 +100,6 @@ func (c *Client) Publish(topic string, ops []Op) (Dispatch, error) {
 		Sequence: sequence, Topic: topic, Agent: agent,
 		Timestamp: time.Now().UTC(), Records: sortedRecords(records),
 	}
-	// Empty until the wake succeeds: a publication that landed and a settlement
-	// that did not has woken nobody yet, and the field must say so rather than
-	// go absent.
-	result := Dispatch{Publication: publication, Recipients: []string{}}
 	dir, err := c.topicDir(topic)
 	if err != nil {
 		return Dispatch{}, err
@@ -110,25 +109,7 @@ func (c *Client) Publish(topic string, ops []Op) (Dispatch, error) {
 	if err := appendJSONL(filepath.Join(dir, "history.jsonl"), publication); err != nil {
 		return Dispatch{}, err
 	}
-	var recipients []string
-	if forcedBroadcastTopic(topic) {
-		recipients, err = c.recipientNames()
-	} else {
-		recipients, err = c.subscribedRecipientNames(topic)
-	}
-	if err != nil {
-		return result, err
-	}
-	summary := Summary{Type: "update", Topic: topic, Sequence: sequence, Agent: agent}
-	// The woken set, not the subscribed one: writeEvent drops the publisher, and
-	// reporting the wider set would hand an agent alone on its own topic its own
-	// name back as an audience.
-	woken, err := c.writeEvent(Event{Summary: summary, Recipients: recipients})
-	if err != nil {
-		return result, err
-	}
-	result.Recipients = woken
-	return result, nil
+	return Dispatch{Publication: publication, Recipients: recipients}, nil
 }
 
 // lockResource serializes everything that touches one resource: a topic's

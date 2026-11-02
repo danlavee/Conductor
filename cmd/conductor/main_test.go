@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -230,42 +229,20 @@ func TestPutJSONLMalformedLineAbortsWithoutPartialRecords(t *testing.T) {
 	}
 }
 
-func TestRecordOperationProcessVisibilityBoundary(t *testing.T) {
-	t.Run("before-head", func(t *testing.T) {
-		state := filepath.Join(t.TempDir(), "runtime-state")
-		if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
-			t.Fatal(err)
-		}
-		indexData := fmt.Sprintf("{\n  \"index\": %d\n}\n", int64(math.MaxInt64))
-		if err := os.WriteFile(filepath.Join(state, "state", "index.json"), []byte(indexData), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "not visible")
-		if err == nil || len(stdout) != 0 || len(stderr) == 0 {
-			t.Fatalf("error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
-		}
-	})
-
-	t.Run("after-head", func(t *testing.T) {
-		state := filepath.Join(t.TempDir(), "runtime-state")
-		if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
-			t.Fatal(err)
-		}
-		// Registration itself already consumes global sequences 1 (the
-		// collaboration/agents roster commit) and 2 (join); the put below
-		// lands its own event at 3.
-		if err := os.Mkdir(filepath.Join(state, "events", fmt.Sprintf("%020d.json", 3)), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "visible")
-		if err == nil || len(stdout) == 0 || len(stderr) == 0 {
-			t.Fatalf("error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
-		}
-		var dispatch conductor.Dispatch
-		if decodeErr := json.Unmarshal(stdout, &dispatch); decodeErr != nil || dispatch.Record().Index != 1 || dispatch.Record().Text != "visible" {
-			t.Fatalf("dispatch = %#v, decode error = %v", dispatch, decodeErr)
-		}
-	})
+// A failed put prints no dispatch, so stdout never claims a record that did
+// not land.
+func TestFailedPutPrintsNoDispatch(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "runtime-state")
+	if _, _, err := runCLIHelper(os.Args[0], state, "", "writer", "join", "development"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(state, "topics", "messages", "team", "history.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "writer", "put", "messages/team", "not visible")
+	if err == nil || len(stdout) != 0 || len(stderr) == 0 {
+		t.Fatalf("error = %v, stdout = %q, stderr = %q", err, stdout, stderr)
+	}
 }
 
 func TestProtocolMismatchProcessContract(t *testing.T) {
@@ -421,8 +398,8 @@ func TestWatchResolvesContentBeforeWaking(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], state, "", "a", "join", "dev"); err != nil {
 		t.Fatalf("join failed: %v", err)
 	}
-	// An agent's own join never reaches its own inbox, so a peer's registration
-	// is what this one-shot watch resolves content for.
+	// An agent is not woken by its own join, so a peer's roster line is what
+	// this one-shot watch delivers.
 	if _, _, err := runCLIHelper(os.Args[0], state, "", "peer", "join", "review"); err != nil {
 		t.Fatalf("peer join failed: %v", err)
 	}
@@ -432,21 +409,12 @@ func TestWatchResolvesContentBeforeWaking(t *testing.T) {
 	}
 	deliveries := json.NewDecoder(bytes.NewReader(stdout))
 	readArmAcknowledgement(t, deliveries)
-	var batch conductor.BatchDelivery
+	var batch conductor.Batch
 	if err := deliveries.Decode(&batch); err != nil {
 		t.Fatalf("stdout is not a delivery batch: %q: %v", stdout, err)
 	}
-	if len(batch.Deliveries) == 0 {
+	if len(batch.Deliveries) != 1 || batch.Deliveries[0].Topic != "collaboration/agents" || len(batch.Deliveries[0].Publications) != 1 || batch.Deliveries[0].Publications[0].Records[0].Text != "peer: review" {
 		t.Fatalf("batch = %#v", batch)
-	}
-	foundContent := false
-	for _, delivery := range batch.Deliveries {
-		if delivery.Delta != nil {
-			foundContent = true
-		}
-	}
-	if !foundContent {
-		t.Fatalf("batch has no resolved content: %#v", batch)
 	}
 }
 
@@ -460,7 +428,7 @@ func TestOneShotWatchReleasesOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A peer's registration is what the one-shot watch below delivers on: an
-	// agent's own join never reaches its own inbox.
+	// agent is not woken by its own join.
 	peer, err := conductor.New(state, "peer")
 	if err != nil {
 		t.Fatal(err)
@@ -515,15 +483,15 @@ func TestContinuousWatchRetainsOwnershipAfterDelivering(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	// A peer's registration is what the stream below delivers: an agent's own
-	// join never reaches its own inbox.
+	// A peer's registration is what the stream below delivers: an agent is
+	// not woken by its own join.
 	if _, _, err := runCLIHelper(os.Args[0], root, "", "peer", "join", "review"); err != nil {
 		t.Fatal(err)
 	}
 	watch, deliveries := startWatch(t, root)
 	defer stopWatch(t, watch)
 
-	var batch conductor.BatchDelivery
+	var batch conductor.Batch
 	if err := deliveries.Decode(&batch); err != nil {
 		t.Fatalf("continuous watch delivered nothing: %v", err)
 	}

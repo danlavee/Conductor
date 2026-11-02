@@ -10,7 +10,7 @@ An **agent** is a registered name and responsibility. Every CLI call names it ex
 
 A **resource** is a `<topic-group>/<topic>` name. A **record** is exactly a positive topic-local `index` and plain `text`. Conductor assigns the index when creating the record, as the topic's highest index plus one; edit preserves it. One publication may change several records, but only within one resource.
 
-A **publication index** identifies global reservation order. Completion may occur out of order across topics, and a crash may leave a gap. Timestamps describe events; they do not order publications or signal delivery.
+A publication's **sequence** orders it within its topic: one more than the topic's last. It is unrelated to record indexes, and nothing orders publications across topics. Timestamps describe; they do not order.
 
 ## Membership
 
@@ -20,9 +20,9 @@ Membership follows a short path:
 unregistered -> registered -> departed
 ```
 
-Registration validates the identity, serializes against membership changes, writes the registry entry, returns the current roster and published state, and creates a self-inclusive `join` signal. Repeating the same name and responsibility is idempotent. Reusing the name with a different responsibility is rejected.
+Registration validates the identity, serializes against membership changes, writes the registry entry, publishes the `name: responsibility` line on `collaboration/agents`, and returns the current roster and published state. Repeating the same name and responsibility is idempotent, and publishes the line only if it is missing. Reusing the name with a different responsibility is rejected.
 
-Departure removes the registry entry, edits the agent's `collaboration/agents` record to struck-through text, and creates a `leave` signal. Prior publications remain; future signals exclude the departed agent.
+Departure edits that line to struck-through text, then removes the registry entry and subscriptions. Prior publications remain. The roster line is the whole join and leave announcement: every agent reads `collaboration/agents`, so peers are woken by it like any publication.
 
 ## Publication
 
@@ -32,28 +32,23 @@ A publication is one call, made under an OS file lock on its topic:
 stateDiagram-v2
     [*] --> Locked: take the topic lock
     Locked --> [*]: an edited index is missing — NOT_FOUND
-    Locked --> Visible: reserve a publication index, append to history
-    Visible --> Announced: write event and inboxes
-    Announced --> [*]: release the lock
+    Locked --> Visible: append to history
+    Visible --> [*]: release the lock
 ```
 
-Under the lock Conductor reads the topic's history, gives each new record the highest index plus one, checks that every edited index exists, takes the next publication index, and appends the publication to `history.jsonl`. The append is the visibility boundary: readers take the same lock, so they see the whole publication or none of it. A `--jsonl` load is one publication carrying many records.
+Under the lock Conductor reads the topic's history, gives each new record the highest index plus one, checks that every edited index exists, resolves the recipients, and appends the publication to `history.jsonl` with the topic's next sequence. The append is the visibility boundary and the wake: readers take the same lock, so they see the whole publication or none of it, and a watcher finds it there. A `--jsonl` load is one publication carrying many records. The operating system releases the lock of a dead process, so a crash never strands a topic.
 
-Conductor then writes an event and appends signals to recipient inboxes. A crash between the append and the event leaves a publication that is readable but that nobody was woken for; there is no recovery step. The operating system releases the lock of a dead process, so a crash never strands a topic.
-
-Announced is also where the recipient set becomes known, and it is what the publishing act answers with alongside the publication it made. A publisher that only got its own record back could not tell a topic somebody reads from one nobody is subscribed to; both succeed, and the difference is a delivery that never happens. The answer is who was woken, not who is subscribed — an agent is not an addressee of its own act, so the publisher is absent from it even on a topic it subscribes to, and an agent alone on a topic reads an empty audience rather than its own name. The set is not written to history: it is true of the instant it was resolved and the next subscription change falsifies it, so history stores the publication and the answer carries the audience.
+The publishing act answers with the publication and its recipients. A publisher that only got its own record back could not tell a topic somebody reads from one nobody is subscribed to; both succeed, and the difference is a delivery that never happens. The answer is who will be woken, not who is subscribed — an agent is not an addressee of its own act, so the publisher is absent from it even on a topic it subscribes to. The set is not written to history: the next subscription change falsifies it.
 
 ## Reading and delivery
 
 Three read views share the same published history:
 
-- **Delta** returns changes after the accepted resource-wide or record-specific cursor.
+- **Delta** returns other agents' publications after the accepted topic or record cursor.
 - **Historical** returns an inclusive index range without moving that cursor.
 - **Full** reconstructs the current records from history without moving that cursor.
 
-A signal is a location hint outside the record model. One watch discovers the current unread summaries and resolves them into a delivery batch up to the shared record cap; `remaining` counts summaries left pending for the next call. Explicit acknowledgement advances only the summaries and topic content actually delivered. Compact acknowledged ranges preserve a late lower publication index even when a higher one finished first.
-
-The SDK-only `WatchSinceContext(ctx, N)` operation is different. It records an intentional discard floor through `N`; a late signal at or below that index remains discarded.
+A watch polls the topics its agent reads — the two broadcast topics, its subscriptions, and every topic in its subscribed groups — and reads a delta of each whose history grew. It returns the unread deltas as one batch up to a shared record cap; `remaining` counts what was left for the next call. Acknowledgement advances each delivered cursor past every publication the delta scanned, the agent's own included. Subscribing starts the new topics' cursors at their current heads, so a subscription is never retroactive.
 
 ## Locking
 
@@ -67,11 +62,10 @@ Every read and write of a topic takes that topic's OS file lock, so operations o
 | Membership | Registry entries | Terminal session bindings |
 | Published value | Append-only topic history | None |
 | Record identity | Highest index in topic history | None |
-| Created signal | Event with its recipient set | Per-agent inbox entry |
+| Publication order | Sequence in topic history | Timestamps |
 | Accepted progress | Cursor | None |
-| Publication order | Global next-index state | Timestamps |
 
-These distinctions make repair bounded. A missing inbox append is reconciled from its event, and that repair never changes the publication itself.
+Nothing is derived from history except the cursor, so there is nothing to repair.
 
 ## Upgrades
 

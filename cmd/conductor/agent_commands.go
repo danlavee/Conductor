@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"strings"
 
@@ -230,20 +229,9 @@ func hostAdapter(root string) (*hostAdapterReport, error) {
 // that resolved them: an agent that sees only what it wrote cannot tell a
 // topic somebody reads from one nobody is subscribed to, and both look like a
 // success.
-//
-// A dispatch with a sequence and an error is a publication that landed and
-// something after it that did not. Printing it is the only way the agent
-// learns the record is live, so the error alone would be a worse answer than
-// the pair.
-func writeDispatch(dispatch conductor.Dispatch, operationErr error) error {
-	if operationErr == nil {
-		return conductor.WriteJSON(os.Stdout, dispatch)
+func writeDispatch(dispatch conductor.Dispatch, err error) error {
+	if err != nil {
+		return err
 	}
-	if dispatch.Sequence == 0 {
-		return operationErr
-	}
-	if writeErr := conductor.WriteJSON(os.Stdout, dispatch); writeErr != nil {
-		return errors.Join(operationErr, writeErr)
-	}
-	return operationErr
+	return conductor.WriteJSON(os.Stdout, dispatch)
 }

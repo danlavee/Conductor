@@ -58,16 +58,46 @@ func assertCode(t *testing.T, err error, code string) {
 	}
 }
 
-func watchOne(t *testing.T, client *Client) Summary {
+// joined registers name on a fresh client and subscribes it to topics.
+func joined(t *testing.T, home, name string, topics ...string) *Client {
 	t.Helper()
-	summaries, err := client.Watch()
+	client := newTestClient(t, home, "")
+	if _, err := client.Join(name, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	for _, topic := range topics {
+		if _, err := client.SubscribeTopic(topic); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return client
+}
+
+// watchOne watches until a batch arrives, requires it to be one delivery, and
+// acknowledges it.
+func watchOne(t *testing.T, client *Client) ReadResult {
+	t.Helper()
+	batch, err := client.Watch()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(summaries) != 1 {
-		t.Fatalf("watch = %#v, want exactly one summary", summaries)
+	if len(batch.Deliveries) != 1 {
+		t.Fatalf("watch = %#v, want exactly one delivery", batch)
 	}
-	return summaries[0]
+	if err := client.AcknowledgeRead(batch.Deliveries...); err != nil {
+		t.Fatal(err)
+	}
+	return batch.Deliveries[0]
+}
+
+// assertQuiet fails if client's watch wakes within a short wait.
+func assertQuiet(t *testing.T, client *Client) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if batch, err := client.WatchContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("watch woke: %#v, %v", batch, err)
+	}
 }
 
 // creates returns n ops that each create a record with text.
@@ -79,36 +109,22 @@ func creates(n int, text string) []Op {
 	return ops
 }
 
-// drainAllPending acknowledges every summary currently pending for client,
-// however many that turns out to be, so a test can reach a clean slate
-// without hardcoding an assumed startup-signal count.
+// drainAllPending acknowledges everything currently unread for client, so a
+// test can reach a clean slate without counting what joining published.
 func drainAllPending(t *testing.T, client *Client) {
 	t.Helper()
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-		summaries, err := client.WatchContext(ctx)
+		batch, err := client.WatchContext(ctx)
 		cancel()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
+		if err == nil {
+			err = client.AcknowledgeRead(batch.Deliveries...)
+		}
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				return
-			}
 			t.Fatal(err)
 		}
-		for _, summary := range summaries {
-			acknowledgeSignal(t, client, summary)
-		}
-	}
-}
-
-// acknowledgeSignal settles only a summary's wake signal, leaving the topic
-// cursor where it was, for tests of the signal path alone.
-func acknowledgeSignal(t *testing.T, client *Client, summary Summary) {
-	t.Helper()
-	agent, offset, err := client.prepareSummaryAcknowledgment(summary)
-	if err == nil {
-		err = client.updateCursor(agent, func(cursor *Cursor) { applySummaryAcknowledgment(cursor, summary, offset) })
-	}
-	if err != nil {
-		t.Fatal(err)
 	}
 }

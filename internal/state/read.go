@@ -92,38 +92,40 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 		if err != nil {
 			return ReadResult{}, err
 		}
-		from := cursor.Topics[recordCursorSlot(request.Topic, request.RecordIndex)] + 1
+		read := cursor.Topics[recordCursorSlot(request.Topic, request.RecordIndex)]
 		limit := request.Limit
 		if limit == 0 {
 			limit = DefaultReadLimit
 		}
-		var candidates []Publication
-		total := 0
+		// The reader's own publications, and those not touching the requested
+		// record, are passed over rather than delivered; the cursor still moves
+		// past every one scanned before the limit stops the read.
+		included, full := 0, false
 		for _, publication := range history {
-			if publication.Sequence < from || (request.throughSequence > 0 && publication.Sequence > request.throughSequence) {
+			if publication.Sequence <= read {
 				continue
 			}
 			changed := filterRecords(publication.Records, request.RecordIndex)
-			if len(changed) == 0 {
+			switch {
+			case full:
+				if publication.Agent != agent {
+					result.Remaining += len(changed)
+				}
 				continue
+			case publication.Agent == agent || len(changed) == 0:
+			// The first unread publication is always included whole, even if it
+			// alone exceeds limit -- a publication can't be split across reads.
+			case included > 0 && included+len(changed) > limit:
+				full = true
+				result.Remaining += len(changed)
+				continue
+			default:
+				publication.Records = changed
+				result.Publications = append(result.Publications, publication)
+				included += len(changed)
 			}
-			publication.Records = changed
-			candidates = append(candidates, publication)
-			total += len(changed)
-		}
-		included := 0
-		for _, publication := range candidates {
-			// The first qualifying publication is always included whole, even
-			// if it alone exceeds limit -- a publication is delivered atomically
-			// and can't be split across two delta reads.
-			if included > 0 && included+len(publication.Records) > limit {
-				break
-			}
-			result.Publications = append(result.Publications, publication)
 			result.maxSequence = publication.Sequence
-			included += len(publication.Records)
 		}
-		result.Remaining = total - included
 	default:
 		return ReadResult{}, errors.New("unknown read mode")
 	}
@@ -133,23 +135,22 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 	return result, nil
 }
 
-// AcknowledgeRead records the internal sequence through which delta content was
+// AcknowledgeRead records the sequence through which each delta's content was
 // accepted. Range and full reads never change delta progress.
-func (c *Client) AcknowledgeRead(result ReadResult) error {
+func (c *Client) AcknowledgeRead(results ...ReadResult) error {
 	if err := c.validateProtocol(); err != nil {
 		return err
-	}
-	if result.Mode != "delta" || result.maxSequence == 0 {
-		return nil
 	}
 	agent, err := c.requireAgent()
 	if err != nil {
 		return err
 	}
-	slot := recordCursorSlot(result.Topic, result.record)
 	return c.updateCursor(agent, func(cursor *Cursor) {
-		if result.maxSequence > cursor.Topics[slot] {
-			cursor.Topics[slot] = result.maxSequence
+		for _, result := range results {
+			slot := recordCursorSlot(result.Topic, result.record)
+			if result.Mode == "delta" && result.maxSequence > cursor.Topics[slot] {
+				cursor.Topics[slot] = result.maxSequence
+			}
 		}
 	})
 }

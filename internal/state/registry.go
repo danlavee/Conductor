@@ -48,15 +48,6 @@ func (c *Client) Join(name, responsibility string) (snapshot Snapshot, err error
 		if err := c.ensureRosterRecord(name, responsibility); err != nil {
 			return Snapshot{}, err
 		}
-		latest, err := c.latestMembershipType(name)
-		if err != nil {
-			return Snapshot{}, err
-		}
-		if latest != "join" {
-			if _, err := c.publishEvent("join", "registry", name, nil); err != nil {
-				return Snapshot{}, err
-			}
-		}
 		return c.FullSnapshot()
 	}
 
@@ -78,9 +69,6 @@ func (c *Client) Join(name, responsibility string) (snapshot Snapshot, err error
 		_ = removeEventually(registrationPath)
 		return Snapshot{}, err
 	}
-	if _, err := c.publishEvent("join", "registry", name, nil); err != nil {
-		return snapshot, err
-	}
 	return snapshot, nil
 }
 
@@ -101,24 +89,12 @@ func (c *Client) Leave(name string) error {
 	path := filepath.Join(c.Home, "registry", name+".json")
 	var agent Agent
 	if err := readJSON(path, &agent); errors.Is(err, os.ErrNotExist) {
-		latest, eventErr := c.latestMembershipType(name)
-		if eventErr != nil {
-			return eventErr
-		}
-		if latest == "leave" {
-			return nil
-		}
-		if latest == "join" {
-			_, eventErr = c.publishEvent("leave", "registry", name, nil)
-			return eventErr
-		}
 		return &ProtocolError{Code: "NOT_FOUND", Text: "agent does not exist"}
 	} else if err != nil {
 		return err
 	}
-	// Retire the roster record before removing anything else, so a crash
-	// partway through deregistration never leaves the collaboration/agents
-	// index mapping unreachable.
+	// Retire the roster line while the agent can still publish, so a crash
+	// partway through leaves a registration that a repeated leave finishes.
 	if err := c.retireRosterRecord(agent); err != nil {
 		return err
 	}
@@ -128,8 +104,7 @@ func (c *Client) Leave(name string) error {
 	if err := removeEventually(c.subscriptionPath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	_, err = c.publishEvent("leave", "registry", name, nil)
-	return err
+	return nil
 }
 
 // ListAgents returns the complete registry ordered by name.
@@ -164,9 +139,8 @@ func (c *Client) ListAgents() ([]Agent, error) {
 //
 // Holder says how long the true answer is likely to stay true, which the
 // boolean alone cannot: an adapter holds across turns, and a self-armed watcher
-// exits on its first delivery. Without it every roster -- including the one a
-// delivery hands the agent whose own watcher is exiting as it writes it --
-// reports those two as the same fact.
+// exits on its first delivery. Without it every roster reports those two as
+// the same fact.
 type RosterEntry struct {
 	Agent
 	Wakeable bool         `json:"wakeable"`
@@ -175,9 +149,7 @@ type RosterEntry struct {
 }
 
 // Roster lists the registry the way an agent choosing whom to address needs to
-// see it -- not who signed up, but who would answer. Every roster an agent is
-// shown goes through here: the join snapshot, and the roster carried by a join
-// or leave delivery. Those are once per event.
+// see it -- not who signed up, but who would answer.
 //
 // ListAgents remains the bare membership answer for recipient resolution,
 // which runs on every publication and must not pay a process probe per agent.
@@ -269,131 +241,67 @@ func (c *Client) AcknowledgeSnapshot(snapshot Snapshot) error {
 	if err != nil {
 		return err
 	}
+	return c.acknowledgeHeads(agent, snapshot.heads)
+}
+
+// acknowledgeHeads moves each topic's cursor forward to the given head.
+func (c *Client) acknowledgeHeads(agent string, heads map[string]int64) error {
 	return c.updateCursor(agent, func(cursor *Cursor) {
-		for topic, head := range snapshot.heads {
-			if head > cursor.Topics[topic] {
-				cursor.Topics[topic] = head
-			}
+		for topic, head := range heads {
+			cursor.Topics[topic] = max(cursor.Topics[topic], head)
 		}
 	})
-}
-
-func (c *Client) recipientNames() ([]string, error) {
-	agents, err := c.ListAgents()
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(agents))
-	for _, agent := range agents {
-		names = append(names, agent.Name)
-	}
-	return names, nil
-}
-
-func (c *Client) latestMembershipType(agent string) (string, error) {
-	events, err := c.unreadEvents(nil)
-	if err != nil {
-		return "", err
-	}
-	latest := ""
-	for _, event := range events {
-		if event.Summary.Topic == "registry" && event.Summary.Agent == agent {
-			latest = event.Summary.Type
-		}
-	}
-	return latest, nil
 }
 
 // membershipResource serializes Join and Leave across every agent.
 const membershipResource = "_registry/membership"
 
-// rosterIndexRecord is the durable mapping from a registered agent's name to
-// its record index on the collaboration/agents topic. It lives outside
-// registry/ (which ListAgents enumerates as agent identity files) and
-// outside the topic history itself (record indexes are Conductor-assigned
-// and carry no agent identity of their own), so recovering "which index is
-// mine" after a crash needs this small side-index rather than a scan of
-// topic text.
-type rosterIndexRecord struct {
-	Index int64 `json:"index"`
-}
-
-func (r *rosterIndexRecord) validate() error {
-	if r.Index <= 0 {
-		return errors.New("invalid collaboration/agents index state")
-	}
-	return nil
-}
-
-func (c *Client) rosterIndexPath(agent string) string {
-	return filepath.Join(c.Home, "state", "collaboration-agents-index", agent+".json")
-}
-
-func (c *Client) loadRosterIndex(agent string) (int64, error) {
-	var record rosterIndexRecord
-	err := readJSON(c.rosterIndexPath(agent), &record)
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	return record.Index, nil
-}
-
-func (c *Client) saveRosterIndex(agent string, index int64) error {
-	return writeJSONAtomic(c.rosterIndexPath(agent), rosterIndexRecord{Index: index})
-}
-
-func (c *Client) removeRosterIndex(agent string) error {
-	return removeEventually(c.rosterIndexPath(agent))
-}
-
 func rosterText(name, responsibility string) string {
 	return name + ": " + responsibility
 }
 
-// ensureRosterRecord makes sure name has a current record on
-// collaboration/agents, publishing one if (and only if) the durable index
-// mapping shows none exists yet. It is idempotent so Register can call it
-// both for a brand-new agent and when repairing a partially completed
-// registration. The caller must already hold the membership lock and have
-// c.Agent set to name.
-func (c *Client) ensureRosterRecord(name, responsibility string) error {
-	index, err := c.loadRosterIndex(name)
+// rosterRecord answers the index of the agent's live line on
+// collaboration/agents, or zero when it has none. The line itself is the only
+// record of it: names cannot contain the separator, so the text identifies
+// the agent.
+func (c *Client) rosterRecord(name, responsibility string) (int64, error) {
+	release, err := c.lockResource(collaborationAgentsTopic)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if index > 0 {
-		return nil
+	history, err := c.readHistory(collaborationAgentsTopic)
+	if err := errors.Join(err, release()); err != nil {
+		return 0, err
 	}
-	dispatch, err := c.Put(collaborationAgentsTopic, rosterText(name, responsibility))
-	// A wake failure still answers with the appended record. Map it anyway, or
-	// a retried join would publish the agent's line a second time.
-	if record := dispatch.Record(); record.Index > 0 {
-		if saveErr := c.saveRosterIndex(name, record.Index); saveErr != nil {
-			return saveErr
+	for _, record := range materialize(history) {
+		if record.Text == rosterText(name, responsibility) {
+			return record.Index, nil
 		}
 	}
+	return 0, nil
+}
+
+// ensureRosterRecord publishes the agent's roster line unless it is already
+// live, so a join repeated after a crash never publishes it twice. That
+// publication is how the other agents learn of the join. The caller must hold
+// the membership lock and have c.Agent set to name.
+func (c *Client) ensureRosterRecord(name, responsibility string) error {
+	index, err := c.rosterRecord(name, responsibility)
+	if err != nil || index > 0 {
+		return err
+	}
+	_, err = c.Put(collaborationAgentsTopic, rosterText(name, responsibility))
 	return err
 }
 
-// retireRosterRecord edits agent's collaboration/agents record to struck-through
-// text, if the durable index mapping still shows one exists, and then clears the
-// mapping. It is a no-op when no record is known (nothing was ever
-// published, or a previous call already retired and cleared it). The caller
-// must already hold the membership lock and have c.Agent set to the agent.
+// retireRosterRecord strikes through the agent's live roster line, which is
+// how the other agents learn of the leave, and is a no-op once it has. The
+// caller must hold the membership lock and have c.Agent set to the agent.
 func (c *Client) retireRosterRecord(agent Agent) error {
-	index, err := c.loadRosterIndex(agent.Name)
-	if err != nil {
+	index, err := c.rosterRecord(agent.Name, agent.Responsibility)
+	if err != nil || index == 0 {
 		return err
 	}
-	if index == 0 {
-		return nil
-	}
-	struck := "~~" + rosterText(agent.Name, agent.Responsibility) + "~~"
-	if _, err := c.Edit(collaborationAgentsTopic, index, struck); err != nil {
-		return err
-	}
-	return c.removeRosterIndex(agent.Name)
+	_, err = c.Edit(collaborationAgentsTopic, index, "~~"+rosterText(agent.Name, agent.Responsibility)+"~~")
+	return err
 }

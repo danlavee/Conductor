@@ -5,99 +5,65 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 )
 
-// Watch blocks until at least one unread signal is available, then returns
-// every currently pending unread signal, in the order they were discovered.
-func (c *Client) Watch() ([]Summary, error) {
+// Batch is what one watch delivers: the unread delta of every topic that has
+// one, taken in order until DefaultReadLimit records are spent. A publication
+// is never split, so the last delivery may overrun the cap, and Remaining
+// counts the records left for the next call.
+type Batch struct {
+	Deliveries   []ReadResult `json:"deliveries"`
+	Remaining    int          `json:"remaining,omitempty"`
+	DefaultLimit int          `json:"default_read_limit,omitempty"`
+}
+
+// Watch blocks until a topic the agent reads has a publication by another
+// agent past its cursor, then returns every such unread delta.
+func (c *Client) Watch() (Batch, error) {
 	return c.WatchContext(context.Background())
 }
 
 // WatchContext is Watch, ending without acknowledging anything when ctx does.
-func (c *Client) WatchContext(ctx context.Context) ([]Summary, error) {
-	return c.WatchSinceContext(ctx, 0)
-}
-
-// WatchSinceContext persists since as a discard floor, then returns every
-// currently pending unread signal above it, in the order they were
-// discovered -- a real backlog drains in one call instead of one rearm per
-// publication. More may still arrive after this call returns, so the caller
-// must still rearm.
-func (c *Client) WatchSinceContext(ctx context.Context, since int64) ([]Summary, error) {
-	if since < 0 {
-		return nil, errors.New("watch sequence must not be negative")
-	}
+//
+// History is append-only, so a topic whose file has not changed size since
+// the last look cannot have gained an unread publication; only the ones that
+// did are read again.
+func (c *Client) WatchContext(ctx context.Context) (Batch, error) {
 	if err := c.validateProtocol(); err != nil {
-		return nil, err
+		return Batch{}, err
 	}
 	agent, err := c.requireAgent()
 	if err != nil {
-		return nil, err
+		return Batch{}, err
 	}
-	if since > 0 {
-		if err := c.updateCursor(agent, func(cursor *Cursor) {
-			if since > cursor.Summary {
-				cursor.Summary = since
-			}
-			cursor.SummaryRanges = acknowledgeThrough(cursor.SummaryRanges, since)
-		}); err != nil {
-			return nil, err
-		}
-	}
-	cursor, err := c.loadCursor(agent)
-	if err != nil {
-		return nil, err
-	}
-	journalToken := ""
+	sizes := map[string]int64{}
 	for {
-		pending, scannedTo, err := c.pendingInboxSummaries(agent, cursor, since)
+		topics, err := c.readableTopics(agent)
 		if err != nil {
-			return nil, err
+			return Batch{}, err
 		}
-		if scannedTo > cursor.InboxOffset {
-			if err := c.updateCursor(agent, func(current *Cursor) {
-				if scannedTo > current.InboxOffset {
-					current.InboxOffset = scannedTo
-				}
-			}); err != nil {
-				return nil, err
-			}
-			cursor.InboxOffset = scannedTo
-		}
-		currentToken, err := c.eventChangeToken()
-		if err != nil {
-			return nil, err
-		}
-		if currentToken != journalToken {
-			events, err := c.unreadEventsAfter(cursor.SummaryRanges, since)
+		var changed []string
+		for _, topic := range topics {
+			size, err := c.historySize(topic)
 			if err != nil {
-				return nil, err
+				return Batch{}, err
 			}
-			seen := make(map[int64]bool, len(pending))
-			for _, summary := range pending {
-				seen[summary.Sequence] = true
+			if size != sizes[topic] {
+				sizes[topic] = size
+				changed = append(changed, topic)
 			}
-			for _, event := range events {
-				if contains(event.Recipients, agent) && !seen[event.Summary.Sequence] {
-					pending = append(pending, event.Summary)
-					seen[event.Summary.Sequence] = true
-				}
-			}
-			journalToken = currentToken
 		}
-		if len(pending) > 0 {
-			return pending, nil
+		if len(changed) > 0 {
+			batch, err := c.unreadBatch(changed)
+			if err != nil || len(batch.Deliveries) > 0 {
+				return batch, err
+			}
 		}
 		if _, err := os.Stat(filepath.Join(c.Home, "registry", agent+".json")); errors.Is(err, os.ErrNotExist) {
-			return nil, &ProtocolError{Code: "NOT_FOUND", Text: "registered agent does not exist"}
+			return Batch{}, &ProtocolError{Code: "NOT_FOUND", Text: "registered agent does not exist"}
 		} else if err != nil {
-			return nil, err
-		}
-		cursor, err = c.loadCursor(agent)
-		if err != nil {
-			return nil, err
+			return Batch{}, err
 		}
 		if c.watchIdleFn != nil {
 			c.watchIdleFn()
@@ -106,83 +72,52 @@ func (c *Client) WatchSinceContext(ctx context.Context, since int64) ([]Summary,
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return Batch{}, ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
 
-func (c *Client) prepareSummaryAcknowledgment(summary Summary) (string, int64, error) {
-	if err := c.validateProtocol(); err != nil {
-		return "", 0, err
+// unreadBatch reads the delta of each topic, in order, into one batch.
+func (c *Client) unreadBatch(topics []string) (Batch, error) {
+	batch := Batch{Deliveries: []ReadResult{}}
+	budget := DefaultReadLimit
+	for _, topic := range topics {
+		result, err := c.Get(ReadRequest{Topic: topic, Mode: ReadDelta, Limit: max(budget, 1)})
+		if err != nil {
+			return Batch{}, err
+		}
+		count := 0
+		for _, publication := range result.Publications {
+			count += len(publication.Records)
+		}
+		switch {
+		case count == 0:
+		case budget <= 0:
+			batch.Remaining += count + result.Remaining
+		default:
+			batch.Deliveries = append(batch.Deliveries, result)
+			batch.Remaining += result.Remaining
+			budget -= count
+		}
 	}
-	if err := validateSummary(&summary); err != nil {
-		return "", 0, err
+	if batch.Remaining > 0 {
+		batch.DefaultLimit = DefaultReadLimit
 	}
-	agent, err := c.requireAgent()
+	return batch, nil
+}
+
+func (c *Client) historySize(topic string) (int64, error) {
+	dir, err := c.topicDir(topic)
 	if err != nil {
-		return "", 0, err
+		return 0, err
 	}
-	offset, err := c.inboxOffsetThrough(agent, summary.Sequence)
+	info, err := os.Stat(filepath.Join(dir, "history.jsonl"))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
 	if err != nil {
-		return "", 0, err
+		return 0, err
 	}
-	return agent, offset, nil
-}
-
-func applySummaryAcknowledgment(cursor *Cursor, summary Summary, offset int64) {
-	if summary.Sequence > cursor.Summary {
-		cursor.Summary = summary.Sequence
-	}
-	cursor.SummaryRanges = acknowledgeIndex(cursor.SummaryRanges, summary.Sequence)
-	if offset > cursor.InboxOffset {
-		cursor.InboxOffset = offset
-	}
-}
-
-func contains(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
-}
-
-func indexAcknowledged(ranges []IndexRange, index int64) bool {
-	for _, interval := range ranges {
-		if index < interval.From {
-			return false
-		}
-		if index <= interval.To {
-			return true
-		}
-	}
-	return false
-}
-
-func acknowledgeIndex(ranges []IndexRange, index int64) []IndexRange {
-	ranges = append(append([]IndexRange(nil), ranges...), IndexRange{From: index, To: index})
-	return mergeIndexRanges(ranges)
-}
-
-func acknowledgeThrough(ranges []IndexRange, index int64) []IndexRange {
-	ranges = append(append([]IndexRange(nil), ranges...), IndexRange{From: 1, To: index})
-	return mergeIndexRanges(ranges)
-}
-
-func mergeIndexRanges(ranges []IndexRange) []IndexRange {
-	sort.Slice(ranges, func(i, j int) bool { return ranges[i].From < ranges[j].From })
-	merged := ranges[:0]
-	for _, interval := range ranges {
-		last := len(merged) - 1
-		if last >= 0 && interval.From <= merged[last].To+1 {
-			if interval.To > merged[last].To {
-				merged[last].To = interval.To
-			}
-			continue
-		}
-		merged = append(merged, interval)
-	}
-	return merged
+	return info.Size(), nil
 }

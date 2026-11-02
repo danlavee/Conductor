@@ -63,16 +63,12 @@ func runWatch(ctx context.Context, client *conductor.Client, once bool) error {
 }
 
 func deliverOnce(ctx context.Context, client *conductor.Client) error {
-	summaries, err := client.WatchContext(ctx)
-	if err != nil {
-		return err
-	}
-	batch, err := client.ResolveBatch(summaries)
+	batch, err := client.WatchContext(ctx)
 	if err != nil {
 		return err
 	}
 	if err := conductor.WriteJSON(os.Stdout, batch); err != nil {
 		return err
 	}
-	return client.AcknowledgeBatch(batch)
+	return client.AcknowledgeRead(batch.Deliveries...)
 }

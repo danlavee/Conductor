@@ -19,7 +19,8 @@ type Record struct {
 }
 
 // Publication is one atomic addition or change of records in one topic.
-// Sequence orders publications globally and is unrelated to record indexes.
+// Sequence orders publications within their topic and is unrelated to record
+// indexes.
 type Publication struct {
 	Sequence  int64     `json:"sequence"`
 	Topic     string    `json:"topic"`
@@ -46,15 +47,6 @@ func (d Dispatch) Record() Record {
 	return d.Records[0]
 }
 
-// Summary is the lightweight wake information returned instead of content.
-// Its sequence identifies the publication for an update.
-type Summary struct {
-	Type     string `json:"type"`
-	Topic    string `json:"topic"`
-	Sequence int64  `json:"sequence"`
-	Agent    string `json:"agent"`
-}
-
 // ProtocolError is a stable machine-readable coordination error.
 type ProtocolError struct {
 	Code     string                 `json:"code"`
@@ -76,21 +68,10 @@ func (e *ProtocolError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Text)
 }
 
-type IndexRange struct {
-	From int64 `json:"from"`
-	To   int64 `json:"to"`
-}
-
+// Cursor is how far an agent has read: the sequence it has accepted through,
+// per topic or per topic#index record slot.
 type Cursor struct {
-	Summary       int64            `json:"summary_sequence"`
-	SummaryRanges []IndexRange     `json:"summary_ranges,omitempty"`
-	InboxOffset   int64            `json:"inbox_offset"`
-	Topics        map[string]int64 `json:"topic_sequences"`
-}
-
-type Event struct {
-	Summary    Summary  `json:"summary"`
-	Recipients []string `json:"recipients"`
+	Topics map[string]int64 `json:"topic_sequences"`
 }
 
 type Snapshot struct {
@@ -108,13 +89,12 @@ const (
 )
 
 type ReadRequest struct {
-	Topic           string
-	RecordIndex     int64
-	Mode            ReadMode
-	Start           int64
-	End             int64
-	Limit           int
-	throughSequence int64
+	Topic       string
+	RecordIndex int64
+	Mode        ReadMode
+	Start       int64
+	End         int64
+	Limit       int
 }
 
 type ReadResult struct {

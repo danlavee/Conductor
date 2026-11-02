@@ -1,7 +1,6 @@
 package state
 
 import (
-	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -137,49 +136,35 @@ func TestTextIsPreservedExactly(t *testing.T) {
 	}
 }
 
-// A publication that landed but whose wake failed is readable and announced
-// to nobody, and its answer says both.
-func TestPublishReturnsTheRecordWhenTheWakeFails(t *testing.T) {
+func TestPublishReturnsNoRecordWhenItFails(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
 	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
 	}
-	// Registration itself already consumes global sequences 1 (the
-	// collaboration/agents roster record) and 2 (join); this Put's own event
-	// lands at 3.
-	if err := os.Mkdir(filepath.Join(home, "events", indexName(3)), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	dispatch, err := client.Put("dev/tasks", "visible")
-	record := dispatch.Record()
-	if err == nil || record.Index != 1 || record.Text != "visible" || len(dispatch.Recipients) != 0 {
-		t.Fatalf("result = %#v, error = %v", dispatch, err)
-	}
-	full, err := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
-	if err != nil || len(full.Records) != 1 || full.Records[0] != record {
-		t.Fatalf("full = %#v, %v", full, err)
-	}
-}
-
-func TestPublishReturnsNoRecordWhenItFailsBeforeVisibility(t *testing.T) {
-	home := t.TempDir()
-	client := newTestClient(t, home, "")
-	if _, err := client.Join("writer", "records"); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeJSONAtomic(filepath.Join(home, "state", "index.json"), map[string]int64{"index": math.MaxInt64}); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, "topics", "dev", "tasks", "history.jsonl"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	dispatch, err := client.Put("dev/tasks", "not visible")
-	// Sequence zero is what the CLI branches on to decide the record never
-	// became visible, so the contract is pinned there and not only on Record.
 	if err == nil || dispatch.Sequence != 0 || dispatch.Record() != (Record{}) {
 		t.Fatalf("result = %#v, error = %v", dispatch, err)
 	}
-	history, historyErr := client.readHistory("dev/tasks")
-	if historyErr != nil || len(history) != 0 {
-		t.Fatalf("history = %#v, %v", history, historyErr)
+}
+
+// Sequences order publications within a topic, so each topic counts its own.
+func TestSequencesArePerTopic(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Join("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		topic string
+		want  int64
+	}{{"dev/a", 1}, {"dev/b", 1}, {"dev/a", 2}} {
+		dispatch, err := client.Put(step.topic, "x")
+		if err != nil || dispatch.Sequence != step.want {
+			t.Fatalf("%s sequence = %d, want %d (%v)", step.topic, dispatch.Sequence, step.want, err)
+		}
 	}
 }
 

@@ -90,7 +90,7 @@ func TestArmingAnswersBeforeItWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A peer's registration is what lets the one-shot watch below terminate;
-	// nomad's own join reaches its peers, not its own inbox.
+	// nomad is not woken by its own join.
 	if _, _, err := runCLIHelper(os.Args[0], root, "", "peer", "join", "review"); err != nil {
 		t.Fatal(err)
 	}
@@ -120,8 +120,8 @@ func TestArmingAnswersOnAStreamThatNeverDelivers(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	// Nothing to consume first: what an agent's join publishes goes to its
-	// peers, never to its own inbox, so this stream starts empty.
+	// Nothing to consume first: an agent is not woken by its own join, so
+	// this stream starts empty.
 	watch, deliveries := startWatch(t, root)
 	defer stopWatch(t, watch)
 
@@ -193,9 +193,8 @@ func TestAFailedWaitStillCarriesItsArmAnswer(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], root, "", "nomad", "join", "parser"); err != nil {
 		t.Fatal(err)
 	}
-	// Nothing to drain: what an agent's join publishes goes to its peers, never
-	// to its own inbox, so the watcher below blocks instead of resolving a
-	// backlog and exiting successfully.
+	// Nothing to drain: an agent is not woken by its own join, so the watcher
+	// below blocks instead of delivering a backlog and exiting successfully.
 	watch := exec.Command(os.Args[0], "nomad", "watch", "--once")
 	watch.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
 	watch.Env = replaceEnvironment(watch.Env, "CONDUCTOR_HOME", root)

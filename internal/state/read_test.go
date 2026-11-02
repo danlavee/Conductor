@@ -66,19 +66,15 @@ func TestRangeAndLimitUseCurrentRecordIndexes(t *testing.T) {
 }
 
 func TestStruckRecordRemainsInFullAndDelta(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Join("writer", "records"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.SubscribeTopic("collaboration/shared"); err != nil {
-		t.Fatal(err)
-	}
-	dispatch, err := client.Put("collaboration/shared", "plain")
+	home := t.TempDir()
+	writer := joined(t, home, "writer")
+	client := joined(t, home, "reader", "collaboration/shared")
+	dispatch, err := writer.Put("collaboration/shared", "plain")
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := dispatch.Record()
-	if _, err := client.Edit("collaboration/shared", record.Index, "~~plain~~"); err != nil {
+	if _, err := writer.Edit("collaboration/shared", record.Index, "~~plain~~"); err != nil {
 		t.Fatal(err)
 	}
 	full, err := client.Get(ReadRequest{Topic: "collaboration/shared", RecordIndex: record.Index, Mode: ReadFull})
@@ -91,9 +87,8 @@ func TestStruckRecordRemainsInFullAndDelta(t *testing.T) {
 	}
 }
 
-// putN writes count records to topic and returns the client that wrote them,
-// so a test can build a backlog larger than DefaultReadLimit without
-// spelling out every record.
+// putN writes count records to topic, one publication each, so a test can
+// build a backlog larger than DefaultReadLimit without spelling out each one.
 func putN(t *testing.T, client *Client, topic string, count int) {
 	t.Helper()
 	for i := 0; i < count; i++ {
@@ -151,16 +146,12 @@ func TestFullDefaultsToReadLimitAndReportsRemaining(t *testing.T) {
 }
 
 func TestDeltaDefaultsToReadLimitAndReportsRemaining(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Join("writer", "records"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.SubscribeTopic("messages/capped-delta"); err != nil {
-		t.Fatal(err)
-	}
+	home := t.TempDir()
+	writer := joined(t, home, "writer")
+	client := joined(t, home, "reader", "messages/capped-delta")
 	// One publication per Put, so this backlog spans more atomic publications
 	// than the default cap.
-	putN(t, client, "messages/capped-delta", DefaultReadLimit+4)
+	putN(t, writer, "messages/capped-delta", DefaultReadLimit+4)
 
 	result, err := client.Get(ReadRequest{Topic: "messages/capped-delta", Mode: ReadDelta})
 	if err != nil {
@@ -175,15 +166,28 @@ func TestDeltaDefaultsToReadLimitAndReportsRemaining(t *testing.T) {
 	}
 }
 
+// An agent's own publications are not unread to it, but reading past them
+// moves its cursor all the same.
+func TestDeltaPassesOverTheReadersOwnPublications(t *testing.T) {
+	home := t.TempDir()
+	writer := joined(t, home, "writer")
+	client := joined(t, home, "reader", "dev/tasks")
+	for _, author := range []*Client{writer, client, writer, client} {
+		if _, err := author.Put("dev/tasks", author.Agent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	delta, err := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadDelta})
+	if err != nil || len(delta.Publications) != 2 || delta.Publications[1].Sequence != 3 || delta.maxSequence != 4 {
+		t.Fatalf("delta = %#v, error = %v", delta, err)
+	}
+}
+
 func TestDeltaAlwaysIncludesFirstOversizedPublicationWhole(t *testing.T) {
-	client := newTestClient(t, t.TempDir(), "")
-	if _, err := client.Join("writer", "records"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.SubscribeTopic("messages/big-batch"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.Publish("messages/big-batch", creates(DefaultReadLimit+2, "x")); err != nil {
+	home := t.TempDir()
+	writer := joined(t, home, "writer")
+	client := joined(t, home, "reader", "messages/big-batch")
+	if _, err := writer.Publish("messages/big-batch", creates(DefaultReadLimit+2, "x")); err != nil {
 		t.Fatal(err)
 	}
 

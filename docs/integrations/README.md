@@ -11,8 +11,6 @@ Conductor's core is host-neutral. `watch` acknowledges the arming act and then d
 | [Antigravity](agy.md) | Not yet built | Interim fallback |
 | Any other host | — | Interim fallback |
 
-Summary delivery leaves a delivery's data for the woken turn to read itself instead of resolving and acknowledging it inline. An adapter chooses it when it arms; there is no flag, because the CLI is not how an adapter holds a stream. See [runtime boundaries](../design/runtime-boundaries.md#the-acceptance-boundary).
-
 ## Interim fallback
 
 A host without an adapter uses `conductor <agent> watch --once`, and the agent owns the lifecycle: start it through the host's background facility, retain the handle, process the delivery, start it again. It writes two JSON documents, not one — the participation answer at the moment it acquires ownership, so arming reports what it achieved, and then the single delivery it blocks for before exiting. Parse its stdout as a sequence, and read the exit code with it: a failed wait leaves the arm answer written and reports on stderr, so one document at a non-zero exit is a watch that ended, not a delivery still coming.
