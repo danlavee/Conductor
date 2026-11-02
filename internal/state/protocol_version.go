@@ -1,229 +1,83 @@
 package state
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
-
-	"github.com/danlavee/Conductor/internal/platform"
 )
 
 // CurrentProtocolVersion is the one on-disk state protocol this binary supports.
 const CurrentProtocolVersion = 5
 
-const (
-	protocolFileName = "protocol.json"
-	protocolInitDir  = ".protocol-init"
-	protocolGuard    = "guard"
-	protocolTempBase = "protocol-"
-	protocolTempExt  = ".tmp"
-)
+const protocolFileName = "protocol.json"
 
 type protocolDocument struct {
 	Version *int `json:"version"`
 }
 
-func initializeProtocol(home string) (err error) {
-	if exists, err := validateProtocolDuringInitialization(home); exists || err != nil {
+// initializeProtocol declares this protocol on a root that has no declaration
+// and checks the one it finds otherwise. The declaration is hard-linked into
+// place from a complete temporary file, so no reader sees a partial one and
+// racing initializers settle on whichever link landed first.
+func initializeProtocol(home string) error {
+	if err := checkProtocol(home); !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	candidate, err := undeclaredRootIsEmpty(home)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(home, ".protocol-*.tmp")
 	if err != nil {
 		return err
 	}
-	if !candidate {
-		if exists, validateErr := validateProtocolDuringInitialization(home); exists || validateErr != nil {
-			return validateErr
-		}
-		return protocolMismatch("state root contains unversioned data", nil)
+	defer os.Remove(temp.Name())
+	_, err = fmt.Fprintf(temp, "{\n  \"version\": %d\n}\n", CurrentProtocolVersion)
+	if err == nil {
+		err = temp.Sync()
 	}
-
-	supportDir := filepath.Join(home, protocolInitDir)
-	if err := os.MkdirAll(supportDir, 0o700); err != nil {
-		return err
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
 	}
-	if err := validateInitSupport(supportDir); err != nil {
-		return err
-	}
-	release, err := platform.AcquireFileMutex(filepath.Join(supportDir, protocolGuard), defaultLockTimeout)
-	if err != nil {
-		if errors.Is(err, platform.ErrMutexTimeout) {
-			return &ProtocolError{Code: "TIMEOUT", Text: "protocol initialization did not become available"}
-		}
-		return err
-	}
-	defer func() {
-		if releaseErr := release(); err == nil && releaseErr != nil {
-			err = releaseErr
-		}
-	}()
-
-	if exists, err := validateProtocolDuringInitialization(home); exists || err != nil {
-		return err
-	}
-	candidate, err = undeclaredRootIsEmpty(home)
 	if err != nil {
 		return err
 	}
-	if !candidate {
-		if exists, validateErr := validateProtocolDuringInitialization(home); exists || validateErr != nil {
-			return validateErr
-		}
-		return protocolMismatch("state root contains unversioned data", nil)
-	}
-	if err := validateInitSupport(supportDir); err != nil {
+	if err := os.Link(temp.Name(), protocolPath(home)); err != nil && !errors.Is(err, fs.ErrExist) {
 		return err
 	}
-	if err := removeProtocolTemporaries(supportDir); err != nil {
-		return err
-	}
-	version := CurrentProtocolVersion
-	return writeJSONAtomicFrom(
-		supportDir,
-		protocolTempBase+"*"+protocolTempExt,
-		filepath.Join(home, protocolFileName),
-		protocolDocument{Version: &version},
-	)
-}
-
-func validateProtocolDuringInitialization(home string) (bool, error) {
-	deadline := time.Now().Add(defaultLockTimeout)
-	for {
-		exists, err := validateExistingProtocol(home)
-		if !platform.IsTransientFileAccess(err) || time.Now().After(deadline) {
-			return exists, err
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	return checkProtocol(home)
 }
 
 func (c *Client) validateProtocol() error {
-	exists, err := validateExistingProtocol(c.Home)
-	if err != nil {
-		return err
-	}
-	if !exists {
+	err := checkProtocol(c.Home)
+	if errors.Is(err, fs.ErrNotExist) {
 		return protocolMismatch("state protocol declaration is missing", nil)
 	}
-	return nil
+	return err
 }
 
-func validateExistingProtocol(home string) (bool, error) {
-	path := filepath.Join(home, protocolFileName)
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
+// checkProtocol returns fs.ErrNotExist when the root declares nothing yet.
+func checkProtocol(home string) error {
+	data, err := os.ReadFile(protocolPath(home))
 	if err != nil {
-		return true, err
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return true, protocolMismatch("state protocol declaration must be a regular file", nil)
+		return err
 	}
 	var document protocolDocument
-	if err := readJSON(path, &document); err != nil {
-		var pathErr *os.PathError
-		if errors.As(err, &pathErr) {
-			return true, err
-		}
-		return true, protocolMismatch("state protocol declaration is malformed", nil)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&document) != nil || decoder.More() {
+		return protocolMismatch("state protocol declaration is malformed", nil)
 	}
 	if document.Version == nil {
-		return true, protocolMismatch("state protocol declaration has no version", nil)
+		return protocolMismatch("state protocol declaration has no version", nil)
 	}
 	if *document.Version != CurrentProtocolVersion {
-		return true, protocolMismatch("state protocol is unsupported", document.Version)
-	}
-	return true, nil
-}
-
-func undeclaredRootIsEmpty(home string) (bool, error) {
-	info, err := os.Lstat(home)
-	if errors.Is(err, os.ErrNotExist) {
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return false, protocolMismatch("state root must be a regular directory", nil)
-	}
-	entries, err := os.ReadDir(home)
-	if err != nil {
-		return false, err
-	}
-	for _, entry := range entries {
-		switch entry.Name() {
-		case protocolFileName:
-			return false, nil
-		case protocolInitDir:
-			if err := validateInitSupport(filepath.Join(home, protocolInitDir)); err != nil {
-				return false, err
-			}
-		case "adapters", "backups":
-			// Conductor's own trees that are not bus state: host adapters and
-			// their session records, and the backups install --replace leaves.
-			// Both are routinely written before the first join.
-		default:
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-func validateInitSupport(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return protocolMismatch("protocol initialization support is invalid", nil)
-	}
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if entry.Name() != protocolGuard && !isProtocolTemporary(entry.Name()) {
-			return protocolMismatch("protocol initialization support contains an unknown entry", nil)
-		}
-		entryInfo, err := os.Lstat(filepath.Join(path, entry.Name()))
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if !entryInfo.Mode().IsRegular() || entryInfo.Mode()&os.ModeSymlink != 0 {
-			return protocolMismatch("protocol initialization support contains a non-regular entry", nil)
-		}
+		return protocolMismatch("state protocol is unsupported", document.Version)
 	}
 	return nil
-}
-
-func removeProtocolTemporaries(path string) error {
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !isProtocolTemporary(entry.Name()) {
-			continue
-		}
-		if err := os.Remove(filepath.Join(path, entry.Name())); err != nil {
-			return err
-		}
-	}
-	return platform.SyncParent(filepath.Join(path, protocolGuard))
-}
-
-func isProtocolTemporary(name string) bool {
-	return strings.HasPrefix(name, protocolTempBase) && strings.HasSuffix(name, protocolTempExt) && len(name) > len(protocolTempBase)+len(protocolTempExt)
 }
 
 func protocolMismatch(message string, found *int) *ProtocolError {
@@ -237,8 +91,4 @@ func protocolMismatch(message string, found *int) *ProtocolError {
 
 func protocolPath(home string) string {
 	return filepath.Join(home, protocolFileName)
-}
-
-func protocolInitPath(home string) string {
-	return filepath.Join(home, protocolInitDir)
 }

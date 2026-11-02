@@ -4,7 +4,7 @@ Conductor lets independent agents work as a team without merging their conversat
 
 Conductor runs inside an operation, not beside the agents. It has no server, broker, scheduler, or resident process. Disk carries the team across calls.
 
-One root protocol declaration gates the shared state. The runtime creates it only for an empty root and validates it before every stateful operation; no record, lock, event, or cursor declares a separate version.
+One root protocol declaration gates the shared state. The runtime declares it on first use of a root and validates it before every stateful operation; no record, lock, event, or cursor declares a separate version.
 
 ## The boundary
 

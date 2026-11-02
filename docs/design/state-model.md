@@ -2,7 +2,7 @@
 
 Conductor's files are coordination state, not a log of an in-memory service. Each operation reads that state, advances it through a guarded transition, and leaves enough evidence for the next operation to continue.
 
-The root `protocol.json` is the compatibility gate for all of that state. Conductor creates it only for an empty root, validates it before constructing operational directories, and revalidates it at every public stateful operation. A nonempty unversioned root and a missing, malformed, or unsupported declaration fail; nothing migrates.
+The root `protocol.json` is the compatibility gate for all of that state. Opening a root that has none declares it, by linking a complete file into place, before constructing operational directories; every public stateful operation revalidates it. A missing, malformed, or unsupported declaration then fails; nothing migrates.
 
 ## Stable identities
 

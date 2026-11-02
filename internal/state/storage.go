@@ -19,17 +19,10 @@ import (
 var portableName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$`)
 
 func writeJSONAtomic(path string, value any) error {
-	return writeJSONAtomicFrom(filepath.Dir(path), ".conductor-*.tmp", path, value)
-}
-
-func writeJSONAtomicFrom(tempDir, pattern, path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(tempDir, 0o700); err != nil {
-		return err
-	}
-	temp, err := os.CreateTemp(tempDir, pattern)
+	temp, err := os.CreateTemp(filepath.Dir(path), ".conductor-*.tmp")
 	if err != nil {
 		return err
 	}

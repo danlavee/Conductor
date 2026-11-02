@@ -32,24 +32,6 @@ func TestNewDeclaresProtocolBeforeStateDirectories(t *testing.T) {
 	}
 }
 
-func TestNewRejectsUnversionedStateWithoutChangingIt(t *testing.T) {
-	home := t.TempDir()
-	legacy := filepath.Join(home, "legacy.json")
-	want := []byte("legacy bytes")
-	if err := os.WriteFile(legacy, want, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := New(home, "")
-	assertProtocolMismatch(t, err, nil)
-	got, readErr := os.ReadFile(legacy)
-	if readErr != nil || string(got) != string(want) {
-		t.Fatalf("legacy state changed: %q, %v", got, readErr)
-	}
-	if _, statErr := os.Stat(protocolInitPath(home)); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("initializer wrote into legacy state: %v", statErr)
-	}
-}
-
 func TestNewRejectsVersionOneWithoutChangingIt(t *testing.T) {
 	home := t.TempDir()
 	want := []byte("{\n  \"version\": 1\n}\n")
@@ -90,46 +72,6 @@ func TestNewRejectsInvalidProtocolDeclarations(t *testing.T) {
 	}
 }
 
-func TestNewRecoversRecognizedInitializationSupport(t *testing.T) {
-	for name, orphan := range map[string]bool{"empty": false, "orphan-temp": true} {
-		t.Run(name, func(t *testing.T) {
-			home := t.TempDir()
-			support := protocolInitPath(home)
-			if err := os.Mkdir(support, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if orphan {
-				if err := os.WriteFile(filepath.Join(support, "protocol-orphan.tmp"), []byte("partial"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, err := New(home, ""); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := os.Stat(protocolPath(home)); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestNewRejectsUnknownInitializationSupport(t *testing.T) {
-	home := t.TempDir()
-	support := protocolInitPath(home)
-	if err := os.Mkdir(support, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	unknown := filepath.Join(support, "unknown")
-	if err := os.WriteFile(unknown, []byte("preserve"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := New(home, "")
-	assertProtocolMismatch(t, err, nil)
-	if data, readErr := os.ReadFile(unknown); readErr != nil || string(data) != "preserve" {
-		t.Fatalf("unknown support entry changed: %q, %v", data, readErr)
-	}
-}
-
 func TestConcurrentNewPublishesOneProtocol(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "state")
 	const clients = 8
@@ -152,8 +94,11 @@ func TestConcurrentNewPublishesOneProtocol(t *testing.T) {
 			t.Fatalf("initializer failed: %v\n%s", err, process.output.String())
 		}
 	}
-	if exists, err := validateExistingProtocol(home); err != nil || !exists {
-		t.Fatalf("protocol validation = %t, %v", exists, err)
+	if err := checkProtocol(home); err != nil {
+		t.Fatalf("protocol validation = %v", err)
+	}
+	if temps, _ := filepath.Glob(filepath.Join(home, ".protocol-*.tmp")); len(temps) != 0 {
+		t.Fatalf("initializers left temporaries: %v", temps)
 	}
 }
 
