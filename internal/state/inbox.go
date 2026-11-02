@@ -22,7 +22,7 @@ func (c *Client) appendInbox(agent string, line []byte) error {
 		_ = release()
 		return err
 	}
-	if err = trimUnterminatedInboxTail(file); err == nil {
+	if err = trimUnterminatedTail(file); err == nil {
 		if _, err = file.Seek(0, io.SeekEnd); err == nil {
 			var written int
 			written, err = file.Write(line)
@@ -139,7 +139,9 @@ func (c *Client) inboxOffsetThrough(agent string, sequence int64) (int64, error)
 	}
 }
 
-func trimUnterminatedInboxTail(file *os.File) error {
+// trimUnterminatedTail drops a crash-torn final line from a newline-delimited
+// file. It does not move the file offset; an appender seeks to the end itself.
+func trimUnterminatedTail(file *os.File) error {
 	info, err := file.Stat()
 	if err != nil || info.Size() == 0 {
 		return err
@@ -169,9 +171,5 @@ func trimUnterminatedInboxTail(file *os.File) error {
 			break
 		}
 	}
-	if err := file.Truncate(size); err != nil {
-		return err
-	}
-	_, err = file.Seek(0, io.SeekEnd)
-	return err
+	return file.Truncate(size)
 }

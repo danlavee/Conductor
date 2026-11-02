@@ -52,19 +52,25 @@ func writeJSONAtomicFrom(tempDir, pattern, path string, value any) error {
 }
 
 func appendJSONL(path string, value any) error {
-	bytes, err := json.Marshal(value)
+	line, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.Write(append(bytes, '\n')); err != nil {
+	if err := trimUnterminatedTail(f); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		return err
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
 		return err
 	}
 	return f.Sync()

@@ -1,7 +1,7 @@
 package state
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -168,23 +168,18 @@ func (c *Client) readHistory(topic string) ([]Publication, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, "history.jsonl")
-	file, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-
+	lines := bytes.Split(data, []byte{'\n'})
 	var result []Publication
-	scanner := bufio.NewScanner(file)
-	const maxTokenSize = 10 * 1024 * 1024
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, maxTokenSize)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	// A publication exists once its newline lands. The final element is either
+	// empty or a crash-torn tail that never got one, which appendJSONL trims.
+	for _, line := range lines[:len(lines)-1] {
 		if len(line) == 0 {
 			continue
 		}
@@ -193,9 +188,6 @@ func (c *Client) readHistory(topic string) ([]Publication, error) {
 			return nil, fmt.Errorf("corrupt history entry: %w", err)
 		}
 		result = append(result, entry)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 	return result, nil
 }

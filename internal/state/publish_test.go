@@ -35,6 +35,45 @@ func TestPublishCreatesAndEditsInOnePublication(t *testing.T) {
 	}
 }
 
+func TestATornHistoryTailIsNeverAPublication(t *testing.T) {
+	client := newTestClient(t, t.TempDir(), "")
+	if _, err := client.Join("writer", "records"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Put("dev/tasks", "kept"); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := client.topicDir("dev/tasks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, err := os.OpenFile(filepath.Join(dir, "history.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := history.WriteString(`{"sequence":99,"top`); err != nil {
+		t.Fatal(err)
+	}
+	history.Close()
+	read := func() []Record {
+		t.Helper()
+		result, err := client.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result.Records
+	}
+	if records := read(); len(records) != 1 {
+		t.Fatalf("records = %#v; want the torn tail ignored", records)
+	}
+	if _, err := client.Put("dev/tasks", "after"); err != nil {
+		t.Fatal(err)
+	}
+	if records := read(); len(records) != 2 || records[1].Text != "after" {
+		t.Fatalf("records = %#v; want the append to replace the torn tail", records)
+	}
+}
+
 func TestEditOfAMissingRecordPublishesNothing(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
 	if _, err := client.Join("writer", "records"); err != nil {
