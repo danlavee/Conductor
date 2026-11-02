@@ -40,7 +40,7 @@ That places the plugin and the executable its hooks name, together, so the two c
 
 Two agents working in the same directory need one more step, because the project file names one identity for every session that opens there. The second agent binds its own session from inside it, with `conductor adapter claude bind <agent>` — see [the adapter's page](integrations/claude-code.md) for how the two bindings rank. Without it both sessions resolve to the same identity, contend for its one stream, and the loser is refused at every turn end while looking exactly like a working install.
 
-Confirm the result with `conductor <agent> status`, which reports `wakeable`, what holds the stream, and which identity this host acts as. `"holder": {"kind": "adapter"}` is the installed result. `registered: true, wakeable: false` means the identity joined but nothing is holding a stream for it — the adapter is missing, not enabled, or the project is unbound.
+Confirm the result with `conductor <agent> status`, which reports `wakeable` and what holds the stream. `"holder": "adapter"` is the installed result. `registered: true, wakeable: false` means the identity joined but nothing is holding a stream for it — the adapter is missing, not enabled, or the project is unbound.
 
 ## Behavior rules
 

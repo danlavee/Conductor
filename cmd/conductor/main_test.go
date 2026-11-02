@@ -443,7 +443,7 @@ func TestOneShotWatchReleasesOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	release, err := second.AcquireWatchOwnership()
+	release, err := second.AcquireWatchOwnership(conductor.HolderSelf)
 	if err != nil {
 		t.Fatalf("one-shot watch did not release ownership: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestContinuousWatchRetainsOwnershipAfterDelivering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if release, err := client.AcquireWatchOwnership(); err == nil {
+	if release, err := client.AcquireWatchOwnership(conductor.HolderSelf); err == nil {
 		_ = release()
 		t.Fatal("a second watcher armed while a live stream owned the identity")
 	}
@@ -538,8 +538,8 @@ func TestStatusReportsRegistrationAndLiveWakeability(t *testing.T) {
 	defer stopWatch(t, watch)
 	waitForOwnership(t, root)
 	watching := readStatus(t, root)
-	if !watching.Registered || !watching.Wakeable || watching.PID != watch.Process.Pid {
-		t.Fatalf("status while watching = %#v, watcher pid = %d", watching, watch.Process.Pid)
+	if !watching.Registered || !watching.Wakeable || watching.Holder != conductor.HolderSelf {
+		t.Fatalf("status while watching = %#v", watching)
 	}
 
 	// The stop is the thing under test here, not just teardown: a dead watcher
@@ -595,10 +595,10 @@ func TestJoinSnapshotReportsWhoWouldRespond(t *testing.T) {
 	}
 	// The roster still carries the registration it always did, alongside the
 	// observation; wakeability is reported beside that record, not stored in it.
-	if watching := byName["a"]; !watching.Wakeable || watching.PID != watch.Process.Pid || watching.Responsibility != "dev" {
-		t.Fatalf("watching agent = %#v, watcher pid = %d", watching, watch.Process.Pid)
+	if watching := byName["a"]; !watching.Wakeable || watching.Holder != conductor.HolderSelf || watching.Responsibility != "dev" {
+		t.Fatalf("watching agent = %#v", watching)
 	}
-	if idle := byName["b"]; idle.Wakeable || idle.PID != 0 {
+	if idle := byName["b"]; idle.Wakeable || idle.Holder != "" {
 		t.Fatalf("agent with no stream = %#v", idle)
 	}
 }
@@ -642,9 +642,9 @@ func startWatch(t *testing.T, root string) (*exec.Cmd, *json.Decoder) {
 // one document. Arming is an act the agent concludes from, and it used to
 // return nothing at all -- leaving the host's pid as the only evidence, which
 // reports that a process exists and not that anything reaches the identity.
-func readArmAcknowledgement(t *testing.T, deliveries *json.Decoder) statusReport {
+func readArmAcknowledgement(t *testing.T, deliveries *json.Decoder) conductor.WatchStatus {
 	t.Helper()
-	var armed statusReport
+	var armed conductor.WatchStatus
 	// Bounded, because the defect this helper exists to catch is the answer
 	// arriving only with the first delivery. On a stream where no delivery is
 	// coming -- the case that matters -- an unbounded decode reports that as a
@@ -659,7 +659,7 @@ func readArmAcknowledgement(t *testing.T, deliveries *json.Decoder) statusReport
 	case <-time.After(10 * time.Second):
 		t.Fatal("watch took the stream and answered nothing before waiting")
 	}
-	if !armed.Wakeable || armed.Holder == nil || armed.Holder.Kind != conductor.HolderSelf {
+	if !armed.Wakeable || armed.Holder != conductor.HolderSelf {
 		t.Fatalf("arm acknowledgement = %#v; want a wakeable identity held by this session", armed)
 	}
 	return armed

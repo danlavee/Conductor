@@ -4,7 +4,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/danlavee/Conductor/internal/adapters/claude"
 	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
@@ -134,94 +133,20 @@ func runAgentCommand(agent, command string, rest []string) error {
 		if len(rest) != 0 {
 			return usageError()
 		}
-		adapter, err := hostAdapter(client.Home)
-		if err != nil {
-			return err
-		}
-		return writeParticipation(client, adapter)
+		return writeStatus(client)
 	default:
 		return usageError()
 	}
 }
 
-// writeParticipation emits the participation answer. Both callers are acts the
-// agent concludes from -- asking, and arming -- and they must answer with the
-// same fact in the same shape, or the agent has two accounts of its own
-// reachability and no way to tell which one it is holding.
-//
-// The host's adapter is resolved by the caller rather than here, because the
-// two differ in when they can afford to fail: asking may fail at any point,
-// while arming must find out whether it can answer before it takes the stream.
-func writeParticipation(client *conductor.Client, adapter *hostAdapterReport) error {
+// writeStatus emits the participation answer. Asking and arming both answer
+// with it, so the agent has one account of its own reachability.
+func writeStatus(client *conductor.Client) error {
 	status, err := client.WatchStatus()
 	if err != nil {
 		return err
 	}
-	return conductor.WriteJSON(os.Stdout, statusReport{WatchStatus: status, Adapter: adapter})
-}
-
-// statusReport is the whole participation answer. WatchStatus carries what the
-// bus knows; an adapter's binding is host-side, and composing it here is what
-// keeps internal/state from importing an adapter to answer a question about
-// one.
-type statusReport struct {
-	conductor.WatchStatus
-	Adapter *hostAdapterReport `json:"adapter,omitempty"`
-}
-
-// hostAdapterReport separates three host states that wakeability alone collapses
-// into two: no adapter here, an adapter holding an identity for this session,
-// and an adapter present that has resolved none -- the last of which is
-// indistinguishable from the first in every field that existed before it.
-type hostAdapterReport struct {
-	Name   string `json:"name"`
-	Agent  string `json:"agent,omitempty"`
-	Source string `json:"source"`
-}
-
-// hostAdapter reports the adapter serving this process, or nothing where none
-// does. Presence is read from the record the adapter's own hook wrote when it
-// served this session, which is the only thing that observes it: the session
-// identifier says a host of this kind is running, which is equally true of one
-// that never installed the plugin, and the skill routes on this field -- so an
-// adapter reported from the environment alone sends an agent to bind an
-// identity nothing will ever read.
-//
-// Every other failure is returned: status exists to be trustworthy when the
-// rest of the bus is not, and an adapter it could not read reported as an
-// adapter that is not there is the exact confusion the field exists to remove.
-func hostAdapter(root string) (*hostAdapterReport, error) {
-	session := os.Getenv(claude.SessionEnvironment)
-	if session == "" {
-		return nil, nil
-	}
-	if err := claude.ValidateSession(session); err != nil {
-		return nil, err
-	}
-	served, err := claude.ServesSession(root, session)
-	if err != nil {
-		return nil, err
-	}
-	if !served {
-		return nil, nil
-	}
-	working, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	project, err := claude.ProjectDirectory(working)
-	if err != nil {
-		return nil, err
-	}
-	binding, err := claude.ResolveBinding(root, session, project)
-	if err != nil {
-		return nil, err
-	}
-	report := &hostAdapterReport{Name: "claude", Agent: binding.Agent, Source: string(binding.Source)}
-	if binding.Source == "" {
-		report.Source = string(claude.NoBinding)
-	}
-	return report, nil
+	return conductor.WriteJSON(os.Stdout, status)
 }
 
 // writeDispatch is the single answer every record verb gives. Taking the whole

@@ -20,7 +20,7 @@ Resolve the directory holding this `SKILL.md` and run the binary inside it by qu
 
 Every example below abbreviates that quoted path to `conductor`. Expand it every time. Do not search `PATH`, substitute another installation, or edit state files directly.
 
-**Settle `<agent>` first.** A wrong name is not a soft error: registration persists on disk under whatever you used, and nothing corrects it later. Where an adapter serves your host it announces the identity it resolved for this session — that announcement is your answer, and it says what to do if the identity is wrong. Without one, ask the user. Never invent a name or infer one from the work you were given.
+**Settle `<agent>` first.** A wrong name is not a soft error: registration persists on disk under whatever you used, and nothing corrects it later. Where an adapter runs on your host it announces the identity it resolved for this session at session start — that announcement is your answer, and it says what to do if the identity is wrong. Without one, ask the user. Never invent a name or infer one from the work you were given.
 
 Three arguments replace step 1 and only step 1: `onboarding` → [onboarding.md](references/onboarding.md), the one-time setup seeding `collaboration/rules`; `maintenance` → [maintenance.md](references/maintenance.md), a recurring upkeep join that keeps the skill current; a request to update or redeploy the skill → [update-skill.md](references/update-skill.md).
 
@@ -46,9 +46,8 @@ conductor <agent> status
 
 **`holder`** — what holds your stream, absent when nothing does.
 
-- `"kind": "adapter"` — the adapter on this host holds it, and keeps holding through idle time, unrelated work, restarts, resumes, and compactions. You start nothing, hold no handle, and restart nothing.
-- `"kind": "self"` — a watcher some session armed holds it, and it lasts exactly one delivery. Arm nothing against it: a second stream for the same identity is refused, and whether that session is yours changes nothing about the next act. Do not read it as reachability you can rely on — it is one delivery from being nobody's.
-- `"kind": "unknown"` — held, by something that did not record what it was. Only an older build writes this. Treat it as held — arm nothing — but claim nothing about how long it lasts.
+- `"adapter"` — the adapter on this host holds it, and keeps holding through idle time, unrelated work, restarts, resumes, and compactions. You start nothing, hold no handle, and restart nothing.
+- `"self"` — a watcher some session armed holds it, and it lasts exactly one delivery. Arm nothing against it: a second stream for the same identity is refused, and whether that session is yours changes nothing about the next act. Do not read it as reachability you can rely on — it is one delivery from being nobody's.
 - absent — nothing would answer a signal addressed to you, and the act is yours:
 
 ```text
@@ -57,14 +56,9 @@ conductor <agent> watch --once
 
 **It answers the moment it arms**, before it waits, with the same document `status` returns — so read the first thing it writes rather than treating a started process as the act being done. Then it blocks for one delivery and exits, writing that delivery after the answer. Start it through your host's background facility, keep the handle, process the delivery, then start it again. Stop it only through that handle, never by process name, wildcard, or unverified PID. Take `--once` every time: without it `watch` streams until killed, and a process that never exits is a delivery that never reaches a turn. Nothing arms the next one for you — each delivery consumes the watcher that carried it.
 
-**`adapter`** — the adapter serving this session, reported only where one has actually run here. **Absent means none has**: nothing on this host acts on your behalf, and there is no binding worth making. It does not decide whether to arm; `holder` does, and an adapter that holds your stream says so there.
-
-- an `agent` with `"source": "session"` or `"project"` — the name this host has for you. If it is not the one you were given, `conductor adapter claude bind <agent>` binds this session to yours; never bind a name you were not given.
-- `"source": "unbound"` — this host has no name for you. Bind yours, so anything here that acts on your behalf acts as you rather than as nobody.
-
 **`subscriptions`** — what reaches you. `collaboration`'s `rules` and `agents` arrive whether or not they appear here; nothing else does. An empty set means those two and nothing more, however many topics the bus holds and however complete your roster entry looks. Being held and being subscribed are separate, and an agent is only reachable with both.
 
-**For everyone else**, the roster `join` hands you carries each agent's `wakeable` and the same `holder` described above, as they stood at that moment; a later join or leave arrives as a change to `collaboration/agents`. Publishing to an agent that is not wakeable still records the publication — nothing is ever lost — but nothing reads it until that agent's next session performs the act. Only `"kind": "adapter"` is likely to still be true later; `self` is one delivery from being false, `unknown` says nothing about how long it lasts, and an entry with no `holder` is not wakeable at all. Prefer an adapter-held agent when the work needs an answer, and say so plainly when you address one that is not.
+**For everyone else**, the roster `join` hands you carries each agent's `wakeable` and the same `holder` described above, as they stood at that moment; a later join or leave arrives as a change to `collaboration/agents`. Publishing to an agent that is not wakeable still records the publication — nothing is ever lost — but nothing reads it until that agent's next session performs the act. Only `"adapter"` is likely to still be true later; `self` is one delivery from being false, and an entry with no `holder` is not wakeable at all. Prefer an adapter-held agent when the work needs an answer, and say so plainly when you address one that is not.
 
 ## 3. Read what you missed
 

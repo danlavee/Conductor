@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/danlavee/Conductor/internal/platform"
@@ -32,24 +31,16 @@ const (
 	// named here so an unsubstituted one can be rejected.
 	SessionPlaceholder = "${CLAUDE_SESSION_ID}"
 
-	// ProjectEnvironment is substituted into a hook's argument list. Hooks only:
-	// a command the model starts uses ProjectDirectory instead.
+	// ProjectEnvironment is substituted into a hook's argument list.
 	ProjectEnvironment = "CLAUDE_PROJECT_DIR"
-
-	// IdentityFile binds a project to a Conductor identity.
-	IdentityFile = ".conductor-agent"
-
-	// byteOrderMark is U+FEFF, spelled as bytes because Go rejects the
-	// character outside a file's first position.
-	byteOrderMark = "\xef\xbb\xbf"
 
 	// WakeExitCode starts a turn in an idle session when a backgrounded hook
 	// exits with it.
 	WakeExitCode = 2
 )
 
-// Outcome is why an arm attempt ended. Only the ones Wakes reports have
-// something for the model; every other is a no-op, not a fault.
+// Outcome is why an adapter command ended. Only Delivered has something for
+// the model; every other is a no-op, not a fault.
 type Outcome string
 
 const (
@@ -61,7 +52,7 @@ const (
 	Released Outcome = "released"
 	// Unregistered means the identity has not joined.
 	Unregistered Outcome = "unregistered"
-	// Unbound means the project names no identity. Reached without the bus.
+	// Unbound means nothing names an identity for this session.
 	Unbound Outcome = "unbound"
 	// NotOwned means teardown found no stream this session was holding.
 	NotOwned Outcome = "not-owned"
@@ -69,49 +60,10 @@ const (
 	Orphaned Outcome = "orphaned"
 )
 
-// Outcome codes start at ten, clear of the exit statuses this adapter
-// produces: 0, 1, and WakeExitCode.
-const (
-	CodeUnbound = 10 + iota
-	CodeDelivered
-	CodeRefused
-	CodeUnregistered
-	CodeReleased
-	CodeNotOwned
-	CodeOrphaned
-)
-
-// Code is the outcome's stable numeric identity. Zero is not an outcome.
-func (o Outcome) Code() int {
-	switch o {
-	case Unbound:
-		return CodeUnbound
-	case Delivered:
-		return CodeDelivered
-	case Refused:
-		return CodeRefused
-	case Unregistered:
-		return CodeUnregistered
-	case Released:
-		return CodeReleased
-	case NotOwned:
-		return CodeNotOwned
-	case Orphaned:
-		return CodeOrphaned
-	}
-	return 0
-}
-
-// Wakes reports whether the outcome wrote something the model has to see.
-// Writing and waking are one decision: stdout reaches the model only on a
-// waking exit.
-func (o Outcome) Wakes() bool { return o == Delivered }
-
 // residency records which session's stream holds an identity, and is the
 // channel teardown speaks through.
 type residency struct {
 	Session  string     `json:"session"`
-	PID      int        `json:"pid"`
 	Target   wakeTarget `json:"target"`
 	Released bool       `json:"released"`
 }
@@ -145,50 +97,6 @@ func (t wakeTarget) alive() bool {
 	return ok && start == t.Start
 }
 
-// ProjectDirectory walks up from startDir to the nearest ancestor holding an
-// IdentityFile, reporting the empty string when none does. It is how a
-// model-started command finds what this host tells only its hooks.
-func ProjectDirectory(startDir string) (string, error) {
-	directory, err := filepath.Abs(startDir)
-	if err != nil {
-		return "", err
-	}
-	for {
-		_, err := os.Stat(filepath.Join(directory, IdentityFile))
-		if err == nil {
-			return directory, nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			return "", nil
-		}
-		directory = parent
-	}
-}
-
-// ResolveIdentity reads the Conductor identity bound to a project. An absent
-// file is silence, not an error -- a project may simply not have opted in --
-// while an empty projectDir is an error, being a caller that never established
-// which project it is in rather than a project without an identity.
-func ResolveIdentity(projectDir string) (string, error) {
-	if strings.TrimSpace(projectDir) == "" {
-		return "", errors.New("no project directory to resolve an identity from")
-	}
-	data, err := os.ReadFile(filepath.Join(projectDir, IdentityFile))
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	// Notepad and PowerShell's Set-Content -Encoding utf8 both add a byte order
-	// mark, and TrimSpace does not consider it whitespace.
-	return strings.TrimSpace(strings.TrimPrefix(string(data), byteOrderMark)), nil
-}
-
 // Arm holds the identity's delivery stream and converts the first delivery
 // into a wake, exiting on it. One process therefore wakes at most once; the
 // event ending the woken turn arms the successor.
@@ -198,7 +106,7 @@ func Arm(ctx context.Context, client *conductor.Client, session string, out io.W
 
 // arm takes the target explicitly so a test can reach the orphaned path.
 func arm(ctx context.Context, client *conductor.Client, session string, out io.Writer, target wakeTarget) (Outcome, error) {
-	release, err := client.AcquireAdapterWatchOwnership("claude", session)
+	release, err := client.AcquireWatchOwnership(conductor.HolderAdapter)
 	if err != nil {
 		var protocol *conductor.ProtocolError
 		if errors.As(err, &protocol) {
@@ -217,7 +125,7 @@ func arm(ctx context.Context, client *conductor.Client, session string, out io.W
 	if err != nil {
 		return "", err
 	}
-	if err := writeResidency(path, residency{Session: session, PID: os.Getpid(), Target: target}); err != nil {
+	if err := writeResidency(path, residency{Session: session, Target: target}); err != nil {
 		return "", err
 	}
 	defer func() { _ = os.Remove(path) }()
@@ -280,11 +188,7 @@ func awaitStreamEnd(ctx context.Context, path, session string, target wakeTarget
 		case <-timer.C:
 		}
 		current, err := readResidency(path)
-		if err != nil || current.Session != session || current.Released {
-			cancel()
-			return
-		}
-		if !target.alive() {
+		if err != nil || current.Session != session || current.Released || !target.alive() {
 			cancel()
 			return
 		}
@@ -299,12 +203,7 @@ func residencyPath(client *conductor.Client) (string, error) {
 	return filepath.Join(adapterDirectory(client.Home), agent+".json"), nil
 }
 
-// writeResidency publishes by rename, so the poller never reads a partial
-// record and mistakes it for a release.
 func writeResidency(path string, value residency) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err

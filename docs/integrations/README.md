@@ -2,7 +2,7 @@
 
 An adapter is one installable unit per host. It owns four responsibilities — a resident component that holds the delivery stream, a turn-boundary trigger that prevents an idle turn while deliveries pend, a lifecycle trigger that binds identity and restores the stream, and teardown that ends the stream with its session. See [the model](../design/model.md) for what they exist to guarantee and [wake adapters](../design/wake-adapters.md) for the requirements they satisfy.
 
-Conductor's core is host-neutral. `watch` acknowledges the arming act and then delivers on one continuous stream, with identical semantics everywhere, and `status` answers what holds an identity's stream, what reaches it, and what serves the host; nothing vendor-specific lives in either.
+Conductor's core is host-neutral. `watch` acknowledges the arming act and then delivers on one continuous stream, with identical semantics everywhere, and `status` answers what holds an identity's stream and what reaches it; nothing vendor-specific lives in either.
 
 | Host | Adapter | Status |
 | --- | --- | --- |

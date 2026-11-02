@@ -130,7 +130,7 @@ func TestStatefulBoundariesDoNotRecreateMissingProtocol(t *testing.T) {
 		"get":          func() error { _, err := client.Get(ReadRequest{Topic: "messages/team", Mode: ReadFull}); return err },
 		"ack-read":     func() error { return client.AcknowledgeRead(ReadResult{}) },
 		"watch":        func() error { _, err := client.Watch(); return err },
-		"watch-owner":  func() error { _, err := client.AcquireWatchOwnership(); return err },
+		"watch-owner":  func() error { _, err := client.AcquireWatchOwnership(HolderSelf); return err },
 		"put":          func() error { _, err := client.Put("messages/team", "text"); return err },
 	}
 	for name, check := range checks {

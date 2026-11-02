@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/danlavee/Conductor/internal/platform"
 )
 
 // A one-shot watcher ends at its first delivery, so waking a publisher for its
@@ -227,24 +225,15 @@ func TestStatusReportsWhatHoldsTheStreamAndWhatReachesTheAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Holder != nil {
-		t.Fatalf("holder = %+v, want none while nothing holds the stream", status.Holder)
+	if status.Wakeable || status.Holder != "" {
+		t.Fatalf("status = %+v, want no holder while nothing holds the stream", status)
 	}
 	if len(status.Subscriptions.TopicGroups) != 0 || len(status.Subscriptions.Topics) != 0 {
 		t.Fatalf("subscriptions = %+v, want empty for an agent that has subscribed to nothing", status.Subscriptions)
 	}
 
-	for _, held := range []struct {
-		acquire func() (func() error, error)
-		want    WatchHolder
-	}{
-		{nomad.AcquireWatchOwnership, WatchHolder{Kind: HolderSelf}},
-		{
-			func() (func() error, error) { return nomad.AcquireAdapterWatchOwnership("claude", "session-1") },
-			WatchHolder{Kind: HolderAdapter, Adapter: "claude", Session: "session-1"},
-		},
-	} {
-		release, err := held.acquire()
+	for _, holder := range []Holder{HolderSelf, HolderAdapter} {
+		release, err := nomad.AcquireWatchOwnership(holder)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -252,8 +241,8 @@ func TestStatusReportsWhatHoldsTheStreamAndWhatReachesTheAgent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if status.Holder == nil || *status.Holder != held.want {
-			t.Fatalf("holder = %+v, want %+v", status.Holder, held.want)
+		if !status.Wakeable || status.Holder != holder {
+			t.Fatalf("status = %+v, want held by %q", status, holder)
 		}
 		if err := release(); err != nil {
 			t.Fatal(err)
@@ -272,36 +261,6 @@ func TestStatusReportsWhatHoldsTheStreamAndWhatReachesTheAgent(t *testing.T) {
 	}
 }
 
-// An owner record written before holders were recorded names a live process and
-// says nothing about what it is. Reporting that as either kind would be an
-// invention; the query has an answer for not knowing.
-func TestStatusReportsAnUnlabelledHolderAsUnknown(t *testing.T) {
-	home := t.TempDir()
-	client := newTestClient(t, home, "")
-	if _, err := client.Join("nomad", "parser"); err != nil {
-		t.Fatal(err)
-	}
-	nomad := newTestClient(t, home, "nomad")
-	_, ownerPath := watchGuardPaths(home, "nomad")
-	pid := os.Getpid()
-	processStart, _ := platform.ProcessStartToken(pid)
-	if err := writeJSONAtomic(ownerPath, map[string]any{
-		"pid": pid, "process_start": processStart,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	status, err := nomad.WatchStatus()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !status.Wakeable {
-		t.Fatal("wakeable = false; a live owner without a holder is still holding")
-	}
-	if status.Holder == nil || status.Holder.Kind != HolderUnknown {
-		t.Fatalf("holder = %+v, want kind %q", status.Holder, HolderUnknown)
-	}
-}
-
 func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 	home := t.TempDir()
 	first := newTestClient(t, home, "")
@@ -310,11 +269,11 @@ func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 	}
 	second := newTestClient(t, home, "a")
 
-	release, err := first.AcquireWatchOwnership()
+	release, err := first.AcquireWatchOwnership(HolderSelf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.AcquireWatchOwnership(); err == nil {
+	if _, err := second.AcquireWatchOwnership(HolderSelf); err == nil {
 		t.Fatal("second watch owner acquired the same agent")
 	} else {
 		assertCode(t, err, "LOCKED")
@@ -326,7 +285,7 @@ func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
-	releaseAgain, err := second.AcquireWatchOwnership()
+	releaseAgain, err := second.AcquireWatchOwnership(HolderSelf)
 	if err != nil {
 		t.Fatal(err)
 	}

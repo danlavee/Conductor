@@ -14,100 +14,6 @@ import (
 	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
-func TestResolveIdentityReadsProjectBinding(t *testing.T) {
-	project := t.TempDir()
-	if agent, err := ResolveIdentity(project); err != nil || agent != "" {
-		t.Fatalf("unbound project = %q, %v; want silence", agent, err)
-	}
-	if err := os.WriteFile(filepath.Join(project, IdentityFile), []byte("planner\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	agent, err := ResolveIdentity(project)
-	if err != nil || agent != "planner" {
-		t.Fatalf("bound project = %q, %v", agent, err)
-	}
-	// A project without an identity file is silence; no project at all is a
-	// caller that never established which project it is in, and answering that
-	// with the same silence is what turned a misconfiguration into a confident
-	// wrong answer about who the agent is.
-	if agent, err := ResolveIdentity(" "); err == nil {
-		t.Fatalf("no project directory = %q, nil; want the caller's own failure, not an answer", agent)
-	}
-}
-
-// TestProjectDirectoryWalksUpFromWhereTheAgentIsWorking covers what a model-run
-// command has instead of the variable the host gives only its hooks. The
-// identity file sits at the project root and the agent works wherever its task
-// lives, so finding one from the other is the whole mechanism.
-func TestProjectDirectoryWalksUpFromWhereTheAgentIsWorking(t *testing.T) {
-	project := t.TempDir()
-	working := filepath.Join(project, "internal", "feature")
-	if err := os.MkdirAll(working, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if found, err := ProjectDirectory(working); err != nil || found != "" {
-		t.Fatalf("directory under a project with no identity file = %q, %v; want no project", found, err)
-	}
-	if err := os.WriteFile(filepath.Join(project, IdentityFile), []byte("planner\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	found, err := ProjectDirectory(working)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if found != project {
-		t.Fatalf("project for %s = %q; want %q", working, found, project)
-	}
-}
-
-// TestResolveIdentityIgnoresAByteOrderMark covers the identity file as it is
-// actually produced on this host: Notepad and PowerShell's Set-Content
-// -Encoding utf8 both prepend U+FEFF. TrimSpace does not treat it as
-// whitespace, so an unstripped mark rides into the agent name and fails
-// validation at every session start -- while the file looks correct in every
-// editor that hides the mark.
-func TestResolveIdentityIgnoresAByteOrderMark(t *testing.T) {
-	project := t.TempDir()
-	if err := os.WriteFile(filepath.Join(project, IdentityFile), []byte("\xef\xbb\xbfplanner\r\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	agent, err := ResolveIdentity(project)
-	if err != nil || agent != "planner" {
-		t.Fatalf("bound project = %q, %v; want %q", agent, err, "planner")
-	}
-}
-
-// TestOutcomeCodesAreStableDistinctAndClearOfExitStatuses pins the numbering,
-// which is the entire point of having it: a code that shifted between builds
-// would silently reclassify every run already recorded under it. The literals
-// are written out rather than derived, so moving one is a test change and not
-// a quiet renumbering.
-func TestOutcomeCodesAreStableDistinctAndClearOfExitStatuses(t *testing.T) {
-	expected := map[Outcome]int{
-		Unbound: 10, Delivered: 11, Refused: 12,
-		Unregistered: 13, Released: 14, NotOwned: 15, Orphaned: 16,
-	}
-	seen := map[int]Outcome{}
-	for outcome, want := range expected {
-		code := outcome.Code()
-		if code != want {
-			t.Errorf("%q code = %d, want %d", outcome, code, want)
-		}
-		// Clear of every exit status the adapter produces -- 0, 1, and the
-		// wake -- so a report code can never be misread as one.
-		if code <= WakeExitCode {
-			t.Errorf("%q code %d collides with an exit status", outcome, code)
-		}
-		if other, taken := seen[code]; taken {
-			t.Errorf("%q and %q share code %d", other, outcome, code)
-		}
-		seen[code] = outcome
-	}
-	if Outcome("invented").Code() != 0 {
-		t.Error("an outcome with no code must report zero rather than guess one")
-	}
-}
-
 func TestArmDeliversPendingWorkAndReleasesOwnership(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
 	client := joined(t, root)
@@ -125,7 +31,7 @@ func TestArmDeliversPendingWorkAndReleasesOwnership(t *testing.T) {
 	// A woken process must not keep the identity: the next turn boundary arms
 	// the successor, and it can only take over if this one truly let go.
 	successor := open(t, root)
-	release, err := successor.AcquireWatchOwnership()
+	release, err := successor.AcquireWatchOwnership(conductor.HolderAdapter)
 	if err != nil {
 		t.Fatalf("a delivered arm kept ownership: %v", err)
 	}
@@ -195,7 +101,7 @@ func exitedProcess(t *testing.T) wakeTarget {
 func TestArmRefusesWhenAnotherStreamOwnsTheIdentity(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
 	client := joined(t, root)
-	release, err := client.AcquireWatchOwnership()
+	release, err := client.AcquireWatchOwnership(conductor.HolderSelf)
 	if err != nil {
 		t.Fatal(err)
 	}

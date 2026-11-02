@@ -1,61 +1,46 @@
 package claude
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/danlavee/Conductor/internal/platform"
 )
 
-// BindingSource names which binding answered, so an agent looking at a wrong
-// identity knows which file to correct.
-type BindingSource string
+// IdentityFile binds a project to a Conductor identity.
+const IdentityFile = ".conductor-agent"
+
+// byteOrderMark is U+FEFF, spelled as bytes because Go rejects the character
+// outside a file's first position. Notepad and PowerShell's Set-Content
+// -Encoding utf8 both write one, and TrimSpace does not remove it.
+const byteOrderMark = "\xef\xbb\xbf"
+
+// Source names which binding answered, so an agent looking at a wrong identity
+// knows which one to correct.
+type Source string
 
 const (
 	// FromSession is a binding an agent made for its own session, and wins as
 	// the more specific claim.
-	FromSession BindingSource = "session"
-
+	FromSession Source = "session"
 	// FromProject is the project's IdentityFile, the ordinary case.
-	FromProject BindingSource = "project"
-
-	// NoBinding is reported when neither answered. It shares its wire value
-	// with the Outcome of the same meaning.
-	NoBinding BindingSource = "unbound"
+	FromProject Source = "project"
+	// NoBinding is reported when neither answered.
+	NoBinding Source = "unbound"
 )
 
-// Binding is the identity a hook is acting for, and where it came from. An
-// empty Agent is a session that opted out, which is silence, not failure.
+// Binding is the identity a session acts for, and where it came from. An empty
+// Agent means nothing binds the session, which is silence, not failure.
 type Binding struct {
-	Agent  string
-	Source BindingSource
-}
-
-// sessionRecord is everything the adapter knows about one host session: that
-// it served the session at all, and which identity that session claims. The
-// two facts share a lifetime and one teardown, so they share a record -- and
-// each writer carries the other's field forward, because SessionStart runs
-// again on resume, compact and fork, over a binding the model made in between.
-//
-// ServedAt is written only by the hook. BoundAt tells a stale binding from a
-// live one, since these outlive any session teardown missed.
-type sessionRecord struct {
-	ServedAt time.Time `json:"served_at"`
-	Agent    string    `json:"agent,omitempty"`
-	BoundAt  time.Time `json:"bound_at"`
+	Agent  string `json:"agent,omitempty"`
+	Source Source `json:"source"`
 }
 
 // ValidateSession rejects a session identifier that cannot be trusted to name
-// one session. Callers name the origin in the wrapping error, since the two
-// ways a session arrives fail differently.
-//
-// The identifier becomes a filename, so the character set is not stylistic.
-// Rejecting beats sanitizing: one that needed rewriting to be safe is not one
-// the host issued.
+// one session. The identifier becomes a filename, and one that needed
+// rewriting to be safe is not one the host issued.
 func ValidateSession(session string) error {
 	if strings.TrimSpace(session) == "" {
 		return errors.New("no session identifier")
@@ -74,179 +59,79 @@ func ValidateSession(session string) error {
 	return nil
 }
 
-// Resolution is what each binding said, before precedence picks between them.
-// The winner alone would hide the act that matters: once a session binding
-// lands, the name the project gave is visible nowhere, so an agent could not
-// see that it bound over an assigned identity.
-type Resolution struct {
-	Session string
-	Project string
-}
-
-// Binding applies precedence.
-func (r Resolution) Binding() Binding {
-	if r.Session != "" {
-		return Binding{Agent: r.Session, Source: FromSession}
-	}
-	if r.Project != "" {
-		return Binding{Agent: r.Project, Source: FromProject}
-	}
-	return Binding{}
-}
-
-// Resolve reads both bindings.
-func Resolve(root, session, projectDir string) (Resolution, error) {
-	var resolution Resolution
-	var err error
-	if resolution.Session, err = SessionIdentity(root, session); err != nil {
-		return Resolution{}, err
-	}
-	if strings.TrimSpace(projectDir) == "" {
-		return resolution, nil
-	}
-	if resolution.Project, err = ResolveIdentity(projectDir); err != nil {
-		return Resolution{}, err
-	}
-	return resolution, nil
-}
-
-// ResolveBinding answers which identity this session acts for, stopping at the
-// session binding when one answers.
-//
-// That is not Resolve with a field ignored. arm and release run at every turn
-// boundary and must not acquire a failure they had no use for: an unreadable
-// project file would otherwise stop delivery for a session that had said who
-// it is. Reporting is where reading both is worth a failure; delivering is not.
+// ResolveBinding answers which identity this session acts for: its own
+// binding when it made one, otherwise the project's IdentityFile.
 func ResolveBinding(root, session, projectDir string) (Binding, error) {
-	agent, err := SessionIdentity(root, session)
+	path, err := sessionPath(root, session)
 	if err != nil {
 		return Binding{}, err
 	}
-	if agent != "" {
-		return Binding{Agent: agent, Source: FromSession}, nil
+	agent, err := readName(path)
+	if err != nil || agent != "" {
+		return Binding{Agent: agent, Source: FromSession}, err
 	}
-	if strings.TrimSpace(projectDir) == "" {
-		return Binding{}, nil
+	if agent, err = readName(filepath.Join(projectDir, IdentityFile)); err != nil || agent != "" {
+		return Binding{Agent: agent, Source: FromProject}, err
 	}
-	if agent, err = ResolveIdentity(projectDir); err != nil {
-		return Binding{}, err
-	}
-	return Resolution{Project: agent}.Binding(), nil
+	return Binding{Source: NoBinding}, nil
 }
 
-// SessionIdentity reads the identity a session bound for itself. Most sessions
-// have none and fall through to the project's, so absence is not an error.
-func SessionIdentity(root, session string) (string, error) {
-	record, err := readSession(root, session)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(record.Agent), nil
-}
-
-// ServesSession answers whether this adapter served this session, from the
-// record its own SessionStart hook wrote.
-//
-// That hook running is the only moment conductor can observe the adapter: the
-// plugin is installed into the host's registry, which is private state nothing
-// here may read, and the session environment says a host of this kind is
-// running -- true whether or not the plugin was ever installed. A session that
-// began under a build too old to record it reads as unserved, which costs that
-// session the adapter and nothing after it: the gap is the absence of a record
-// in a live session, and it goes when the session does.
-func ServesSession(root, session string) (bool, error) {
-	record, err := readSession(root, session)
-	if err != nil {
-		return false, err
-	}
-	return !record.ServedAt.IsZero(), nil
-}
-
-// RecordSession marks that the adapter served this session. Only the hook may
-// call it: a model-started command shares the session and the environment with
-// the hook, and would otherwise assert the very fact the hook exists to
-// observe.
-func RecordSession(root, session string) error {
-	record, err := readSession(root, session)
+// BindSession records that this session acts as agent, outranking the
+// project's IdentityFile for this session alone.
+func BindSession(root, session, agent string) error {
+	path, err := sessionPath(root, session)
 	if err != nil {
 		return err
 	}
-	record.ServedAt = time.Now().UTC()
-	return writeSession(root, session, record)
+	return writeAtomic(path, []byte(agent))
 }
 
-// BindSession records that this session acts as agent, returning whatever it
-// was bound to before so a replaced binding is visible rather than swallowed.
-func BindSession(root, session, agent string) (string, error) {
-	record, err := readSession(root, session)
-	if err != nil {
-		return "", err
-	}
-	previous := strings.TrimSpace(record.Agent)
-	record.Agent, record.BoundAt = agent, time.Now().UTC()
-	return previous, writeSession(root, session, record)
-}
-
-// ForgetSession forgets a session entirely. Teardown runs it for every session,
-// including those that bound nothing, so absence is success -- and a session
-// that only ever recorded being served still has that to clear.
+// ForgetSession drops a session's binding. Teardown runs it for every session,
+// so absence is success.
 func ForgetSession(root, session string) error {
-	if err := ValidateSession(session); err != nil {
+	path, err := sessionPath(root, session)
+	if err != nil {
 		return err
 	}
-	if err := os.Remove(sessionRecordPath(root, session)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
 }
 
-// readSession is the one reader of a session's record, so every caller sees
-// both facts and can write back the one it does not own. Most sessions on most
-// hosts have no record at all, which is silence, not failure.
-func readSession(root, session string) (sessionRecord, error) {
-	if err := ValidateSession(session); err != nil {
-		return sessionRecord{}, err
-	}
-	data, err := os.ReadFile(sessionRecordPath(root, session))
+// readName reads an identity file, where absence is silence rather than an
+// error: most projects and sessions name no identity.
+func readName(path string) (string, error) {
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return sessionRecord{}, nil
+		return "", nil
 	}
 	if err != nil {
-		return sessionRecord{}, err
+		return "", err
 	}
-	var record sessionRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return sessionRecord{}, err
-	}
-	return record, nil
-}
-
-func writeSession(root, session string, record sessionRecord) error {
-	path := sessionRecordPath(root, session)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.Marshal(record)
-	if err != nil {
-		return err
-	}
-	return writeAtomic(path, data)
+	return strings.TrimSpace(strings.TrimPrefix(string(data), byteOrderMark)), nil
 }
 
 // adapterDirectory holds state the protocol has no concept of: which session
-// holds a stream, which sessions this adapter serves, and which identity a
-// session speaks for.
+// holds a stream, and which identity a session speaks for.
 func adapterDirectory(root string) string {
 	return filepath.Join(root, "adapters", "claude")
 }
 
-func sessionRecordPath(root, session string) string {
-	return filepath.Join(adapterDirectory(root), "sessions", session+".json")
+func sessionPath(root, session string) (string, error) {
+	if err := ValidateSession(session); err != nil {
+		return "", err
+	}
+	return filepath.Join(adapterDirectory(root), "sessions", session), nil
 }
 
-// writeAtomic publishes by rename, so a reader never sees a partial record.
+// writeAtomic publishes by rename, so a reader never sees a partial record --
+// which the stream's poller would otherwise mistake for a release.
 func writeAtomic(path string, data []byte) error {
 	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
 	temp, err := os.CreateTemp(directory, ".conductor-*.tmp")
 	if err != nil {
 		return err

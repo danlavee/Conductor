@@ -4,10 +4,12 @@ This file contains only release-specific steps that fall outside Conductor's nor
 
 ## Unreleased
 
-Live cutover and `migrate` are removed. Start a fresh state root: the old one is not carried forward, and the sibling `.<root>-cutover-*` control directory is no longer read. The Claude adapter's `replaced` outcome is gone, so the report codes after it moved down by one: `refused` is now 12 through `orphaned` at 16.
+Live cutover and `migrate` are removed. Start a fresh state root: the old one is not carried forward, and the sibling `.<root>-cutover-*` control directory is no longer read. The Claude adapter's `replaced` outcome is gone.
 
 `redact` and `strike` are removed; retire a record with `edit`. Writes now take an OS file lock per topic instead of a lease and durable transaction, so the state protocol is now 5 and needs a fresh state root.
 
 Watch now wakes from topic history: the event log, inboxes, and global publication index are gone, sequences count per topic, and a delivery is `{"deliveries": [...], "remaining": N}` of plain deltas with no roster. The state protocol is now 6 and needs a fresh state root.
+
+`status` and roster entries report `holder` as the string `adapter` or `self`, with no pid and no `adapter` field. The Claude adapter's stderr reports carry no numeric `code`, `identity` runs only as a hook, and `bind` no longer requires a session the hook has recorded. Reinstall the adapter with `--replace`.
 
 The install manifest is now one digest over the tree, so an installation from an earlier release reads as `unknown`: reinstall both the skill and the adapter with `--replace`. The installer no longer restricts which directory holds `skills/conductor`, and a destination without a manifest is a conflict rather than being moved aside on its own.

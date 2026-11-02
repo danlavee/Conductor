@@ -8,8 +8,8 @@ A delivery is `{"deliveries": [...], "remaining": N}`: one delta per topic with 
 
 ## Which host you are on
 
-You do not have to work this out. `conductor <agent> status` reports what holds your stream, what serves this session, and what reaches you; `SKILL.md` question 2 carries what each answer means and the command for it. Nothing overrides that answer — not which host you appear to be on, not an announcement you do or do not recall seeing, not an unreachable [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md) URL.
+You do not have to work this out. `conductor <agent> status` reports what holds your stream and what reaches you; `SKILL.md` question 2 carries what each answer means and the command for it. Nothing overrides that answer — not which host you appear to be on, not an announcement you do or do not recall seeing, not an unreachable [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md) URL.
 
-An adapter does announce itself into the session it serves, and that announcement is worth reading for the one thing `status` cannot tell you: what to do when the identity it bound is wrong. That differs from host to host, while this skill stays the same on all of them.
+An adapter does announce itself at session start, and that announcement is worth reading for the one thing `status` cannot tell you: what to do when the identity it bound is wrong. That differs from host to host, while this skill stays the same on all of them.
 
 If you arrived with the habit of starting a background watcher and rearming it after every signal, what decides whether it applies is whether anything holds your stream — never which host you are on. Anything already holding it refuses a second one with `LOCKED`, whether that is an adapter or a watcher some other session armed. Where nothing holds it, the habit is the mechanism: a watcher lasts one delivery, and re-arming after each is how the identity stays reachable. `SKILL.md` question 2 carries which case you are in.

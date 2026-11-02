@@ -14,7 +14,7 @@ Each is one hook entry, and all of them run the same executable: `conductor adap
 | --- | --- | --- |
 | Resident component | `adapter claude arm` as a background hook marked `asyncRewake`. It holds the identity's ownership guard, blocks on the stream, prints the delivery to stdout and exits 2; that output reaches the model as a system reminder, waking an idle session with no active turn. | Yes, with this binary |
 | Turn-boundary trigger | A `Stop` hook running the same `arm` command. Arming and the resident component are the same act: it backgrounds without blocking the turn, and every turn end re-arms. | Mechanism yes, this binary no |
-| Lifecycle trigger | A `SessionStart` hook matching `startup`, `resume`, `clear`, `compact`, and `fork`. Runs `identity`, which records that this adapter served the session and announces the binding into context, then `arm`. | Partial — `startup` only |
+| Lifecycle trigger | A `SessionStart` hook matching `startup`, `resume`, `clear`, `compact`, and `fork`. Runs `identity`, which announces the binding into context, then `arm`. | Partial — `startup` only |
 | Teardown | A `SessionEnd` hook running `release`. Not optional: the host awaits outstanding rewake hooks during session teardown, so a stream that ignores session end delays the host's exit. | No |
 
 `release` is scoped to the session that armed the stream, so a second session in the same project cannot tear down the first one's residency. It reaches the stream through an adapter-owned residency record under `<root>/adapters/claude/` — outside the protocol's own state, which has no concept of a host session and should not acquire one.
@@ -34,15 +34,7 @@ They are not interchangeable. `CLAUDE_SESSION_ID` is *not* an environment variab
 
 ## Whether an adapter is here at all
 
-The skill routes on `status`'s `adapter` field: an agent that sees one binds to it and leaves the stream to it, an agent that sees none owns its own reachability. So the field has to be able to say no, and on this host it could not.
-
-Presence was read from `CLAUDE_CODE_SESSION_ID`, which says a Claude Code session is running — equally true of a host that never installed the plugin, and the skill and the plugin are separate installs with the onboarding path installing only the skill. Every such session was told an adapter served it, bound an identity nothing would read, and was told not to arm on the strength of it.
-
-The plugin lives in the host's registry, which is private state nothing here may read, so installation cannot be observed. The adapter *running* can be: the `SessionStart` `identity` hook records the session it served, and `status` reports an adapter only for a session carrying that record. Nothing else may write it — a model-run `conductor adapter claude identity` reads the same environment and would be asserting the very fact the hook exists to observe. `bind` refuses in a session with no such record for the same reason it refuses an unregistered name.
-
-Teardown clears the record for every served session, including the ones that bound nothing — which used to leave the release path at "nothing bound here" before it cleared anything at all.
-
-A session that began under a build too old to record it reads as unserved and owns its own stream for the rest of its life. That is the whole cost, and it is nothing to migrate: the gap is a missing record in a live session, and it goes when the session does.
+The plugin lives in the host's registry, which is private state nothing here may read, so installation cannot be observed — and the environment a session exports says a Claude Code session is running, not that the plugin is. What the agent observes instead is the adapter's own work: the `SessionStart` announcement in its context, and `"holder": "adapter"` in `status` once the stream is held. A session that sees neither owns its own reachability.
 
 ## Two bindings, and which wins
 
@@ -55,7 +47,7 @@ The session binding wins because it is the more specific claim: a session that h
 
 This is what lets several agents work in one directory. One identity holds one stream, so without a per-session binding a second session in the same project resolves to the same identity, loses the race for it, and is refused at every turn end while looking, from the outside, exactly like a working install. `identity` reports which of the two bindings answered, so a session acting as the wrong agent shows which file to correct.
 
-`bind` is the one adapter command the model runs itself, and the only one with preconditions: the identity is on the roster, and the session is one a hook has served. `.conductor-agent` is written by hand before an agent joins and so cannot require registration, while `bind` is run by an agent that has joined and inside a session that has already started. Both refusals buy the same thing — an unknown name and an unserved session each write a record nothing ever reads, silently, for the life of the session.
+`bind` is the one adapter command the model runs itself, and the only one with a precondition: the identity is on the roster. `.conductor-agent` is written by hand before an agent joins and so cannot require registration, while `bind` is run by an agent that has joined; binding an unregistered name would write a record that only ever arms `unregistered`.
 
 Arming when a live stream already holds the identity is refused and exits cleanly. That is what makes it safe for session start and every turn end to arm blindly, and the property the design rests on: every path that could lose the stream has an event that restores it, and no restore attempt can double-deliver.
 
@@ -67,19 +59,19 @@ An identity that has not joined is reported and exits cleanly, since arming agai
 
 ## Reading a run's result
 
-Every non-waking run prints one JSON report to stderr carrying a stable `code`, so a run can be classified numerically instead of by matching prose:
+Every `arm` or `release` that does not deliver prints one JSON report to stderr naming its `outcome`; a delivery reports `delivered` only when a failure follows it:
 
-| Code | Outcome | Meaning |
-| --- | --- | --- |
-| 10 | `unbound` | The project names no identity. The adapter is installed and opted out. |
-| 11 | `delivered` | Work reached the model. Exits with the wake code. |
-| 12 | `refused` | Another stream already owns the identity. The ordinary result of a blind re-arm. |
-| 13 | `unregistered` | The identity has not joined, so there is nothing to hold a stream for. |
-| 14 | `released` | The stream this session was holding ended. Reported under `release` when teardown ends it, and under `arm` when a blocked stream is cancelled by the teardown of the session that armed it — so read the outcome, not the command it arrived under. |
-| 15 | `not-owned` | Teardown found no stream this session owned. |
-| 16 | `orphaned` | The session this stream exists to wake is gone. The stream ends holding nothing and acknowledging nothing. |
+| Outcome | Meaning |
+| --- | --- |
+| `unbound` | The project names no identity. The adapter is installed and opted out. |
+| `delivered` | Work reached the model. Exits with the wake code. |
+| `refused` | Another stream already owns the identity. The ordinary result of a blind re-arm. |
+| `unregistered` | The identity has not joined, so there is nothing to hold a stream for. |
+| `released` | The stream this session was holding ended. Reported under `release` when teardown ends it, and under `arm` when a blocked stream is cancelled by the teardown of the session that armed it — so read the outcome, not the command it arrived under. |
+| `not-owned` | Teardown found no stream this session owned. |
+| `orphaned` | The session this stream exists to wake is gone. The stream ends holding nothing and acknowledging nothing. |
 
-The codes start at ten to stay clear of the process exit statuses, a separate and much smaller vocabulary: `0` for nothing to say, `1` for a genuine failure, `2` for a wake. The exit status deliberately does not distinguish outcomes, because this host reads any status other than `0` and `2` as a hook failure and shows its stderr to the user — so giving `refused` or `unregistered` a status of its own would report an error at every turn end that armed correctly. The blind re-arm has to be able to decline without looking broken, which is exactly when it is working.
+The exit status is a separate and much smaller vocabulary: `0` for nothing to say, `1` for a genuine failure, `2` for a wake. It deliberately does not distinguish outcomes, because this host reads any status other than `0` and `2` as a hook failure and shows its stderr to the user — so giving `refused` or `unregistered` a status of its own would report an error at every turn end that armed correctly. The blind re-arm has to be able to decline without looking broken, which is exactly when it is working.
 
 ## Constraints that shape the implementation
 
@@ -101,9 +93,9 @@ Post-compaction state must be re-announced through `SessionStart` with matcher `
 
 Identity binding is `.conductor-agent`, a project-owned file. Plugin user-configuration is deliberately not readable from project settings, so it cannot carry a per-project identity. A project with no such file loads the adapter and does nothing, which is the correct behaviour for a project that has not opted in.
 
-**`${CLAUDE_PROJECT_DIR}` is a hook's answer and only a hook's.** The host substitutes it into hook arguments and does not export it to processes the model starts, so a command an agent runs reads it as empty — every session, every host. Resolving identity from it there reported `unbound` for a directory whose `.conductor-agent` named exactly that agent, and the documented remedy for `unbound` binds a session identity that outranks the project's: a silent wrong answer that invites the act which makes it permanent. So the two callers use two sources, neither falling back to the other. A hook is owed the variable and fails loudly without it, its own working directory being nothing in particular. A model-run `identity` walks up from its working directory for `.conductor-agent` — the same fact the host would have supplied.
+**`${CLAUDE_PROJECT_DIR}` is a hook's answer and only a hook's.** The host substitutes it into hook arguments and does not export it to processes the model starts, so `identity` runs only as a hook, takes `--session` like the others, and fails loudly without the project directory rather than reading its own working directory, which is nothing in particular.
 
-`identity` reports `project` and `root` — the directory it found and the state root it read — on every outcome, `unbound` included. Without them `source` is a conclusion the caller cannot check: "nothing names you" and "I could not see what names you" are the same output, they are different problems, and `bind` overwrites the `source` that would have distinguished them. It reports no stream state: an announcement says who you are, never how you are, and there is nothing an agent would do differently either way.
+`identity` reports `agent`, `source`, and `advice` on how to bind a different one. It reports no stream state: an announcement says who you are, never how you are.
 
 One identity holds one stream, so two sessions sharing an identity contend for it: the first to arm holds it, the second is refused every time, and a delivery wakes whichever won. The second stays reachable — nothing is lost — but is not independently wakeable. Per-session bindings are how two sessions in one project avoid sharing an identity; making one identity wake several sessions is not something this host's mechanism supports.
 

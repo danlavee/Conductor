@@ -10,72 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danlavee/Conductor/internal/adapters/claude"
 	conductor "github.com/danlavee/Conductor/internal/state"
 )
-
-// TestStatusReportsWhatServesThisHost covers the third host state. Wakeability
-// answers whether a stream is held; it cannot say whether an adapter is
-// standing by to hold one, and an agent that reads "not wakeable" as "no
-// adapter here" arms a watcher the adapter collides with when it takes the
-// identity. All three states have to be distinguishable in the answer.
-func TestStatusReportsWhatServesThisHost(t *testing.T) {
-	root := t.TempDir()
-	working := workInTemporaryDirectory(t)
-
-	t.Setenv(claude.SessionEnvironment, "")
-	report, err := hostAdapter(root)
-	if err != nil || report != nil {
-		t.Fatalf("adapter = %+v, %v; want none where no adapter serves the host", report, err)
-	}
-
-	// A session identifier and no adapter: the ordinary state of this host,
-	// since the skill and the plugin are separate installs. It has to read as
-	// no adapter, or the skill routes an agent into binding a name nothing
-	// reads.
-	t.Setenv(claude.SessionEnvironment, "session-1")
-	report, err = hostAdapter(root)
-	if err != nil || report != nil {
-		t.Fatalf("adapter = %+v, %v; want none where only the session says so", report, err)
-	}
-
-	// An adapter is here and holds no identity for this session. This is the
-	// state that reads identically to "no adapter" in wakeability alone.
-	if err := claude.RecordSession(root, "session-1"); err != nil {
-		t.Fatal(err)
-	}
-	report, err = hostAdapter(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report == nil || report.Name != "claude" || report.Agent != "" || report.Source != string(claude.NoBinding) {
-		t.Fatalf("adapter = %+v; want an unbound claude adapter", report)
-	}
-
-	if err := os.WriteFile(filepath.Join(working, claude.IdentityFile), []byte("planner\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	report, err = hostAdapter(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report == nil || report.Agent != "planner" || report.Source != string(claude.FromProject) {
-		t.Fatalf("adapter = %+v; want the project's identity", report)
-	}
-
-	// A session binding outranks the project, and the reported source has to
-	// say which one answered -- they are undone differently.
-	if _, err := claude.BindSession(root, "session-1", "reviewer"); err != nil {
-		t.Fatal(err)
-	}
-	report, err = hostAdapter(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report == nil || report.Agent != "reviewer" || report.Source != string(claude.FromSession) {
-		t.Fatalf("adapter = %+v; want the session's identity", report)
-	}
-}
 
 // TestArmingAnswersBeforeItWaits covers the act an agent used to conclude from
 // with nothing in hand. Starting the watcher backgrounds a process and hands
@@ -99,7 +35,7 @@ func TestArmingAnswersBeforeItWaits(t *testing.T) {
 		t.Fatalf("watch: %v: %s", err, stderr)
 	}
 	armed := readArmAcknowledgement(t, json.NewDecoder(bytes.NewReader(stdout)))
-	if !armed.Registered || armed.PID == 0 {
+	if !armed.Registered || armed.Holder != conductor.HolderSelf {
 		t.Fatalf("arm acknowledgement = %#v; want the registration and the holding process", armed)
 	}
 	// The other half of the same answer, and the one an agent cannot get from
@@ -233,118 +169,4 @@ func TestAFailedWaitStillCarriesItsArmAnswer(t *testing.T) {
 	if !strings.Contains(stderr.String(), "NOT_FOUND") {
 		t.Fatalf("watch stderr = %s; want the failure an absent identity earns", stderr.String())
 	}
-}
-
-// TestArmingRefusesRatherThanArmingBlind covers what arming does when it cannot
-// read the host. Composing the adapter can fail -- an unusable session
-// identifier is enough -- and the tempting shape is to shrug it off and arm
-// anyway, which is how a watcher collides with an adapter that later claims the
-// identity. The refusal has to be the whole command: nothing on stdout, and the
-// identity left exactly as unheld as it was.
-func TestArmingRefusesRatherThanArmingBlind(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "runtime-state")
-	if _, _, err := runCLIHelper(os.Args[0], root, "", "nomad", "join", "parser"); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(claude.SessionEnvironment, "not/a/session")
-	stdout, stderr, err := runCLIHelper(os.Args[0], root, t.TempDir(), "nomad", "watch", "--once")
-	if err == nil || !strings.Contains(string(stderr), "INVALID") {
-		t.Fatalf("watch = %s / %s, %v; want the refusal an unusable session earns", stdout, stderr, err)
-	}
-	if len(stdout) != 0 {
-		t.Fatalf("watch wrote %s; a refused arm answers nothing", stdout)
-	}
-
-	// The refusal has to leave the stream untaken. A watcher that acquired
-	// ownership and then failed would report here as wakeable with a pid whose
-	// process is already gone.
-	t.Setenv(claude.SessionEnvironment, "")
-	stdout, stderr, err = runCLIHelper(os.Args[0], root, t.TempDir(), "nomad", "status")
-	if err != nil {
-		t.Fatalf("status: %v: %s", err, stderr)
-	}
-	var report statusReport
-	if err := json.Unmarshal(stdout, &report); err != nil {
-		t.Fatal(err)
-	}
-	if report.Wakeable || report.Holder != nil {
-		t.Fatalf("status = %s; want an identity nothing holds after the refusal", stdout)
-	}
-}
-
-// TestStatusCommandCarriesTheAdapterToStdout is the wiring test. Composing the
-// host's binding is done at this layer precisely so internal/state does not
-// import an adapter, which means nothing below this layer can prove the
-// composition is still attached -- and a status answer that silently dropped it
-// would read exactly like a host with no adapter, the confusion the field
-// exists to remove.
-func TestStatusCommandCarriesTheAdapterToStdout(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "runtime-state")
-	t.Setenv(claude.SessionEnvironment, "session-1")
-	if err := claude.RecordSession(root, "session-1"); err != nil {
-		t.Fatal(err)
-	}
-	stdout, stderr, err := runCLIHelper(os.Args[0], root, t.TempDir(), "nomad", "status")
-	if err != nil {
-		t.Fatalf("status: %v: %s", err, stderr)
-	}
-	var report struct {
-		Adapter *hostAdapterReport `json:"adapter"`
-	}
-	if err := json.Unmarshal(stdout, &report); err != nil {
-		t.Fatal(err)
-	}
-	if report.Adapter == nil || report.Adapter.Name != "claude" || report.Adapter.Source != string(claude.NoBinding) {
-		t.Fatalf("status = %s; want the unbound adapter serving this host", stdout)
-	}
-}
-
-// TestStatusOmitsTheAdapterRatherThanReportingAnEmptyOne pins the wire shape the
-// skill routes on: absent means no adapter, and a present-but-empty object
-// would be a fourth state nothing produces and no rule covers.
-func TestStatusOmitsTheAdapterRatherThanReportingAnEmptyOne(t *testing.T) {
-	encoded := encodeStatus(t, statusReport{})
-	if strings.Contains(encoded, "adapter") {
-		t.Fatalf("status = %s; want no adapter key when nothing serves the host", encoded)
-	}
-	encoded = encodeStatus(t, statusReport{Adapter: &hostAdapterReport{Name: "claude", Source: string(claude.NoBinding)}})
-	if !strings.Contains(encoded, `"source": "unbound"`) {
-		t.Fatalf("status = %s; want the unbound source reported", encoded)
-	}
-}
-
-func encodeStatus(t *testing.T, report statusReport) string {
-	t.Helper()
-	var encoded strings.Builder
-	if err := conductor.WriteJSON(&encoded, report); err != nil {
-		t.Fatal(err)
-	}
-	return encoded.String()
-}
-
-// workInTemporaryDirectory moves the process somewhere with no identity file
-// above it, so the test observes what it wrote rather than the repository the
-// suite happens to run in.
-func workInTemporaryDirectory(t *testing.T) string {
-	t.Helper()
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	working := t.TempDir()
-	if err := os.Chdir(working); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.Chdir(previous); err != nil {
-			t.Fatal(err)
-		}
-	})
-	// TempDir hands back a path that may traverse a symlink on this host, and
-	// the identity walk resolves what it is given -- so compare like with like.
-	resolved, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return resolved
 }
