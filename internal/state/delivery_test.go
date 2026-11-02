@@ -31,16 +31,19 @@ func TestContentCarriesChangedRecordsAndAcknowledgesDelta(t *testing.T) {
 		t.Fatal(err)
 	}
 	summary := watchOne(t, reader)
-	delivery, err := reader.ResolveDelivery(summary)
-	if err != nil || delivery.Delta == nil || len(delivery.Delta.Publications) != 1 || len(delivery.Delta.Publications[0].Records) != 2 {
-		t.Fatalf("delivery = %#v, error = %v", delivery, err)
+	batch, err := reader.ResolveBatch([]Summary{summary})
+	if err != nil || len(batch.Deliveries) != 1 {
+		t.Fatalf("batch = %#v, error = %v", batch, err)
+	}
+	if delta := batch.Deliveries[0].Delta; delta == nil || len(delta.Publications) != 1 || len(delta.Publications[0].Records) != 2 {
+		t.Fatalf("delivery = %#v", batch.Deliveries[0])
 	}
 	cursorWrites := 0
 	reader.saveCursorFn = func(agent string, cursor Cursor) error {
 		cursorWrites++
 		return writeJSONAtomic(filepath.Join(reader.Home, "cursors", agent+".json"), cursor)
 	}
-	if err := reader.AcknowledgeDelivery(delivery); err != nil {
+	if err := reader.AcknowledgeBatch(batch); err != nil {
 		t.Fatal(err)
 	}
 	if cursorWrites != 1 {
@@ -85,7 +88,7 @@ func TestFailedDeliveryCursorWriteLeavesSummaryAndDeltaReplayable(t *testing.T) 
 	if len(summaries) != 1 {
 		t.Fatalf("summaries = %#v, want one", summaries)
 	}
-	delivery, err := client.ResolveDelivery(summaries[0])
+	batch, err := client.ResolveBatch(summaries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +96,7 @@ func TestFailedDeliveryCursorWriteLeavesSummaryAndDeltaReplayable(t *testing.T) 
 	client.saveCursorFn = func(string, Cursor) error {
 		return saveFailure
 	}
-	if err := client.AcknowledgeDelivery(delivery); !errors.Is(err, saveFailure) {
+	if err := client.AcknowledgeBatch(batch); !errors.Is(err, saveFailure) {
 		t.Fatalf("error = %v, want save failure", err)
 	}
 	client.saveCursorFn = nil
@@ -228,11 +231,11 @@ func resolveJoinRoster(t *testing.T, client *Client) []RosterEntry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, summary := range summaries {
-		delivery, err := client.ResolveDelivery(summary)
-		if err != nil {
-			t.Fatal(err)
-		}
+	batch, err := client.ResolveBatch(summaries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, delivery := range batch.Deliveries {
 		if len(delivery.Roster) != 0 {
 			return delivery.Roster
 		}
@@ -495,9 +498,7 @@ func TestBatchPersistsTopicOnlyProgressWithoutAcknowledgingRemainingSummary(t *t
 	if len(all) != 2 {
 		t.Fatalf("summaries = %#v, want two", all)
 	}
-	if err := reader.AcknowledgeSummary(all[0]); err != nil {
-		t.Fatal(err)
-	}
+	acknowledgeSignal(t, reader, all[0])
 	pending, err := reader.Watch()
 	if err != nil {
 		t.Fatal(err)
@@ -536,40 +537,6 @@ func TestBatchPersistsTopicOnlyProgressWithoutAcknowledgingRemainingSummary(t *t
 	}
 	if secondBatch.Remaining != 0 || len(secondBatch.Deliveries) != 1 || secondBatch.Deliveries[0].Delta == nil || len(secondBatch.Deliveries[0].Delta.Publications) != 1 {
 		t.Fatalf("second batch = %#v", secondBatch)
-	}
-}
-
-func TestAcknowledgeBatchSupportsDeliveryWithoutCoverageMetadata(t *testing.T) {
-	home := t.TempDir()
-	client := newTestClient(t, home, "")
-	if _, err := client.Join("reader", "review"); err != nil {
-		t.Fatal(err)
-	}
-	// A peer's registration supplies the summary to acknowledge: an agent's
-	// own join never reaches its own inbox.
-	writer := newTestClient(t, home, "")
-	if _, err := writer.Join("writer", "dev"); err != nil {
-		t.Fatal(err)
-	}
-	summaries, err := client.Watch()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(summaries) == 0 {
-		t.Fatal("watch returned no summaries")
-	}
-	summary := summaries[0]
-
-	batch := BatchDelivery{Deliveries: []Delivery{{Summary: summary}}}
-	if err := client.AcknowledgeBatch(batch); err != nil {
-		t.Fatal(err)
-	}
-	cursor, err := client.loadCursor("reader")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !indexAcknowledged(cursor.SummaryRanges, summary.Sequence) {
-		t.Fatalf("summary was not acknowledged: %#v", cursor)
 	}
 }
 

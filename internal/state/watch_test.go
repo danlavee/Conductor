@@ -84,9 +84,7 @@ func TestWatchAcknowledgementReplaysBeforeCheckpoint(t *testing.T) {
 		t.Fatalf("unacknowledged batch was not replayed identically: first=%#v replay=%#v", first, replayed)
 	}
 	for _, summary := range first {
-		if err := a.AcknowledgeSummary(summary); err != nil {
-			t.Fatal(err)
-		}
+		acknowledgeSignal(t, a, summary)
 	}
 	if _, err := a.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 500, Agent: "b"}, Recipients: []string{"a"}}); err != nil {
 		t.Fatal(err)
@@ -125,9 +123,7 @@ func TestWatchReturnsAllPendingSignalsInOneBatch(t *testing.T) {
 		}
 	}
 	for _, summary := range summaries {
-		if err := client.AcknowledgeSummary(summary); err != nil {
-			t.Fatal(err)
-		}
+		acknowledgeSignal(t, client, summary)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -153,9 +149,7 @@ func TestWatchDoesNotLoseLateLowerIndex(t *testing.T) {
 	if higher.Sequence != 103 {
 		t.Fatalf("higher signal = %#v", higher)
 	}
-	if err := client.AcknowledgeSummary(higher); err != nil {
-		t.Fatal(err)
-	}
+	acknowledgeSignal(t, client, higher)
 	if _, err := client.writeEvent(Event{Summary: Summary{Type: "update", Topic: "dev/tasks", Sequence: 102, Agent: "b"}, Recipients: recipients}); err != nil {
 		t.Fatal(err)
 	}
@@ -186,9 +180,7 @@ func TestWatchSinceReturnsOnlyHigherIndexes(t *testing.T) {
 	if len(summaries) != 1 || summaries[0].Sequence != 3 {
 		t.Fatalf("watch since 2 returned %#v", summaries)
 	}
-	if err := client.AcknowledgeSummary(summaries[0]); err != nil {
-		t.Fatal(err)
-	}
+	acknowledgeSignal(t, client, summaries[0])
 	cursor, err := client.loadCursor("a")
 	if err != nil {
 		t.Fatal(err)
@@ -200,20 +192,6 @@ func TestWatchSinceReturnsOnlyHigherIndexes(t *testing.T) {
 	defer cancel()
 	if _, err := client.WatchContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("default watch replayed a discarded lower index: %v", err)
-	}
-}
-
-func TestAcknowledgeSummaryRejectsInvalidSDKInput(t *testing.T) {
-	home := t.TempDir()
-	client := newTestClient(t, home, "")
-	if _, err := client.Join("a", "development"); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.AcknowledgeSummary(Summary{}); err == nil {
-		t.Fatal("invalid summary acknowledgement succeeded")
-	}
-	if _, err := os.Stat(filepath.Join(home, "cursors", "a.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("invalid acknowledgement mutated cursor: %v", err)
 	}
 }
 
@@ -280,9 +258,7 @@ func TestWatchSkipsCorruptInboxLine(t *testing.T) {
 			if watched.Sequence != summary.Sequence {
 				t.Fatalf("watch = %#v", watched)
 			}
-			if err := client.AcknowledgeSummary(watched); err != nil {
-				t.Fatal(err)
-			}
+			acknowledgeSignal(t, client, watched)
 		})
 	}
 }
@@ -322,9 +298,7 @@ func TestWatchReconcilesJournalWhenInboxEndsWithTruncatedLine(t *testing.T) {
 	if watched.Sequence != index {
 		t.Fatalf("watch = %#v", watched)
 	}
-	if err := client.AcknowledgeSummary(watched); err != nil {
-		t.Fatal(err)
-	}
+	acknowledgeSignal(t, client, watched)
 	next, err := client.publishEvent("update", "dev/tasks", "b", []string{"a"})
 	if err != nil {
 		t.Fatal(err)

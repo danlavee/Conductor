@@ -10,20 +10,14 @@ type Delivery struct {
 	Summary Summary       `json:"summary"`
 	Roster  []RosterEntry `json:"roster,omitempty"`
 	Delta   *ReadResult   `json:"delta,omitempty"`
-	// coverageKnown distinguishes an intentionally empty coverage set produced
-	// by ResolveBatch from a delivery constructed outside batch resolution.
+	// coveredSummaries are the signals this delivery settles; only
+	// ResolveBatch sets them, so a delivery built elsewhere settles nothing.
 	coveredSummaries []Summary
-	coverageKnown    bool
 }
 
-func (c *Client) ResolveDelivery(summary Summary) (Delivery, error) {
-	return c.resolveDeliveryWithLimit(summary, 0)
-}
-
-// resolveDeliveryWithLimit is ResolveDelivery with an explicit record-count
-// cap on the resolved delta. limit must be positive or zero; zero means
-// "unset, use Get's own default cap" -- the same convention Get itself uses.
-func (c *Client) resolveDeliveryWithLimit(summary Summary, limit int) (Delivery, error) {
+// resolveDelivery resolves one summary's content, capping an update's delta
+// at limit records.
+func (c *Client) resolveDelivery(summary Summary, limit int) (Delivery, error) {
 	delivery := Delivery{Summary: summary}
 	switch summary.Type {
 	case "join", "leave":
@@ -40,24 +34,6 @@ func (c *Client) resolveDeliveryWithLimit(summary Summary, limit int) (Delivery,
 		delivery.Delta = &result
 	}
 	return delivery, nil
-}
-
-// AcknowledgeDelivery advances both the summary and content cursors after the
-// downstream consumer accepts the delivery.
-func (c *Client) AcknowledgeDelivery(delivery Delivery) error {
-	agent, offset, err := c.prepareSummaryAcknowledgment(delivery.Summary)
-	if err != nil {
-		return err
-	}
-
-	cursorSlot, throughSequence := deliveryCursorAdvance(delivery)
-
-	return c.updateCursor(agent, func(cursor *Cursor) {
-		applySummaryAcknowledgment(cursor, delivery.Summary, offset)
-		if throughSequence > cursor.Topics[cursorSlot] {
-			cursor.Topics[cursorSlot] = throughSequence
-		}
-	})
 }
 
 // deliveryCursorAdvance reports how far the topic cursor may move for an
@@ -107,7 +83,7 @@ func (c *Client) ResolveBatch(summaries []Summary) (BatchDelivery, error) {
 			break
 		}
 		target := highestSequenceSummary(group)
-		delivery, err := c.resolveDeliveryWithLimit(target, budget)
+		delivery, err := c.resolveDelivery(target, budget)
 		if err != nil {
 			return BatchDelivery{}, err
 		}
@@ -126,16 +102,14 @@ func (c *Client) ResolveBatch(summaries []Summary) (BatchDelivery, error) {
 // summaries it was asked to cover, since Get's own cap may have stopped
 // short of the group's highest sequence. It points the delivery at whichever
 // covered member Get actually delivered through -- never the group's overall
-// highest -- so AcknowledgeDelivery can never mark a sequence read whose
-// content wasn't actually included, and records the covered set on the
-// delivery for AcknowledgeBatch. It returns the summaries left uncovered.
+// highest -- and records the covered set on the delivery for
+// AcknowledgeBatch. It returns the summaries left uncovered.
 func finalizeGroupDelivery(delivery Delivery, group []Summary, reader string, cursor Cursor) (Delivery, []Summary) {
 	covered, uncovered := splitCoveredSummaries(group, delivery, reader, cursor)
 	if delivery.Delta != nil && len(covered) > 0 {
 		delivery.Summary = covered[len(covered)-1]
 	}
 	delivery.coveredSummaries = covered
-	delivery.coverageKnown = true
 	return delivery, uncovered
 }
 
@@ -152,11 +126,7 @@ func (c *Client) AcknowledgeBatch(batch BatchDelivery) error {
 	var acknowledgments []summaryAcknowledgment
 	sequenceByCursorSlot := map[string]int64{}
 	for _, delivery := range batch.Deliveries {
-		summaries := delivery.coveredSummaries
-		if !delivery.coverageKnown {
-			summaries = []Summary{delivery.Summary}
-		}
-		for _, summary := range summaries {
+		for _, summary := range delivery.coveredSummaries {
 			currentAgent, offset, err := c.prepareSummaryAcknowledgment(summary)
 			if err != nil {
 				return err

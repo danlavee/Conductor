@@ -95,9 +95,20 @@ func drainAllPending(t *testing.T, client *Client) {
 			t.Fatal(err)
 		}
 		for _, summary := range summaries {
-			if err := client.AcknowledgeSummary(summary); err != nil {
-				t.Fatal(err)
-			}
+			acknowledgeSignal(t, client, summary)
 		}
+	}
+}
+
+// acknowledgeSignal settles only a summary's wake signal, leaving the topic
+// cursor where it was, for tests of the signal path alone.
+func acknowledgeSignal(t *testing.T, client *Client, summary Summary) {
+	t.Helper()
+	agent, offset, err := client.prepareSummaryAcknowledgment(summary)
+	if err == nil {
+		err = client.updateCursor(agent, func(cursor *Cursor) { applySummaryAcknowledgment(cursor, summary, offset) })
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 }

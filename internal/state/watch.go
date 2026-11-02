@@ -114,18 +114,6 @@ func (c *Client) WatchSinceContext(ctx context.Context, since int64) ([]Summary,
 	}
 }
 
-// AcknowledgeSummary advances the wake cursor after its consumer accepts the
-// summary. A crash before this checkpoint causes replay, never silent loss.
-func (c *Client) AcknowledgeSummary(summary Summary) error {
-	agent, offset, err := c.prepareSummaryAcknowledgment(summary)
-	if err != nil {
-		return err
-	}
-	return c.updateCursor(agent, func(cursor *Cursor) {
-		applySummaryAcknowledgment(cursor, summary, offset)
-	})
-}
-
 func (c *Client) prepareSummaryAcknowledgment(summary Summary) (string, int64, error) {
 	if err := c.validateProtocol(); err != nil {
 		return "", 0, err
