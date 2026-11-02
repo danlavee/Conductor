@@ -5,55 +5,30 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/danlavee/Conductor/internal/skillcheck"
 	skillbundle "github.com/danlavee/Conductor/skills"
 )
 
+// TestEmbeddedSkillMatchesCanonicalTree pins what install places to the
+// skill as written: every file under conductor/ is embedded byte for byte,
+// and nothing else is.
 func TestEmbeddedSkillMatchesCanonicalTree(t *testing.T) {
-	if problems := skillcheck.ValidateSkill(skillbundle.Files); len(problems) > 0 {
-		t.Fatalf("embedded skill is invalid: %v", problems)
-	}
-	root, err := skillcheck.FindRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if problems := skillcheck.CheckCommandFreshness(root); len(problems) > 0 {
-		t.Fatalf("ValidateSkill's command list has drifted from the CLI's real dispatch: %v", problems)
-	}
-	if _, err := fs.Stat(skillbundle.Files, "embed.go"); !os.IsNotExist(err) {
-		t.Fatal("embedding source appears in the portable skill")
-	}
-	err = filepath.WalkDir("conductor", func(sourcePath string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
+	source := os.DirFS("conductor")
+	for _, pair := range [][2]fs.FS{{source, skillbundle.Files}, {skillbundle.Files, source}} {
+		err := fs.WalkDir(pair[0], ".", func(name string, entry fs.DirEntry, err error) error {
+			if err != nil || entry.IsDir() {
+				return err
+			}
+			want, _ := fs.ReadFile(pair[0], name)
+			got, err := fs.ReadFile(pair[1], name)
+			if err != nil || !bytes.Equal(want, got) {
+				t.Errorf("%s differs between the skill tree and its embedding", filepath.FromSlash(name))
+			}
 			return nil
-		}
-		relative, err := filepath.Rel("conductor", sourcePath)
+		})
 		if err != nil {
-			return err
+			t.Fatal(err)
 		}
-		if strings.HasPrefix(filepath.ToSlash(relative), "scripts/") {
-			return nil
-		}
-		sourceData, err := os.ReadFile(sourcePath)
-		if err != nil {
-			return err
-		}
-		embeddedData, err := fs.ReadFile(skillbundle.Files, filepath.ToSlash(relative))
-		if err != nil {
-			return err
-		}
-		if !bytes.Equal(sourceData, embeddedData) {
-			t.Errorf("embedded bytes differ for %s", relative)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }

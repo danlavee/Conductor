@@ -299,20 +299,10 @@ func runAdapterInstall(args []string) error {
 	if err != nil {
 		return err
 	}
-	payload := install.AdapterPayload(claude.AdapterName)
-	if err := install.ValidateDestination(args[0], payload); err != nil {
-		return err
-	}
-	source, err := installationSource(payload, adapterbundle.ClaudeCode, true)
-	if err != nil {
-		return err
-	}
-	source.Replace = replace
-	result, err := install.Install(args[0], source)
-	if err != nil {
-		return err
-	}
-	return conductor.WriteJSON(os.Stdout, result)
+	// The hooks resolve ${CLAUDE_PLUGIN_ROOT}/bin/conductor, which fixes where
+	// the executable goes; the directory above adapters/ is the user's choice.
+	payload := install.Payload{Bundle: adapterbundle.ClaudeCode, Parent: "adapters", Name: claude.AdapterName, ExecutableDir: "bin"}
+	return runInstall(payload, args[0], replace)
 }
 
 func releaseOutcome(released bool) claude.Outcome {

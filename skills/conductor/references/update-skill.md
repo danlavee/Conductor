@@ -26,7 +26,7 @@ This is a conversation you carry out, not a CLI command. When asked to update or
 
 ## Where this goes wrong
 
-**Diffs.** `verify`'s status and a content diff are two different comparisons and both matter: `unknown` tells you if there are local edits to protect; `outdated` tells you a real update exists but not what's in it. Don't collapse them — if both are true at once (local edits exist *and* the incoming version differs from what was originally installed, which `verify` alone can't distinguish since either produces a mismatched manifest), the user needs to see both before deciding.
+**Diffs.** `verify`'s status and a content diff are two different comparisons and both matter: `unknown` tells you if there are local edits to protect; `outdated` tells you a real update exists but not what's in it. Don't collapse them — if both are true at once (local edits exist *and* the incoming version differs from what was originally installed, which `verify` alone can't distinguish since it reports the local edit first), the user needs to see both before deciding.
 
 **Conflicts.** When a local edit and an incoming change touch the same content, there's no merge algorithm here — the installed copy isn't a git checkout. Present both versions plainly and let the decision be made explicitly; never silently prefer one side because it seems more likely to be "right."
 

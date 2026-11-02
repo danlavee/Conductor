@@ -13,8 +13,7 @@ func runAgentCommand(agent, command string, rest []string) error {
 	open := conductor.New
 	// Neither may bring a protocol root into being as a side effect of being
 	// asked: watch attaches to a bus that must already exist, and status
-	// answers about one that may never have. Written as a condition rather
-	// than a switch on command, which skillcheck reads as a dispatch point.
+	// answers about one that may never have.
 	if command == "watch" || command == "status" {
 		open = conductor.Open
 	}

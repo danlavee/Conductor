@@ -328,7 +328,7 @@ func TestInstallProcessSuccessAndIdempotency(t *testing.T) {
 	if err := json.Unmarshal(stdout, &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.Status != "already-installed" || second.ManifestHash != first.ManifestHash {
+	if second.Status != "already-installed" || second.BinaryPath != first.BinaryPath {
 		t.Fatalf("second result = %+v", second)
 	}
 	stdout, stderr, err = runCLIHelper(first.BinaryPath, state, t.TempDir(), "version")

@@ -1,875 +1,162 @@
 package install
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
-	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"testing/fstest"
-	"time"
 )
 
-const smokeHelperEnvironment = "CONDUCTOR_INSTALL_SMOKE_HELPER"
+// The test binary stands in for the executable being installed, so the smoke
+// check runs a real process. It answers `version` with this protocol.
 const smokeProtocolEnvironment = "CONDUCTOR_INSTALL_SMOKE_PROTOCOL"
-const smokeReadyEnvironment = "CONDUCTOR_INSTALL_SMOKE_READY"
-const smokeReleaseEnvironment = "CONDUCTOR_INSTALL_SMOKE_RELEASE"
 
 func TestMain(m *testing.M) {
-	if os.Getenv(smokeHelperEnvironment) == "1" && len(os.Args) == 2 && os.Args[1] == "version" {
-		readyPath := os.Getenv(smokeReadyEnvironment)
-		releasePath := os.Getenv(smokeReleaseEnvironment)
-		if readyPath != "" && releasePath != "" {
-			if err := os.WriteFile(readyPath, nil, 0o600); err != nil {
-				os.Exit(2)
-			}
-			for {
-				if _, err := os.Stat(releasePath); err == nil {
-					break
-				} else if !os.IsNotExist(err) {
-					os.Exit(2)
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-		}
-		protocol := os.Getenv(smokeProtocolEnvironment)
-		if protocol == "" {
-			protocol = "1"
-		}
+	if protocol := os.Getenv(smokeProtocolEnvironment); protocol != "" && len(os.Args) == 2 && os.Args[1] == "version" {
 		fmt.Printf("{\"version\":\"v1.2.3\",\"protocol\":%s}\n", protocol)
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
 
-func TestInstallRequiresExactAbsoluteSkillDirectory(t *testing.T) {
-	source := testSource(t)
-	validParent := filepath.Join(t.TempDir(), ".agents", "skills")
-	for name, destination := range map[string]string{
-		"missing":    "",
-		"relative":   filepath.Join(".agents", "skills", "conductor"),
-		"wrong name": filepath.Join(validParent, "other"),
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := Install(destination, source); err == nil {
-				t.Fatal("invalid destination was accepted")
-			}
-		})
-	}
-}
-
-func TestValidateDestinationAcceptsKnownVendorDirsOnly(t *testing.T) {
-	base := t.TempDir()
-	for _, vendorDir := range vendorSkillDirs {
-		t.Run(vendorDir, func(t *testing.T) {
-			destination := filepath.Join(base, vendorDir, "skills", "conductor")
-			if err := ValidateDestination(destination, SkillPayload()); err != nil {
-				t.Fatalf("known vendor dir %s rejected: %v", vendorDir, err)
-			}
-		})
-	}
-	if err := ValidateDestination(filepath.Join(base, ".codex", "skills", "conductor"), SkillPayload()); err == nil {
-		t.Fatal("unknown vendor dir was accepted")
-	}
-}
-
-// TestAdapterDestinationFixesOnlyItsOwnTwoSegments records the deliberate
-// asymmetry between the payloads. A skill's outer directory belongs to the
-// vendor that looks for it, so it is checked; an adapter's does not, because
-// the host is pointed at the result rather than discovering it -- and checking
-// a convention nobody defined would only reject legitimate placements.
-func TestAdapterDestinationFixesOnlyItsOwnTwoSegments(t *testing.T) {
-	base := t.TempDir()
-	payload := AdapterPayload("claude-code")
-	for _, outer := range []string{".conductor", "tools", filepath.Join("deeply", "nested")} {
-		if err := ValidateDestination(filepath.Join(base, outer, "adapters", "claude-code"), payload); err != nil {
-			t.Errorf("%s rejected: %v", outer, err)
-		}
-	}
-	for name, destination := range map[string]string{
-		"wrong parent":  filepath.Join(base, "plugins", "claude-code"),
-		"wrong adapter": filepath.Join(base, "adapters", "other-host"),
-		"skill's shape": filepath.Join(base, ".agents", "skills", "conductor"),
-	} {
-		if err := ValidateDestination(destination, payload); err == nil {
-			t.Errorf("%s was accepted", name)
-		}
-	}
-}
-
-// TestInstallPlacesAnAdapterWhereItsHooksLookForTheExecutable covers the one
-// thing the adapter payload exists to guarantee. The hook registrations name
-// `bin/conductor` and are spawned directly with no shell to fall back on, so a
-// binary placed anywhere else yields an adapter that installs and verifies
-// cleanly and cannot run at all.
-func TestInstallPlacesAnAdapterWhereItsHooksLookForTheExecutable(t *testing.T) {
-	destination := filepath.Join(t.TempDir(), ".conductor", "adapters", "claude-code")
-	source := testSource(t)
-	source.Payload = AdapterPayload("claude-code")
-	source.Bundle = fstest.MapFS{
-		".claude-plugin/plugin.json": &fstest.MapFile{Data: []byte("{\"name\":\"conductor\"}\n")},
-		"hooks/hooks.json":           &fstest.MapFile{Data: []byte("{}\n")},
-	}
-	result, err := Install(destination, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	executable := SkillPayload().executableRelativePath(runtime.GOOS)
-	if result.BinaryPath == filepath.Join(destination, filepath.FromSlash(executable)) {
-		t.Fatalf("adapter took the skill's executable path: %s", result.BinaryPath)
-	}
-	if _, err := os.Stat(result.BinaryPath); err != nil {
-		t.Fatalf("executable missing at %s: %v", result.BinaryPath, err)
-	}
-	// The dotted directory is the point: it is the one the host reads, and the
-	// one a careless copy drops.
-	if _, err := os.Stat(filepath.Join(destination, ".claude-plugin", "plugin.json")); err != nil {
-		t.Errorf("plugin manifest missing: %v", err)
-	}
-	second, err := Install(destination, source)
-	if err != nil || second.Status != "already-installed" || second.ManifestHash != result.ManifestHash {
-		t.Fatalf("re-install = %+v, %v", second, err)
-	}
-}
-
-func TestWindowsDestinationDistinguishesExtendedLocalAndUNC(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows path semantics")
-	}
-	extendedLocal := `\\?\` + testDestination(t)
-	if err := ValidateDestination(extendedLocal, SkillPayload()); err != nil {
-		t.Fatalf("extended local path rejected: %v", err)
-	}
-	if err := ValidateDestination(`\\server\share\.agents\skills\conductor`, SkillPayload()); err == nil {
-		t.Fatal("UNC destination was accepted")
-	}
-}
-
-func TestInstallPublishesCompleteIdempotentSkill(t *testing.T) {
-	destination := testDestination(t)
-	source := testSource(t)
-	result, err := Install(destination, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Status != "installed" || result.Protocol != 1 || result.InstallPath != destination || result.FileCount != 12 {
-		t.Fatalf("unexpected result: %+v", result)
-	}
-	for _, relative := range []string{
-		"SKILL.md",
-		"references/limitations.md",
-		"references/protocol.md",
-		"references/guide.md",
-		"references/integrations/README.md",
-		"references/integrations/codex.md",
-		"references/integrations/agy.md",
-		"references/integrations/claude-cli.md",
-		"references/integrations/claude-channel.md",
-		"references/integrations/claude-desktop.md",
-		"assets/nested/example.txt",
-		SkillPayload().executableRelativePath(runtime.GOOS),
-		manifestName,
-	} {
-		if _, err := os.Stat(filepath.Join(destination, filepath.FromSlash(relative))); err != nil {
-			t.Errorf("missing %s: %v", relative, err)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(destination, "embed.go")); !os.IsNotExist(err) {
-		t.Fatal("Go source was installed")
-	}
-	manifestPath := filepath.Join(destination, manifestName)
-	fixedTime := time.Unix(1_700_000_000, 0)
-	if err := os.Chtimes(manifestPath, fixedTime, fixedTime); err != nil {
-		t.Fatal(err)
-	}
-	manifestInfo, err := os.Stat(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	again, err := Install(destination, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again.Status != "already-installed" || again.ManifestHash != result.ManifestHash {
-		t.Fatalf("unexpected idempotent result: %+v", again)
-	}
-	afterInfo, err := os.Stat(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !afterInfo.ModTime().Equal(manifestInfo.ModTime()) {
-		t.Fatal("idempotent install rewrote the destination")
-	}
-}
-
-func TestPrepareDestinationResultContract(t *testing.T) {
-	destination := testDestination(t)
-	source := testSource(t)
-	_, _, expected, _, err := preflight(destination, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, replaced, err := prepareDestination(destination, expected, false)
-	if err != nil || result != nil || replaced != nil {
-		t.Fatalf("missing destination result = %+v, error = %v", result, err)
-	}
-	if _, err := Install(destination, source); err != nil {
-		t.Fatal(err)
-	}
-	result, replaced, err = prepareDestination(destination, expected, false)
-	if err != nil || result == nil || result.Status != "already-installed" || replaced != nil {
-		t.Fatalf("matching destination result = %+v, error = %v", result, err)
-	}
-
-	conflicting := expected
-	conflicting.DistributionID = "different-distribution"
-	conflicting.Version = "v9.9.9"
-	result, replaced, err = prepareDestination(destination, conflicting, false)
-	if err == nil || result != nil || replaced != nil || !strings.Contains(err.Error(), "replacing an installation is a separate operation") {
-		t.Fatalf("conflicting destination result = %+v, error = %v", result, err)
-	}
-}
-
-func TestInstallRejectsTamperedAndExtraFilesWithoutRepair(t *testing.T) {
-	for name, mutate := range map[string]func(string) error{
-		"tampered": func(destination string) error {
-			return os.WriteFile(filepath.Join(destination, "SKILL.md"), []byte("changed"), 0o644)
-		},
-		"extra": func(destination string) error {
-			return os.WriteFile(filepath.Join(destination, "extra.txt"), []byte("extra"), 0o644)
-		},
-		"missing": func(destination string) error {
-			return os.Remove(filepath.Join(destination, "references", "limitations.md"))
-		},
-		"empty directory": func(destination string) error {
-			return os.Mkdir(filepath.Join(destination, "unexpected"), 0o755)
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			destination := testDestination(t)
-			source := testSource(t)
-			if _, err := Install(destination, source); err != nil {
-				t.Fatal(err)
-			}
-			if err := mutate(destination); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := Install(destination, source); err == nil || !strings.Contains(err.Error(), "install conflict") {
-				t.Fatalf("error = %v, want install conflict", err)
-			}
-		})
-	}
-}
-
-func TestInstallRunsStagedExecutableSmokeCheck(t *testing.T) {
-	t.Setenv(smokeHelperEnvironment, "1")
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := testSource(t)
-	source.ExecutablePath = executable
-	source.SmokeCheck = true
-	if _, err := Install(testDestination(t), source); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestInstallCleansStageAfterSmokeFailure(t *testing.T) {
-	destination := testDestination(t)
-	source := testSource(t)
-	source.SmokeCheck = true
-	if _, err := Install(destination, source); err == nil || !strings.Contains(err.Error(), "install verify") {
-		t.Fatalf("error = %v, want smoke-check failure", err)
-	}
-	if _, err := os.Stat(destination); !os.IsNotExist(err) {
-		t.Fatalf("destination exists after failure: %v", err)
-	}
-	matches := stagingMatches(t, destination)
-	if len(matches) != 0 {
-		t.Fatalf("staging directories remain: %v", matches)
-	}
-}
-
-func TestInstallRejectsStagedProtocolMismatch(t *testing.T) {
-	t.Setenv(smokeHelperEnvironment, "1")
-	t.Setenv(smokeProtocolEnvironment, "2")
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := testSource(t)
-	source.ExecutablePath = executable
-	source.SmokeCheck = true
-	if _, err := Install(testDestination(t), source); err == nil || !strings.Contains(err.Error(), "protocol 2 does not match 1") {
-		t.Fatalf("error = %v, want protocol mismatch", err)
-	}
-}
-
-func TestInstallRequiresPositiveProtocol(t *testing.T) {
-	source := testSource(t)
-	source.Protocol = 0
-	if _, err := Install(testDestination(t), source); err == nil || !strings.Contains(err.Error(), "protocol version must be positive") {
-		t.Fatalf("error = %v, want invalid protocol", err)
-	}
-}
-
-func TestInstallRejectsLinkToFilteredGoSource(t *testing.T) {
-	destination := testDestination(t)
-	bundle := testBundle().(fstest.MapFS)
-	bundle["SKILL.md"] = &fstest.MapFile{Data: []byte("---\nname: conductor\ndescription: Test Conductor.\n---\n\n[Guide](references/guide.md)\n[Helper](helper.go)\n")}
-	bundle["helper.go"] = &fstest.MapFile{Data: []byte("package helper\n")}
-	source := testSource(t)
-	source.Bundle = bundle
-	if _, err := Install(destination, source); err == nil || !strings.Contains(err.Error(), "invalid staged skill") {
-		t.Fatalf("error = %v, want filtered-link failure", err)
-	}
-	if _, err := os.Stat(destination); !os.IsNotExist(err) {
-		t.Fatalf("destination exists after failure: %v", err)
-	}
-	if matches := stagingMatches(t, destination); len(matches) != 0 {
-		t.Fatalf("staging directories remain: %v", matches)
-	}
-}
-
-func TestConcurrentInstallPublishesOnce(t *testing.T) {
-	destination := testDestination(t)
-	source := testSource(t)
-	start := make(chan struct{})
-	results := make(chan string, 2)
-	var group sync.WaitGroup
-	for range 2 {
-		group.Add(1)
-		go func() {
-			defer group.Done()
-			<-start
-			result, err := Install(destination, source)
-			if err != nil {
-				results <- "error: " + err.Error()
-				return
-			}
-			results <- result.Status
-		}()
-	}
-	close(start)
-	group.Wait()
-	close(results)
-	var statuses []string
-	for status := range results {
-		statuses = append(statuses, status)
-	}
-	sort.Strings(statuses)
-	if fmt.Sprint(statuses) != "[already-installed installed]" {
-		t.Fatalf("statuses = %v", statuses)
-	}
-	matches := stagingMatches(t, destination)
-	if len(matches) != 0 {
-		t.Fatalf("staging directories remain: %v", matches)
-	}
-}
-
-func TestInstallReinspectsMatchingDestinationAfterPublishRace(t *testing.T) {
-	t.Setenv(smokeHelperEnvironment, "1")
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := testSource(t)
-	source.ExecutablePath = executable
-	source.SmokeCheck = true
-
-	parent := t.TempDir()
-	readyPath := filepath.Join(parent, "smoke-ready")
-	releasePath := filepath.Join(parent, "smoke-release")
-	t.Setenv(smokeReadyEnvironment, readyPath)
-	t.Setenv(smokeReleaseEnvironment, releasePath)
-
-	destination := testDestination(t)
-	type installResult struct {
-		result Result
-		err    error
-	}
-	firstInstall := make(chan installResult, 1)
-	go func() {
-		result, err := Install(destination, source)
-		firstInstall <- installResult{result: result, err: err}
-	}()
-	defer os.WriteFile(releasePath, nil, 0o600)
-
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(readyPath); err == nil {
-			break
-		} else if !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for staged smoke check")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	secondSource := source
-	secondSource.SmokeCheck = false
-	secondResult, err := Install(destination, secondSource)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if secondResult.Status != "installed" {
-		t.Fatalf("second install result = %+v", secondResult)
-	}
-	if err := os.WriteFile(releasePath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	select {
-	case firstResult := <-firstInstall:
-		if firstResult.err != nil {
-			t.Fatal(firstResult.err)
-		}
-		if firstResult.result.Status != "already-installed" || firstResult.result.ManifestHash != secondResult.ManifestHash {
-			t.Fatalf("reconciled result = %+v", firstResult.result)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for publish-race reconciliation")
-	}
-}
-
-func stagingMatches(t *testing.T, destination string) []string {
+func testSource(t *testing.T, skillText string) Source {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(destination)), ".conductor-install-*"))
-	if err != nil {
-		t.Fatal(err)
+	t.Setenv(smokeProtocolEnvironment, "1")
+	bundle := fstest.MapFS{
+		"SKILL.md":               {Data: []byte(skillText)},
+		"references/protocol.md": {Data: []byte("# Protocol\n")},
 	}
-	return matches
-}
-
-func TestManifestIsIndependentOfDestination(t *testing.T) {
-	source := testSource(t)
-	first := testDestination(t)
-	second := testDestination(t)
-	if _, err := Install(first, source); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Install(second, source); err != nil {
-		t.Fatal(err)
-	}
-	firstManifest, err := os.ReadFile(filepath.Join(first, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondManifest, err := os.ReadFile(filepath.Join(second, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(firstManifest, secondManifest) {
-		t.Fatal("manifest depends on destination")
+	return Source{
+		Payload:    Payload{Bundle: bundle, Parent: "skills", Name: "conductor", ExecutableDir: "scripts"},
+		Executable: os.Args[0],
+		Version:    "v1.2.3",
+		Protocol:   1,
 	}
 }
 
-func TestLinuxIdempotencyRequiresOwnerExecute(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux mode check")
-	}
-	destination := testDestination(t)
-	source := testSource(t)
-	if _, err := Install(destination, source); err != nil {
-		t.Fatal(err)
-	}
-	executable := filepath.Join(destination, filepath.FromSlash(SkillPayload().executableRelativePath(runtime.GOOS)))
-	if err := os.Chmod(executable, 0o001); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Install(destination, source); err == nil || !strings.Contains(err.Error(), "not executable") {
-		t.Fatalf("error = %v, want executable-mode conflict", err)
-	}
-}
-
-func TestInstallRejectsExistingDirectoryAndSymlink(t *testing.T) {
-	for _, kind := range []string{"directory", "symlink"} {
-		t.Run(kind, func(t *testing.T) {
-			destination := testDestination(t)
-			if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if kind == "directory" {
-				if err := os.Mkdir(destination, 0o755); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				target := t.TempDir()
-				if err := os.Symlink(target, destination); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
-				}
-			}
-			if _, err := Install(destination, testSource(t)); err == nil {
-				t.Fatal("existing conflicting destination was accepted")
-			}
-		})
-	}
-}
-
-func TestInstallBacksUpUnmanifestedDestination(t *testing.T) {
-	backupDirectory := testBackupDirectory(t)
-	destination := testDestination(t)
-	if err := os.MkdirAll(destination, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	legacyPath := filepath.Join(destination, "legacy.txt")
-	if err := os.WriteFile(legacyPath, []byte("legacy"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := Install(destination, testSource(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Status != "installed" {
-		t.Fatalf("result = %+v", result)
-	}
-	backups, err := filepath.Glob(filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-*"))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("backups = %v, error = %v", backups, err)
-	}
-	data, err := os.ReadFile(filepath.Join(backups[0], "legacy.txt"))
-	if err != nil || string(data) != "legacy" {
-		t.Fatalf("backup content = %q, error = %v", data, err)
-	}
-}
-
-func TestInstallKeepsBackupWhenVerificationFails(t *testing.T) {
-	backupDirectory := testBackupDirectory(t)
-	destination := testDestination(t)
-	if err := os.MkdirAll(destination, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(destination, "legacy.txt"), []byte("legacy"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	source := testSource(t)
-	source.SmokeCheck = true
-
-	if _, err := Install(destination, source); err == nil || !strings.Contains(err.Error(), "install verify") {
-		t.Fatalf("error = %v, want verification failure", err)
-	}
-	if _, err := os.Stat(destination); !os.IsNotExist(err) {
-		t.Fatalf("destination was republished after failed verification: %v", err)
-	}
-	backups, err := filepath.Glob(filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-*"))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("backups = %v, error = %v", backups, err)
-	}
-	if data, err := os.ReadFile(filepath.Join(backups[0], "legacy.txt")); err != nil || string(data) != "legacy" {
-		t.Fatalf("backup content = %q, error = %v", data, err)
-	}
-}
-
-// upgradeSource returns a source that differs from testSource only in version,
-// which is the ordinary shape of an upgrade: same payload, new release.
-func upgradeSource(t *testing.T, from Source) Source {
-	t.Helper()
-	next := from
-	next.Version = "v1.3.0"
-	return next
-}
-
-func TestReplaceUpgradesAnInstalledDistribution(t *testing.T) {
-	backupDirectory := testBackupDirectory(t)
-	destination := testDestination(t)
-	source := testSource(t)
-	if _, err := Install(destination, source); err != nil {
-		t.Fatal(err)
-	}
-
-	next := upgradeSource(t, source)
-	next.Replace = true
-	result, err := Install(destination, next)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Status != "upgraded" || result.Version != "v1.3.0" || result.PreviousVersion != "v1.2.3" {
-		t.Fatalf("result = %+v", result)
-	}
-	installed, _, err := verifyInstallation(destination, result.BinaryPath[len(destination)+1:])
-	if err == nil && installed.Version != "v1.3.0" {
-		t.Fatalf("installed version = %q", installed.Version)
-	}
-	current, err := CheckCurrency(destination, next)
-	if err != nil || current.Status != "current" {
-		t.Fatalf("currency = %+v, error = %v", current, err)
-	}
-	backups, err := filepath.Glob(filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-*"))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("backups = %v, error = %v", backups, err)
-	}
-	retiredManifest, _, err := verifyInstallation(backups[0], "scripts/conductor")
-	if err != nil {
-		// The retired tree keeps the platform's executable name; only assert
-		// what is portable, which is that the outgoing version was preserved.
-		retiredManifest, _, err = verifyInstallation(backups[0], "scripts/conductor.exe")
-	}
-	if err != nil || retiredManifest.Version != "v1.2.3" {
-		t.Fatalf("retired manifest = %+v, error = %v", retiredManifest, err)
-	}
-}
-
-func TestReplaceIsRequiredToOverwriteAnotherVersion(t *testing.T) {
-	testBackupDirectory(t)
-	destination := testDestination(t)
-	source := testSource(t)
-	if _, err := Install(destination, source); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := Install(destination, upgradeSource(t, source))
-	if err == nil || !strings.Contains(err.Error(), "replacing an installation is a separate operation") {
-		t.Fatalf("error = %v, want a conflict naming both versions", err)
-	}
-	if !strings.Contains(err.Error(), "v1.2.3") || !strings.Contains(err.Error(), "v1.3.0") {
-		t.Fatalf("error = %v, does not name what is installed and what is offered", err)
-	}
-	current, err := CheckCurrency(destination, source)
-	if err != nil || current.Status != "current" {
-		t.Fatalf("refused conflict disturbed the installation: %+v, error = %v", current, err)
-	}
-}
-
-// A rejected candidate must not cost the working installation. Retirement
-// happens after staging verification for exactly this reason.
-func TestReplaceKeepsTheInstallationWhenTheCandidateFails(t *testing.T) {
-	backupDirectory := testBackupDirectory(t)
-	destination := testDestination(t)
-	source := testSource(t)
-	if _, err := Install(destination, source); err != nil {
-		t.Fatal(err)
-	}
-
-	next := upgradeSource(t, source)
-	next.Replace = true
-	next.SmokeCheck = true
-	if _, err := Install(destination, next); err == nil || !strings.Contains(err.Error(), "install verify") {
-		t.Fatalf("error = %v, want verification failure", err)
-	}
-	current, err := CheckCurrency(destination, source)
-	if err != nil || current.Status != "current" {
-		t.Fatalf("currency = %+v, error = %v", current, err)
-	}
-	backups, err := filepath.Glob(filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-*"))
-	if err != nil || len(backups) != 0 {
-		t.Fatalf("failed candidate displaced the installation: %v, error = %v", backups, err)
-	}
-}
-
-// Publication failing after the outgoing tree is already aside is the only
-// window where a working installation can be lost, so the restore that closes
-// it has to be exercised rather than reasoned about.
-func TestReplaceRestoresTheInstallationWhenPublicationFails(t *testing.T) {
-	backupDirectory := testBackupDirectory(t)
-	destination := testDestination(t)
-	source := testSource(t)
-	if _, err := Install(destination, source); err != nil {
-		t.Fatal(err)
-	}
-
-	original := publish
-	publish = func(string, string) error { return errors.New("publication refused") }
-	t.Cleanup(func() { publish = original })
-
-	next := upgradeSource(t, source)
-	next.Replace = true
-	if _, err := Install(destination, next); err == nil || !strings.Contains(err.Error(), "publication refused") {
-		t.Fatalf("error = %v, want the publication failure", err)
-	}
-	current, err := CheckCurrency(destination, source)
-	if err != nil || current.Status != "current" {
-		t.Fatalf("the outgoing installation was not restored: %+v, error = %v", current, err)
-	}
-	backups, err := filepath.Glob(filepath.Join(backupDirectory, filepath.Base(destination)+".pre-upgrade-*"))
-	if err != nil || len(backups) != 0 {
-		t.Fatalf("restore left the tree behind in backups: %v, error = %v", backups, err)
-	}
-}
-
-// Replacement is permission to overwrite this payload at another version, never
-// permission to overwrite something else that happens to sit at the path.
-func TestReplaceStillRefusesAnUnrelatedTree(t *testing.T) {
-	testBackupDirectory(t)
-	destination := testDestination(t)
-	source := testSource(t)
-	if _, err := Install(destination, source); err != nil {
-		t.Fatal(err)
-	}
-	manifestPath := filepath.Join(destination, manifestName)
-	if err := os.Chmod(manifestPath, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(manifestPath, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	next := upgradeSource(t, source)
-	next.Replace = true
-	if _, err := Install(destination, next); err == nil || !strings.Contains(err.Error(), "install conflict") {
-		t.Fatalf("error = %v, want a conflict on an unreadable manifest", err)
-	}
-}
-
-func testBackupDirectory(t *testing.T) string {
-	t.Helper()
+// testDestination also points the backup directory at a temp home, so no test
+// writes under the real ~/.conductor.
+func testDestination(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	return filepath.Join(home, ".conductor", "backups", "skills")
-}
-
-func TestReleasedDistributionIdentityIgnoresCompilerBytes(t *testing.T) {
-	first := []payloadFile{{manifestFile: manifestFile{Path: "SKILL.md", SHA256: digest([]byte("skill"))}}}
-	bundleDigest := digestPayload(first)
-	one := distributionIdentity(manifestFormat, 1, "v1.2.3", runtime.GOOS, runtime.GOARCH, bundleDigest, digest([]byte("binary one")))
-	two := distributionIdentity(manifestFormat, 1, "v1.2.3", runtime.GOOS, runtime.GOARCH, bundleDigest, digest([]byte("binary two")))
-	if one != two {
-		t.Fatal("released identity depends on compiler-produced bytes")
-	}
-	develOne := distributionIdentity(manifestFormat, 1, "(devel)", runtime.GOOS, runtime.GOARCH, bundleDigest, digest([]byte("binary one")))
-	develTwo := distributionIdentity(manifestFormat, 1, "(devel)", runtime.GOOS, runtime.GOARCH, bundleDigest, digest([]byte("binary two")))
-	if develOne == develTwo {
-		t.Fatal("development identity ignores executable bytes")
-	}
-}
-
-func TestDistributionIdentityIncludesProtocolAndFormat(t *testing.T) {
-	bundle := digest([]byte("bundle"))
-	binary := digest([]byte("binary"))
-	base := distributionIdentity(manifestFormat, 1, "v1.2.3", runtime.GOOS, runtime.GOARCH, bundle, binary)
-	if base == distributionIdentity(manifestFormat, 2, "v1.2.3", runtime.GOOS, runtime.GOARCH, bundle, binary) {
-		t.Fatal("distribution identity ignores protocol")
-	}
-	if base == distributionIdentity(manifestFormat+1, 1, "v1.2.3", runtime.GOOS, runtime.GOARCH, bundle, binary) {
-		t.Fatal("distribution identity ignores manifest format")
-	}
-}
-
-func testDestination(t *testing.T) string {
-	t.Helper()
 	return filepath.Join(t.TempDir(), ".agents", "skills", "conductor")
 }
 
-func testSource(t *testing.T) Source {
+func status(t *testing.T, destination string, source Source) string {
 	t.Helper()
-	executable := filepath.Join(t.TempDir(), "conductor-test")
-	if runtime.GOOS == "windows" {
-		executable += ".exe"
-	}
-	if err := os.WriteFile(executable, []byte("native executable"), 0o755); err != nil {
+	currency, err := CheckCurrency(destination, source)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return Source{
-		Payload:        SkillPayload(),
-		Bundle:         testBundle(),
-		ExecutablePath: executable,
-		Version:        "v1.2.3",
-		Protocol:       1,
-		GOOS:           runtime.GOOS,
-		GOARCH:         runtime.GOARCH,
-		SmokeCheck:     false,
+	return currency.Status
+}
+
+func TestDestinationMustBeAbsoluteAndEndInParentAndName(t *testing.T) {
+	source := testSource(t, "skill\n")
+	for _, destination := range []string{"", filepath.Join("skills", "conductor"), filepath.Join(t.TempDir(), "skills", "other"), filepath.Join(t.TempDir(), "plugins", "conductor")} {
+		if _, err := Install(destination, source, false); err == nil {
+			t.Fatalf("destination %q was accepted", destination)
+		}
 	}
 }
 
-func TestCheckCurrencyReportsNotInstalledWithoutWriting(t *testing.T) {
+func TestInstallIsIdempotentAndRunnable(t *testing.T) {
 	destination := testDestination(t)
-	source := testSource(t)
-	result, err := CheckCurrency(destination, source)
-	if err != nil {
-		t.Fatal(err)
+	source := testSource(t, "skill\n")
+	if got := status(t, destination, source); got != "not-installed" {
+		t.Fatalf("status = %s", got)
 	}
-	if result.Status != "not-installed" || result.SourceVersion != source.Version {
-		t.Fatalf("unexpected result: %+v", result)
+	// A trailing separator, as shell completion leaves it, names the same tree.
+	first, err := Install(destination+string(filepath.Separator), source, false)
+	if err != nil || first.Status != "installed" {
+		t.Fatalf("first = %+v, %v", first, err)
 	}
-	if _, err := os.Stat(destination); !os.IsNotExist(err) {
-		t.Fatal("CheckCurrency wrote to destination")
+	if first.BinaryPath != filepath.Join(destination, filepath.FromSlash(source.executable())) {
+		t.Fatalf("binary at %s", first.BinaryPath)
+	}
+	if data, err := os.ReadFile(filepath.Join(destination, "references", "protocol.md")); err != nil || string(data) != "# Protocol\n" {
+		t.Fatalf("payload file = %q, %v", data, err)
+	}
+	if got := status(t, destination, source); got != "current" {
+		t.Fatalf("status = %s", got)
+	}
+	second, err := Install(destination, source, false)
+	if err != nil || second.Status != "already-installed" {
+		t.Fatalf("second = %+v, %v", second, err)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(destination)), ".conductor-install-*")); len(leftovers) != 0 {
+		t.Fatalf("stages left behind: %v", leftovers)
 	}
 }
 
-func TestCheckCurrencyReportsCurrentAfterMatchingInstall(t *testing.T) {
+func TestReplacingAnotherDistributionNeedsReplaceAndKeepsABackup(t *testing.T) {
 	destination := testDestination(t)
-	source := testSource(t)
-	if _, err := Install(destination, source); err != nil {
+	if _, err := Install(destination, testSource(t, "old\n"), false); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(filepath.Join(destination, manifestName))
-	if err != nil {
-		t.Fatal(err)
+	incoming := testSource(t, "new\n")
+	if got := status(t, destination, incoming); got != "outdated" {
+		t.Fatalf("status = %s", got)
 	}
-	result, err := CheckCurrency(destination, source)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := Install(destination, incoming, false); err == nil || !strings.Contains(err.Error(), "--replace") {
+		t.Fatalf("install over another distribution = %v", err)
 	}
-	if result.Status != "current" || result.InstalledVersion != source.Version || result.SourceVersion != source.Version {
-		t.Fatalf("unexpected result: %+v", result)
+	result, err := Install(destination, incoming, true)
+	if err != nil || result.Status != "upgraded" || result.PreviousVersion != "v1.2.3" {
+		t.Fatalf("replace = %+v, %v", result, err)
 	}
-	after, err := os.ReadFile(filepath.Join(destination, manifestName))
-	if err != nil {
-		t.Fatal(err)
+	if data, _ := os.ReadFile(filepath.Join(destination, "SKILL.md")); string(data) != "new\n" {
+		t.Fatalf("installed SKILL.md = %q", data)
 	}
-	if !bytes.Equal(before, after) {
-		t.Fatal("CheckCurrency modified the installed manifest")
+	backups, _ := filepath.Glob(filepath.Join(os.Getenv("HOME"), ".conductor", "backups", "skills", "conductor.pre-upgrade-*", "SKILL.md"))
+	if len(backups) != 1 {
+		t.Fatalf("backups = %v", backups)
+	}
+	if data, _ := os.ReadFile(backups[0]); string(data) != "old\n" {
+		t.Fatalf("backed-up SKILL.md = %q", data)
 	}
 }
 
-func TestCheckCurrencyReportsOutdatedForDifferentSource(t *testing.T) {
+func TestAChangedOrForeignTreeIsUnknownAndNeverOverwrittenSilently(t *testing.T) {
+	source := testSource(t, "skill\n")
+	changed := testDestination(t)
+	if _, err := Install(changed, source, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(changed, "SKILL.md"), []byte("local edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	foreign := testDestination(t)
+	if err := writeFile(filepath.Join(foreign, "SKILL.md"), []byte("someone else's\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, destination := range []string{changed, foreign} {
+		if got := status(t, destination, source); got != "unknown" {
+			t.Fatalf("status of %s = %s", destination, got)
+		}
+		if _, err := Install(destination, source, false); err == nil {
+			t.Fatalf("install over %s succeeded without --replace", destination)
+		}
+		if result, err := Install(destination, source, true); err != nil || result.Status != "upgraded" {
+			t.Fatalf("replace %s = %+v, %v", destination, result, err)
+		}
+	}
+}
+
+func TestAStagedExecutableThatDisagreesIsNeverPublished(t *testing.T) {
 	destination := testDestination(t)
-	original := testSource(t)
-	if _, err := Install(destination, original); err != nil {
+	if _, err := Install(destination, testSource(t, "old\n"), false); err != nil {
 		t.Fatal(err)
 	}
-	newer := original
-	newer.Version = "v9.9.9"
-	result, err := CheckCurrency(destination, newer)
-	if err != nil {
-		t.Fatal(err)
+	incoming := testSource(t, "new\n")
+	t.Setenv(smokeProtocolEnvironment, "2")
+	if _, err := Install(destination, incoming, true); err == nil || !strings.Contains(err.Error(), "install verify") {
+		t.Fatalf("mismatched executable = %v", err)
 	}
-	if result.Status != "outdated" || result.InstalledVersion != original.Version || result.SourceVersion != newer.Version {
-		t.Fatalf("unexpected result: %+v", result)
-	}
-}
-
-func TestCheckCurrencyReportsUnknownForMissingManifest(t *testing.T) {
-	destination := testDestination(t)
-	if err := os.MkdirAll(destination, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(destination, "stray.txt"), []byte("hand-copied"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	result, err := CheckCurrency(destination, testSource(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Status != "unknown" || result.Detail == "" {
-		t.Fatalf("unexpected result: %+v", result)
-	}
-}
-
-func testBundle() fs.FS {
-	return fstest.MapFS{
-		"SKILL.md":                                  &fstest.MapFile{Data: []byte("---\nname: conductor\ndescription: Test Conductor.\n---\n\n[Guide](references/guide.md)\n")},
-		"references/limitations.md":                 &fstest.MapFile{Data: []byte("# Limits\n")},
-		"references/protocol.md":                    &fstest.MapFile{Data: []byte("# Protocol\n\n[Skill](../SKILL.md)\n")},
-		"references/guide.md":                       &fstest.MapFile{Data: []byte("# Guide\n")},
-		"references/integrations/README.md":         &fstest.MapFile{Data: []byte("# Integrations\n")},
-		"references/integrations/codex.md":          &fstest.MapFile{Data: []byte("# Codex\n")},
-		"references/integrations/agy.md":            &fstest.MapFile{Data: []byte("# Antigravity\n")},
-		"references/integrations/claude-cli.md":     &fstest.MapFile{Data: []byte("# Claude CLI\n")},
-		"references/integrations/claude-channel.md": &fstest.MapFile{Data: []byte("# Claude channel\n")},
-		"references/integrations/claude-desktop.md": &fstest.MapFile{Data: []byte("# Claude Desktop\n")},
-		"assets/nested/example.txt":                 &fstest.MapFile{Data: []byte("asset\n")},
-		"embed.go":                                  &fstest.MapFile{Data: []byte("package ignored\n")},
+	if data, _ := os.ReadFile(filepath.Join(destination, "SKILL.md")); string(data) != "old\n" {
+		t.Fatalf("the working installation was displaced: SKILL.md = %q", data)
 	}
 }

@@ -3,9 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"runtime"
 	"runtime/debug"
 	"strings"
 
@@ -23,34 +21,22 @@ func run(args []string) error {
 	}
 	switch args[0] {
 	case "install":
-		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+		if len(args) < 2 {
 			return installUsageError()
 		}
 		replace, err := replaceRequested(args[2:])
 		if err != nil {
 			return err
 		}
-		if err := install.ValidateDestination(args[1], install.SkillPayload()); err != nil {
+		if skillPayload.Check(args[1]) != nil {
 			return installUsageError()
 		}
-		source, err := installationSource(install.SkillPayload(), skillbundle.Files, true)
-		if err != nil {
-			return err
-		}
-		source.Replace = replace
-		result, err := install.Install(args[1], source)
-		if err != nil {
-			return err
-		}
-		return conductor.WriteJSON(os.Stdout, result)
+		return runInstall(skillPayload, args[1], replace)
 	case "verify":
-		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
+		if len(args) != 2 {
 			return errors.New("usage: conductor verify <absolute-skill-directory>")
 		}
-		if err := install.ValidateDestination(args[1], install.SkillPayload()); err != nil {
-			return err
-		}
-		source, err := installationSource(install.SkillPayload(), skillbundle.Files, false)
+		source, err := installationSource(skillPayload)
 		if err != nil {
 			return err
 		}
@@ -89,21 +75,28 @@ func replaceRequested(args []string) (bool, error) {
 	return false, fmt.Errorf("unrecognized option %s", strings.Join(args, " "))
 }
 
-func installationSource(payload install.Payload, bundle fs.FS, smokeCheck bool) (install.Source, error) {
-	executablePath, err := os.Executable()
+// skillPayload is placed where a host looks for skills; the skill's own
+// instructions name scripts/ as where its executable sits.
+var skillPayload = install.Payload{Bundle: skillbundle.Files, Parent: "skills", Name: "conductor", ExecutableDir: "scripts"}
+
+func runInstall(payload install.Payload, destination string, replace bool) error {
+	source, err := installationSource(payload)
+	if err != nil {
+		return err
+	}
+	result, err := install.Install(destination, source, replace)
+	if err != nil {
+		return err
+	}
+	return conductor.WriteJSON(os.Stdout, result)
+}
+
+func installationSource(payload install.Payload) (install.Source, error) {
+	executable, err := os.Executable()
 	if err != nil {
 		return install.Source{}, err
 	}
-	return install.Source{
-		Payload:        payload,
-		Bundle:         bundle,
-		ExecutablePath: executablePath,
-		Version:        currentVersion(),
-		Protocol:       conductor.CurrentProtocolVersion,
-		GOOS:           runtime.GOOS,
-		GOARCH:         runtime.GOARCH,
-		SmokeCheck:     smokeCheck,
-	}, nil
+	return install.Source{Payload: payload, Executable: executable, Version: currentVersion(), Protocol: conductor.CurrentProtocolVersion}, nil
 }
 
 func currentVersion() string {
