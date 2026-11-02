@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	conductor "github.com/danlavee/Conductor"
 	"github.com/danlavee/Conductor/internal/adapters/claude"
+	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
 // TestStatusReportsWhatServesThisHost covers the third host state. Wakeability

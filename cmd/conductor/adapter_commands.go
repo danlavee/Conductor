@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	conductor "github.com/danlavee/Conductor"
 	adapterbundle "github.com/danlavee/Conductor/adapters"
 	"github.com/danlavee/Conductor/internal/adapters/claude"
 	"github.com/danlavee/Conductor/internal/install"
+	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
 // wakeSignal is a successful wake, carried as an error only so the exit status

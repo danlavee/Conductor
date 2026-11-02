@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	conductor "github.com/danlavee/Conductor"
 	"github.com/danlavee/Conductor/internal/adapters/claude"
+	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
 func runAgentCommand(agent, command string, rest []string) error {

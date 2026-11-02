@@ -99,7 +99,7 @@ It is reported beside the registration record, never stored in it. Registration 
 
 Because `status` answers from outside the bus, it reads no protocol version and stays answerable against an uninitialized root: asking must never create the thing being asked about. A join is a genuine bus operation.
 
-All three are host-neutral. Host knowledge lives in the adapter subtree, which reaches the bus through the same public client any other caller would use — the inverse of the vendor `watch` flags this design replaced.
+All three are host-neutral. Host knowledge lives in the adapter subtree, which reaches the bus through the same client the CLI uses — the inverse of the vendor `watch` flags this design replaced.
 
 ## First instance: Claude
 

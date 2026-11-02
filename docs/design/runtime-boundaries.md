@@ -46,7 +46,7 @@ The choice belongs to whoever holds the stream, so it is a client-level argument
 
 ## Identity across the boundary
 
-SDK callers and CLI calls alike provide an agent identity explicitly, as the leading argument to every command.
+Every CLI call provides an agent identity explicitly, as the leading argument to the command.
 
 An adapter cannot supply that argument by asking the agent, since it acts without the agent's participation. It resolves the identity from configuration the session carries. The runtime owns the mapping from Conductor identity to host session; Conductor verifies membership and does not choose which conversation, queue, or worker represents that identity.
 

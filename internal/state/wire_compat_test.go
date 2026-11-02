@@ -14,6 +14,7 @@ package state
 // here and are not covered.
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -46,7 +47,7 @@ func mustParseTime(t *testing.T, value string) time.Time {
 	return parsed
 }
 
-// protocol.Agent, written to registry/<name>.json.
+// Agent, written to registry/<name>.json.
 const agentFixture = `{
   "name": "agent-a",
   "responsibility": "reviews architecture changes",
@@ -66,7 +67,7 @@ func TestWireCompatAgent(t *testing.T) {
 	}
 }
 
-// protocol.Publication, written to topics/<group>/<topic>/history/<seq>.json.
+// Publication, written to topics/<group>/<topic>/history/<seq>.json.
 const publicationFixture = `{
   "sequence": 7,
   "topic": "dev/tasks",
@@ -89,6 +90,23 @@ func TestWireCompatPublication(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Publication = %#v, want %#v", got, want)
+	}
+}
+
+// Decoding catches a renamed tag but not a field leaking into what agents
+// read, so the encoded shapes of Record and Summary are pinned too.
+func TestWireShapeRecordAndSummary(t *testing.T) {
+	for value, want := range map[any]string{
+		Record{Index: 7, Text: "plain text"}:                                      `{"index":7,"text":"plain text"}`,
+		Summary{Type: "update", Topic: "dev/tasks", Sequence: 4, Agent: "writer"}: `{"type":"update","topic":"dev/tasks","sequence":4,"agent":"writer"}`,
+	} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(encoded) != want {
+			t.Fatalf("%T JSON = %s, want %s", value, encoded, want)
+		}
 	}
 }
 

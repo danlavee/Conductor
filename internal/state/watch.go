@@ -15,9 +15,7 @@ func (c *Client) Watch() ([]Summary, error) {
 	return c.WatchContext(context.Background())
 }
 
-// WatchContext returns every currently pending unread signal and then exits.
-// An SDK trigger wrapper can use the context for cancellation and submit each
-// signal through its agent runtime.
+// WatchContext is Watch, ending without acknowledging anything when ctx does.
 func (c *Client) WatchContext(ctx context.Context) ([]Summary, error) {
 	return c.WatchSinceContext(ctx, 0)
 }

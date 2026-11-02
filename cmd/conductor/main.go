@@ -4,7 +4,7 @@ import (
 	"errors"
 	"os"
 
-	conductor "github.com/danlavee/Conductor"
+	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
 func main() {

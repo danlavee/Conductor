@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	conductor "github.com/danlavee/Conductor"
 	"github.com/danlavee/Conductor/internal/platform"
+	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
 func TestResolveIdentityReadsProjectBinding(t *testing.T) {

@@ -8,7 +8,7 @@ Packaged as a Claude Code plugin: `.claude-plugin/plugin.json`, with `hooks/hook
 
 ## The four responsibilities
 
-Each is one hook entry, and all of them run the same executable: `conductor adapter claude <arm|release|identity> --session=${CLAUDE_SESSION_ID}`. That command tree is where this host's knowledge lives. It consumes Conductor's public client exactly as any other caller would, so the core learns nothing about hooks, sessions, or exit codes.
+Each is one hook entry, and all of them run the same executable: `conductor adapter claude <arm|release|identity> --session=${CLAUDE_SESSION_ID}`. That command tree is where this host's knowledge lives. It consumes the same client the CLI uses, so the core learns nothing about hooks, sessions, or exit codes.
 
 | Responsibility | Realization | Verified |
 | --- | --- | --- |

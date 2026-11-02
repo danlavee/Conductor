@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	conductor "github.com/danlavee/Conductor"
+	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
 func parseRecordIndex(raw string) (int64, error) {

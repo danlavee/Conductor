@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	conductor "github.com/danlavee/Conductor"
 	installer "github.com/danlavee/Conductor/internal/install"
+	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
 const cliHelperEnvironment = "CONDUCTOR_CLI_TEST_HELPER"
@@ -804,4 +804,3 @@ func TestParseRecordIndex(t *testing.T) {
 		}
 	}
 }
-

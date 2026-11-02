@@ -1,6 +1,6 @@
 // Package claude implements the Claude Code adapter: the host-specific half of
 // wake delivery, which Conductor's core deliberately does not contain. It
-// reaches the bus through the same public client any other caller would use.
+// reaches the bus through the same client the CLI uses.
 //
 // See docs/integrations/claude-code.md for this host's mechanism and limits,
 // and docs/design/model.md for the invariants they serve.
@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	conductor "github.com/danlavee/Conductor"
 	"github.com/danlavee/Conductor/internal/platform"
+	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
 const (

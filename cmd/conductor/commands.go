@@ -7,8 +7,8 @@ import (
 	"runtime/debug"
 	"strings"
 
-	conductor "github.com/danlavee/Conductor"
 	"github.com/danlavee/Conductor/internal/install"
+	conductor "github.com/danlavee/Conductor/internal/state"
 	skillbundle "github.com/danlavee/Conductor/skills"
 )
 

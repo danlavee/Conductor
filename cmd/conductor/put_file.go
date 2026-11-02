@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	conductor "github.com/danlavee/Conductor"
+	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
 const (

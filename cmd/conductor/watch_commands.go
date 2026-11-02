@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	conductor "github.com/danlavee/Conductor"
+	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
 func runWatchCommand(client *conductor.Client, args []string) error {

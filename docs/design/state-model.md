@@ -6,7 +6,7 @@ The root `protocol.json` is the compatibility gate for all of that state. Openin
 
 ## Stable identities
 
-An **agent** is a registered name and responsibility. A terminal binding associates that name with one process instance; an SDK caller may supply identity explicitly. A binding is not membership: every operation still requires the registry entry to exist.
+An **agent** is a registered name and responsibility. Every CLI call names it explicitly as its leading argument. A binding is not membership: every operation still requires the registry entry to exist.
 
 A **resource** is a `<topic-group>/<topic>` name. A **record** is exactly a positive topic-local `index` and plain `text`. Conductor assigns the index when creating the record, as the topic's highest index plus one; edit preserves it. One publication may change several records, but only within one resource.
 
