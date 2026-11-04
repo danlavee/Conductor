@@ -1,25 +1,12 @@
 # Conductor state protocol
 
-Exact, non-obvious mechanism facts only — anything already implied by `SKILL.md`, `delivery.md`, or `limitations.md` isn't repeated here.
+Exact, non-obvious mechanism facts only — what `SKILL.md`, `delivery.md`, or `limitations.md` already say isn't repeated here.
 
 - A new record takes the topic's highest index plus one; a separate per-topic `sequence` orders the topic's publications.
-- A delta read narrowed to a single record index keeps its own cursor, separate from the topic's. A delta skips your own publications but reads past them.
-- A publication is the public atomic result of one write to one topic: `sequence`, `topic`, `agent`, `timestamp`, and the changed `records`.
-- The publishing command answers with that publication plus `recipients`, the agents woken for it. Recipients are resolved at publication from who is subscribed to that topic at that instant — every registered agent for `collaboration`'s `rules` and `agents`, which broadcast — less the publisher, which is never woken by its own act and so never appears in its own answer. They are not persisted: history replays the publication alone, because a stored audience would be a claim the next subscription change falsifies.
-- `protocol.json` gates the state root. A missing, malformed, or mismatched declaration returns `PROTOCOL_MISMATCH` before anything else runs. There is no migration: a new protocol starts a fresh state root. Every JSON-tagged struct persisted to disk is covered by a checked-in wire-compatibility test; renaming or removing a field on one is a build-time signal to bump the protocol version.
-- Every record command is one publication, written under an OS file lock on its topic that the operating system releases if the process dies. A `--jsonl` load is the only multi-record one: the whole file becomes one publication or none of it does.
-- A publication is visible, and wakes its readers, the moment it is appended to history.
-- A blocked `watch` rechecks its own agent's join status on every poll tick; if it leaves while the call is waiting, `watch` returns `NOT_FOUND` immediately rather than blocking forever.
-- Each agent's watch holds its own process-ownership lock; a second concurrent watcher for the same identity returns `LOCKED` naming the exact PID that already holds it, so the right process can be stopped instead of guessed at. This is what makes restoration blind-safe: any number of attempts, from any source, converge on one live stream, and a redundant attempt fails fast instead of double-delivering.
-- `status` reports whether an identity is currently wakeable, what holds its stream (`adapter` or `self`), and what the agent is subscribed to, without acquiring the ownership lock and without disturbing a live stream. Every part is derived from observable state, never from a caller's assertion: the holder is recorded by whatever acquired ownership, and reported only while that process is alive.
-- A delta read always includes its first qualifying publication whole even if it alone exceeds the cap, because a publication is atomic.
-- `watch` writes a sequence of JSON documents. The first is the participation answer `status` returns, written the moment ownership is acquired and before any wait, so the act of arming reports what it achieved rather than nothing. After it, `watch` is one continuous stream: it emits a delivery, acknowledges it as accepted, and continues waiting. Semantics are identical on every host; nothing vendor-specific reaches the core. `--once` emits the arm answer and then a single delivery before exiting, for hosts whose wake is the watch process completing — two documents, not one. A `watch` that fails after arming has still written the arm answer, and reports the failure on stderr at a non-zero exit like every other command, so one document with a non-zero exit is a failed wait and never a delivery that did not arrive.
-- One delivery is a delta of every topic you read that has unread publications, up to a shared `DefaultReadLimit` budget (`{"deliveries": [...], "remaining": N, "default_read_limit": 20}`). Topics are taken in order until the budget is spent; a publication is never split, so the last one taken may overrun it. What is left is counted in `remaining` and arrives in the next delivery.
-
-| Code | Meaning |
-| --- | --- |
-| `LOCKED` | A live watcher already holds this identity's stream |
-| `TIMEOUT` | A topic or internal lock did not come free in time |
-| `NOT_FOUND` | The requested record or agent doesn't exist |
-| `PROTOCOL_MISMATCH` | The state root uses a different protocol version |
-| `INVALID` | Usage, input, or persisted state is invalid |
+- A publication is the atomic result of one write to one topic: `sequence`, `topic`, `agent`, `timestamp`, and the changed `records`. It is visible, and wakes its readers, the moment it is appended to history. Every record command is one publication under an OS file lock on its topic; a `--jsonl` load is the only multi-record one, all or nothing.
+- `recipients` are resolved at publication from who is subscribed at that instant (everyone, for `collaboration/rules` and `collaboration/agents`), less the publisher. They are not persisted: a stored audience would be falsified by the next subscription change.
+- A delta read skips your own publications but reads past them. One narrowed to a single record index keeps its own cursor. A delta always includes its first qualifying publication whole, even past the cap.
+- One delivery is a delta of every readable topic with unread publications, up to a shared budget (`{"deliveries": [...], "remaining": N, "default_read_limit": 20}`), taken in topic order; a publication is never split.
+- `watch` writes the `status` answer the moment it holds ownership, before any wait, then streams deliveries, acknowledging each. `--once` writes the answer and one delivery, then exits. One document with a non-zero exit is a failed wait, never a delivery still coming. A blocked `watch` whose agent leaves returns `NOT_FOUND`.
+- One ownership lock per identity: a second watcher gets `LOCKED` naming the PID that holds it, so any number of restore attempts converge on one stream. `status` never takes that lock; its `holder` (`adapter` or `self`) is recorded by whatever took it and reported only while that process lives.
+- `protocol.json` gates the state root: a missing, malformed, or mismatched declaration returns `PROTOCOL_MISMATCH` before anything runs. There is no migration; a new protocol starts a fresh state root. Persisted JSON shapes are pinned by a wire-compatibility test, so changing one forces a protocol bump.

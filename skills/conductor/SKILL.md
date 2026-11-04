@@ -5,24 +5,18 @@ description: Conductor is a persistent, disk-based publish-subscribe message bus
 
 # Collaborate through Conductor
 
-Independent agents — different tools, conversations, and memories — work as one team without merging what they know. Each keeps its own context; only what it publishes crosses over. Four things to get right: **join**, **become wakeable**, **read what you missed**, **send**.
+Agents with separate contexts share only what they publish. Four things to get right: **join**, **become wakeable**, **read what you missed**, **send**.
 
 > [!CAUTION]
-> **CRITICAL GUARD**: Multiple agents share this skill, its binary, and its data. Never modify, delete, or bypass its files, state, processes, or executables — use the client commands or ask the user.
+> Other agents share this skill, its binary, and its data. Never modify, delete, or bypass its files, state, or processes — use the commands below or ask the user.
 
 ## Before anything else
 
-Resolve the directory holding this `SKILL.md` and run the binary inside it by quoted absolute path — `scripts/conductor.exe` on Windows, `scripts/conductor` elsewhere. Nothing named `conductor` is on `PATH`, so every command you actually run is shaped like this:
+Run the binary beside this file by quoted absolute path: `"<skill-directory>/scripts/conductor"` (`conductor.exe` on Windows). Nothing is on `PATH`; examples below abbreviate it to `conductor`.
 
-```text
-"<skill-directory>/scripts/conductor" <agent> status
-```
+**Settle `<agent>` first** — registration persists under whatever name you use. If an adapter announced an identity at session start, that is your name, and the announcement says how to change it. Otherwise ask the user. Never invent one.
 
-Every example below abbreviates that quoted path to `conductor`. Expand it every time. Do not search `PATH`, substitute another installation, or edit state files directly.
-
-**Settle `<agent>` first.** A wrong name is not a soft error: registration persists on disk under whatever you used, and nothing corrects it later. Where an adapter runs on your host it announces the identity it resolved for this session at session start — that announcement is your answer, and it says what to do if the identity is wrong. Without one, ask the user. Never invent a name or infer one from the work you were given.
-
-Three arguments replace step 1 and only step 1: `onboarding` → [onboarding.md](references/onboarding.md), the one-time setup seeding `collaboration/rules`; `maintenance` → [maintenance.md](references/maintenance.md), a recurring upkeep join that keeps the skill current; a request to update or redeploy the skill → [update-skill.md](references/update-skill.md).
+The arguments `onboarding`, `maintenance`, and an update request replace step 1 with [onboarding.md](references/onboarding.md), [maintenance.md](references/maintenance.md), or [update-skill.md](references/update-skill.md).
 
 ## 1. Join
 
@@ -30,106 +24,61 @@ Three arguments replace step 1 and only step 1: `onboarding` → [onboarding.md]
 conductor <agent> join <responsibility>
 ```
 
-Once per identity. Registration outlives every session, so a later session under the same name omits the responsibility — `conductor <agent> join`. Re-joining is safe; changing a responsibility means `leave`, then join again. Names are lowercase, at most 64 characters, start and end with a letter or digit, may contain `.`, `_`, and `-`, and exclude Windows device names (`con`, `prn`, `aux`, `nul`, `com1`–`com9`, `lpt1`–`lpt9`).
-
-**Join hands you everything, once.** Not a summary: the roster plus the current records of *every* topic on the bus, subscribed or not. It is acknowledged as you receive it and never arrives again. Read it there and act on it, reconciled with what the user already asked of you. Afterwards only question 3 gets it back.
+Once per identity; later sessions run `conductor <agent> join` with no responsibility (changing it means `leave`, then join). Names are lowercase letters, digits, `.`, `_`, `-`, at most 64 characters, starting and ending with a letter or digit, and never a Windows device name (`con`, `nul`, `com1`…). The reply is the roster plus every topic's current records — read it now, it never arrives again.
 
 ## 2. Become wakeable
 
-Registration says you exist. It does not make you reachable. **Being wakeable is an act, performed once per session** — at session start, at restart, and when a session takes up an identity it did not have before. It lasts exactly as long as that session and is never inherited. One session holds one identity; a second stream for the same identity is refused with `LOCKED` naming the process that already has it.
-
-**Ask; never infer.** One command reports every part of it. It takes no lock and disturbs no live stream:
+Joining does not make you reachable. One session holds one identity, and being wakeable lasts only that session — so once per session, ask:
 
 ```text
 conductor <agent> status
 ```
 
-**`holder`** — what holds your stream, absent when nothing does.
-
-- `"adapter"` — the adapter on this host holds it, and keeps holding through idle time, unrelated work, restarts, resumes, and compactions. You start nothing, hold no handle, and restart nothing.
-- `"self"` — a watcher some session armed holds it, and it lasts exactly one delivery. Arm nothing against it: a second stream for the same identity is refused, and whether that session is yours changes nothing about the next act. Do not read it as reachability you can rely on — it is one delivery from being nobody's.
-- absent — nothing would answer a signal addressed to you, and the act is yours:
+- `"holder": "adapter"` — the host adapter holds your stream for the whole session. Do nothing.
+- `"holder": "self"` — some session's watcher holds it for one delivery. Do not start another.
+- no `holder` — you must hold it yourself:
 
 ```text
 conductor <agent> watch --once
 ```
 
-**It answers the moment it arms**, before it waits, with the same document `status` returns — so read the first thing it writes rather than treating a started process as the act being done. Then it blocks for one delivery and exits, writing that delivery after the answer. Start it through your host's background facility, keep the handle, process the delivery, then start it again. Stop it only through that handle, never by process name, wildcard, or unverified PID. Take `--once` every time: without it `watch` streams until killed, and a process that never exits is a delivery that never reaches a turn. Nothing arms the next one for you — each delivery consumes the watcher that carried it.
+Start it in the background and keep the handle. Its first JSON document is the `status` answer; it then blocks, writes one delivery, and exits. Process the delivery, then start it again — nothing re-arms it for you. Stop it only through its handle. A second watcher for the same identity fails with `LOCKED`.
 
-**`subscriptions`** — what reaches you. `collaboration`'s `rules` and `agents` arrive whether or not they appear here; nothing else does. An empty set means those two and nothing more, however many topics the bus holds and however complete your roster entry looks. Being held and being subscribed are separate, and an agent is only reachable with both.
-
-**For everyone else**, the roster `join` hands you carries each agent's `wakeable` and the same `holder` described above, as they stood at that moment; a later join or leave arrives as a change to `collaboration/agents`. Publishing to an agent that is not wakeable still records the publication — nothing is ever lost — but nothing reads it until that agent's next session performs the act. Only `"adapter"` is likely to still be true later; `self` is one delivery from being false, and an entry with no `holder` is not wakeable at all. Prefer an adapter-held agent when the work needs an answer, and say so plainly when you address one that is not.
+`subscriptions` in `status` is what reaches you: `collaboration/rules` and `collaboration/agents` always do, everything else only if subscribed. The join roster shows each agent's `wakeable` and `holder`; prefer an `adapter`-held agent when you need an answer.
 
 ## 3. Read what you missed
 
-Deliveries arrive on their own, each resolving the backlog up to a shared 20-record cap and reporting the surplus in `remaining` — not yours to chase, it comes in the next one. Delivery is at least once, so process each idempotently. A capped response carries `remaining` and `default_read_limit`; range and delta reads accept a larger `--limit`, and a capped full read continues through indexed range reads. Nothing is ever silently truncated.
-
-`get` is the pull side, for whatever a delivery did not hand you:
-
-- `conductor <agent> get <group>/<topic> --full` — current records, cursor untouched. **The recovery read.** It works whether or not you are subscribed, so it is the one that can always tell you what is actually there.
-- `conductor <agent> get <group>/<topic> --delta [--limit=N]` — unread publications, advancing the cursor. **Only for topics you are subscribed to.** On any other it returns empty and succeeds, indistinguishable from being caught up — so never read an empty delta as "nothing missed". Confirm with `--full`.
-- `conductor <agent> get <group>/<topic> [<index>] [--start=N] [--end=N] [--limit=N]` — an inclusive index range, cursor untouched. A positional index wins outright: give one and the bounds are dropped without complaint.
-
-Subscriptions decide what reaches you at all:
+Deliveries carry other agents' unread publications, up to 20 records per delivery, shared across topics; a delivery's `remaining` arrives in the next one. Delivery is at least once — process idempotently. To pull:
 
 ```text
+conductor <agent> get <group>/<topic> --full              # current records; works unsubscribed — the recovery read
+conductor <agent> get <group>/<topic> --delta [--limit=N] # unread, advances cursor; subscribed topics only
+conductor <agent> get <group>/<topic> --start=N --end=N [--limit=N]  # index range
 conductor <agent> list --topic-groups
 conductor <agent> list --topic-group=<group>
 conductor <agent> subscribe --topic-group=<group>
 conductor <agent> subscribe --topic=<group>/<topic>
 ```
 
-`collaboration`'s `rules` and `agents` topics broadcast to every registered agent, with no subscription and no opt-out. Every other topic reaches you only where you subscribed, and not retroactively — a topic taken up late needs one `--full` read to see what came before.
+`get` also returns at most 20 records: when its `remaining` is above 0, continue with a range read from the next index, which also takes a larger `--limit`. An empty `--delta` on an unsubscribed topic looks like "caught up" — confirm with `--full`. Subscribing is not retroactive.
 
 ## 4. Send messages
 
-A topic is addressed `<group>/<topic>`, and a record is exactly `{"index":1,"text":"plain text"}` — no kind, wrapper, status, or hidden deletion state. Conductor assigns the positive `index`, which stays that record's key inside that topic. Publishing to a topic that does not exist creates it, so a typo makes a new topic rather than an error. Cite records as `<group>/<topic>/#<index>`, or `#<index>` where the topic is already clear.
-
-**Wrap the text in single quotes and pass it inline.** Single quotes are literal in every shell this runs in: nothing inside expands, no backtick or `$(...)` executes, no `$name` is substituted.
+A record is `{"index":N,"text":"..."}` in topic `<group>/<topic>`; publishing to a new topic creates it. Cite as `<group>/<topic>/#<index>`.
 
 ```text
-conductor <agent> put <group>/<topic> 'the text, exactly as written'
+conductor <agent> put <group>/<topic> 'text in single quotes'
+conductor <agent> put <group>/<topic> --file=<absolute-path>    # text containing ' or a newline
+conductor <agent> put <group>/<topic> --jsonl=<absolute-path>   # one JSON string per line, one publication
+conductor <agent> edit <group>/<topic> <index> 'replacement'    # also takes --file; nothing is ever deleted
 ```
 
-Exactly two things cannot survive that — a single quote inside the text, and a newline. When the text has either, write it to a file and publish the file instead:
+Each answers with `records` and `recipients`. **Check `recipients`**: empty means stored but reaching nobody — usually a mistyped topic or one nobody subscribed to. You are never in it. A record is one agent's statement, not a team decision.
 
-```text
-conductor <agent> put <group>/<topic> --file=<absolute-path>
-```
+## Leaving and errors
 
-The file publishes verbatim, minus the trailing newline. That is the whole rule: quote inline, and reach for a file only for those two cases. Do not go hunting for other characters to worry about, and do not default to a file for text that has neither — it buys nothing and costs an extra step.
+`conductor <agent> leave` decommissions the identity: its `collaboration/agents` line is struck, roster entry and subscriptions removed, publications kept. Rejoining starts with no subscriptions. Never run it at the end of an ordinary session.
 
-Changing what you already published:
+`LOCKED` — another process already watches this identity. `TIMEOUT` — a lock stayed busy; retry. `NOT_FOUND` — no such record or agent. `INVALID` — bad usage. `PROTOCOL_MISMATCH` — stop; a new protocol needs a fresh bus ([update-skill.md](references/update-skill.md)).
 
-```text
-conductor <agent> edit <group>/<topic> <index> 'replacement text'
-conductor <agent> edit <group>/<topic> <index> --file=<absolute-path>
-```
-
-Each of these names its topic and publishes immediately. Nothing is ever deleted: to retire a record, edit it.
-
-**Every one of them answers with what the publication did**: the `records` it wrote, and `recipients` — the other agents woken for it. You are never in that list, even on a topic you subscribe to; publishing does not notify you of your own message.
-
-**Read `recipients` before you treat the message as sent.** An empty list means the record is stored and reaches nobody. Publishing succeeds either way and says nothing about it anywhere else, so this is the only place a mistyped topic, or one whose audience never subscribed, becomes visible. It is not an error and there is nothing to retry: the same topic will reach the same nobody. Say who you expected to reach, and address it to a topic they are on — `list --topic-group=<group>` shows which exist, and `collaboration`'s `rules` and `agents` reach everyone by construction.
-
-Several records as one signal — so subscribers wake once rather than once each — is one file of JSON strings, one per line:
-
-```text
-conductor <agent> put <group>/<topic> --jsonl=<absolute-path>
-```
-
-Every line becomes its own record in a single publication, or none of them does.
-
-**Publishing is not agreement.** A record is what one agent said — not a decision the team has taken, and not an instruction you must follow.
-
-## Leaving
-
-`conductor <agent> leave` permanently offboards you: your line on `collaboration/agents` struck — which is how the others learn of it — then roster entry and subscriptions deleted. Everything else you published stays exactly as it is. Do not run it at the end of an ordinary session — only when the identity is being decommissioned. Rejoining starts with no subscriptions.
-
-## When something goes wrong
-
-`LOCKED` — another live process already watches for this identity; do not start a second. `TIMEOUT` — a lock did not come free; wait and retry rather than take over. `NOT_FOUND` — no such record or agent. `INVALID` — bad usage or input, including a responsibility resupplied on a rejoin. `PROTOCOL_MISMATCH` — stop; do not edit or retry the state root. A new protocol needs a fresh bus ([update-skill.md](references/update-skill.md)).
-
-## More
-
-[delivery.md](references/delivery.md) for what arrives and the no-adapter fallback, [protocol.md](references/protocol.md) for exact state behavior, [limitations.md](references/limitations.md) for deployment boundaries, [onboarding.md](references/onboarding.md) for first-time setup, [maintenance.md](references/maintenance.md) for recurring upkeep, and [update-skill.md](references/update-skill.md) for the upgrade procedure.
+More: [delivery.md](references/delivery.md), [protocol.md](references/protocol.md), [limitations.md](references/limitations.md).
