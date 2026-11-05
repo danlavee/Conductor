@@ -10,26 +10,15 @@ conductor adapter claude install <absolute-directory>/adapters/claude-code
 
 That places this tree and puts the executable at `bin/conductor` inside it (`bin/conductor.exe` on Windows) — the exact path the hooks name, since they are exec-form and name no shell. Staging, hashing, verification and re-running are the same as for the skill: installing twice reports `already-installed` and changes nothing.
 
-Two steps remain, and both are deliberately the user's:
+One step remains, and it is deliberately the user's: point the host at it, once, with `claude plugin marketplace add <the directory above>`, then install `conductor@conductor-adapters`. Conductor does not write the host's plugin registry — that is private, undocumented state, and the [design note](../../docs/design/wake-adapters.md) says why depending on it would be a mistake.
 
-1. Point the host at it, once: `claude plugin marketplace add <the directory above>`, then install `conductor@conductor-adapters`. Conductor does not write the host's plugin registry — that is private, undocumented state, and the [design note](../../docs/design/wake-adapters.md) says why depending on it would be a mistake.
-2. Bind each project to an identity by writing its agent name into a `.conductor-agent` file at the project root. Plain UTF-8 with no byte order mark is easiest, though one is tolerated.
-
-Without step 2 the adapter loads and does nothing, which is the intended behaviour for a project that has not opted in.
-
-For a second agent working in a project that is already bound to a different one, the project file cannot help — it names one identity for every session that opens there. That agent binds its own session instead, once, from inside it:
-
-```
-conductor adapter claude bind <agent>
-```
-
-The binding is recorded against the session, outranks the project file for that session alone, and is forgotten when the session ends. The identity has to be on the roster first; an unregistered name is refused. A session started before the plugin was installed or enabled has no hook to read the binding — start a new session instead.
+Nothing is configured per project. A session the adapter serves acts as whichever agent joins from inside it: `join` answers `"wake": "adapter"` and binds the session to that name, and the binding is forgotten when the session ends. Until something joins, the adapter loads and does nothing. A session started before the plugin was enabled was never served, so its join answers `"watch"` — start a new session to have the adapter wake it.
 
 ## What it registers
 
 | Hook | Responsibility | Behaviour |
 | --- | --- | --- |
-| `SessionStart` (`startup`, `resume`, `clear`, `compact`, `fork`) | Lifecycle trigger | Reports the bound identity into the session's context and arms a delivery stream. |
+| `SessionStart` (`startup`, `resume`, `clear`, `compact`, `fork`) | Lifecycle trigger | Marks the session as served, announces the agent it is bound to, if any, and arms a delivery stream. |
 | `Stop` | Resident component and turn-boundary trigger | Arms a delivery stream at every turn end. Backgrounded, so it never delays the turn. |
 | `SessionEnd` | Teardown | Ends this session's stream so it does not outlive the session and block the next one. |
 
@@ -41,6 +30,4 @@ The host kills a backgrounded hook at its configured `timeout`, silently and wit
 
 ## Identity binding
 
-`.conductor-agent` is a project file the adapter reads for itself. It is not an argument the model supplies, because an identity the model states is one it can get wrong, forget, or lose to a compaction. Plugin-level user configuration cannot be read from project settings on this host, so a project-owned file is the only binding that can vary per project.
-
-One identity holds one stream. Two sessions open on the same project therefore share an identity, and only the first to arm holds it — see [the integration page](../../docs/integrations/claude-code.md) for what that costs.
+The binding is made by `join`, the one command an agent runs anyway, so there is no second name to state and nothing to get wrong after a compaction: the hooks read the session's binding for themselves. Two sessions in one directory join as two names and hold two streams. Two sessions joining as the *same* name share one stream, and only the first to arm holds it — see [the integration page](../../docs/integrations/claude-code.md) for what that costs.

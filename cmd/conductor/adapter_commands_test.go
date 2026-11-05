@@ -19,13 +19,12 @@ import (
 // session on a waking exit and on no other.
 func TestAdapterArmWakesTheSessionAndOnlyWhenBound(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
-	unbound := t.TempDir()
 
-	// A project that never opted in must stay silent rather than fail every
-	// session start, and must not wake anything.
-	stdout, stderr, err := runAdapterHelper(t, root, unbound, "session-1", "adapter", "claude", "arm")
+	// A session nobody joined from must stay silent rather than fail every
+	// turn end, and must not wake anything.
+	stdout, stderr, err := runAdapterHelper(t, root, "session-1", "adapter", "claude", "arm")
 	if err != nil {
-		t.Fatalf("arm in an unbound project: %v: %s", err, stderr)
+		t.Fatalf("arm in an unbound session: %v: %s", err, stderr)
 	}
 	if len(stdout) != 0 {
 		t.Fatalf("an unbound arm wrote to the model: %s", stdout)
@@ -35,11 +34,8 @@ func TestAdapterArmWakesTheSessionAndOnlyWhenBound(t *testing.T) {
 		t.Fatalf("unbound report = %s: %v", stderr, err)
 	}
 
-	project := t.TempDir()
-	if err := os.WriteFile(filepath.Join(project, claude.IdentityFile), []byte("a\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
+	assertIdentity(t, root, "session-1", "")
+	if _, stderr, err := runAdapterProcess(t, root, "session-1", "a", "join", "dev"); err != nil {
 		t.Fatalf("join a: %v: %s", err, stderr)
 	}
 	// A second agent joining is work addressed to the first, so arming now has
@@ -48,7 +44,7 @@ func TestAdapterArmWakesTheSessionAndOnlyWhenBound(t *testing.T) {
 		t.Fatalf("join b: %v: %s", err, stderr)
 	}
 
-	stdout, stderr, err = runAdapterHelper(t, root, project, "session-1", "adapter", "claude", "arm")
+	stdout, stderr, err = runAdapterHelper(t, root, "session-1", "adapter", "claude", "arm")
 	// Asserted as the literal the host defines, not as the constant the code
 	// under test reads: 2 is the contract, and a test that quotes the same
 	// constant back would keep passing if it drifted.
@@ -111,9 +107,7 @@ func TestAdapterDispatchRejectsMalformedInvocations(t *testing.T) {
 		"install with two destinations": {"adapter", "claude", "install", "a", "b"},
 		"install with a blank one":      {"adapter", "claude", "install", "   "},
 		"a relative destination":        {"adapter", "claude", "install", filepath.Join("adapters", "claude-code")},
-		"bind with no agent":            {"adapter", "claude", "bind"},
-		"bind with a blank agent":       {"adapter", "claude", "bind", "   "},
-		"bind with two agents":          {"adapter", "claude", "bind", "a", "b"},
+		"the retired bind":              {"adapter", "claude", "bind", "a"},
 		"an unknown command":            {"adapter", "claude", "enable"},
 		"an unknown host":               {"adapter", "codex", "arm"},
 	} {
@@ -131,10 +125,6 @@ func TestAdapterDispatchRejectsMalformedInvocations(t *testing.T) {
 // failing hook's stderr to the user -- which is the point.
 func TestAdapterHooksFailLoudlyWithoutTheirContext(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
-	project := t.TempDir()
-	if err := os.WriteFile(filepath.Join(project, claude.IdentityFile), []byte("a\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	for _, command := range []string{"arm", "release", "identity"} {
 		// The environment carries a usable session, so a run that succeeds
 		// here has fallen back to it.
@@ -142,73 +132,48 @@ func TestAdapterHooksFailLoudlyWithoutTheirContext(t *testing.T) {
 			"an empty substitution":        "",
 			"an unsubstituted placeholder": claude.SessionPlaceholder,
 		} {
-			if _, stderr, err := runAdapterProcess(t, root, project, "session-1", "adapter", "claude", command, "--session="+session); err == nil {
+			if _, stderr, err := runAdapterProcess(t, root, "session-1", "adapter", "claude", command, "--session="+session); err == nil {
 				t.Errorf("%s with %s was accepted; stderr = %s", command, name, stderr)
 			}
 		}
-		if _, stderr, err := runAdapterHelper(t, root, "", "session-1", "adapter", "claude", command); err == nil {
-			t.Errorf("%s ran without the project directory the host owes it; stderr = %s", command, stderr)
-		}
 	}
 }
 
-// TestAdapterBindGivesTwoAgentsInOneProjectTheirOwnIdentities is the capability
-// the session binding adds, through real processes, with one
-// `.conductor-agent` naming one of the two.
-func TestAdapterBindGivesTwoAgentsInOneProjectTheirOwnIdentities(t *testing.T) {
+// Joining is the agent's whole part of being wakeable where an adapter serves
+// the session: the join answers "adapter" and binds the session, and two
+// sessions in one directory act as two agents. A session no hook served is
+// one the agent wakes itself, and a released one is forgotten.
+func TestJoinHandsAServedSessionToItsAdapter(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
-	project := t.TempDir()
-	if err := os.WriteFile(filepath.Join(project, claude.IdentityFile), []byte("a\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, agent := range []string{"a", "b"} {
-		if _, stderr, err := runCLIHelper(os.Args[0], root, "", agent, "join", "dev"); err != nil {
-			t.Fatalf("join %s: %v: %s", agent, err, stderr)
+	assertIdentity(t, root, "session-1", "")
+	assertIdentity(t, root, "session-2", "")
+
+	for _, join := range [][3]string{{"session-1", "a", "adapter"}, {"session-2", "b", "adapter"}, {"session-3", "c", "watch"}} {
+		stdout, stderr, err := runAdapterProcess(t, root, join[0], join[1], "join", "dev")
+		if err != nil {
+			t.Fatalf("join %s: %v: %s", join[1], err, stderr)
+		}
+		var answer struct {
+			Wake string `json:"wake"`
+		}
+		if err := json.Unmarshal(stdout, &answer); err != nil || answer.Wake != join[2] {
+			t.Fatalf("join %s in %s: wake = %q, %v; want %q", join[1], join[0], answer.Wake, err, join[2])
 		}
 	}
+	assertIdentity(t, root, "session-1", "a")
+	assertIdentity(t, root, "session-2", "b")
 
-	// Binding is run by the model, so it takes its session from the
-	// environment the host exports to child processes.
-	stdout, stderr, err := runAdapterProcess(t, root, project, "session-2", "adapter", "claude", "bind", "b")
-	if err != nil {
-		t.Fatalf("bind: %v: %s", err, stderr)
-	}
-	var bound claude.Binding
-	if err := json.Unmarshal(stdout, &bound); err != nil || bound != (claude.Binding{Agent: "b", Source: claude.FromSession}) {
-		t.Fatalf("bind result = %s: %v", stdout, err)
-	}
-
-	// Both in the same directory, which the project file alone cannot express.
-	assertIdentity(t, root, project, "session-2", claude.Binding{Agent: "b", Source: claude.FromSession})
-	assertIdentity(t, root, project, "session-1", claude.Binding{Agent: "a", Source: claude.FromProject})
-
-	// Teardown forgets the binding, or it would outlive every session that ever
-	// ran here.
-	if _, stderr, err := runAdapterHelper(t, root, project, "session-2", "adapter", "claude", "release"); err != nil {
+	if _, stderr, err := runAdapterHelper(t, root, "session-2", "adapter", "claude", "release"); err != nil {
 		t.Fatalf("release: %v: %s", err, stderr)
 	}
-	assertIdentity(t, root, project, "session-2", claude.Binding{Agent: "a", Source: claude.FromProject})
+	assertIdentity(t, root, "session-2", "")
 }
 
-// TestAdapterBindRefusesWhatWouldBeAQuietNoOp covers the gates
-// `.conductor-agent` cannot have: bind is run by an agent that has already
-// joined, inside a session that exists, so both can be refused outright.
-func TestAdapterBindRefusesWhatWouldBeAQuietNoOp(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "runtime-state")
-	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
-		t.Fatalf("join a: %v: %s", err, stderr)
-	}
-	if _, _, err := runAdapterProcess(t, root, t.TempDir(), "session-1", "adapter", "claude", "bind", "nobody"); err == nil {
-		t.Fatal("bound an identity that is not on the roster")
-	}
-	if _, _, err := runAdapterProcess(t, root, t.TempDir(), "", "adapter", "claude", "bind", "a"); err == nil {
-		t.Fatal("bound without knowing which session was asking")
-	}
-}
-
-func assertIdentity(t *testing.T, root, project, session string, want claude.Binding) {
+// assertIdentity runs the session-start hook, which serves the session, and
+// checks whom it announces.
+func assertIdentity(t *testing.T, root, session, want string) {
 	t.Helper()
-	stdout, stderr, err := runAdapterHelper(t, root, project, session, "adapter", "claude", "identity")
+	stdout, stderr, err := runAdapterHelper(t, root, session, "adapter", "claude", "identity")
 	if err != nil {
 		t.Fatalf("identity for %s: %v: %s", session, err, stderr)
 	}
@@ -216,28 +181,27 @@ func assertIdentity(t *testing.T, root, project, session string, want claude.Bin
 	if err := json.Unmarshal(stdout, &report); err != nil {
 		t.Fatalf("identity report = %s: %v", stdout, err)
 	}
-	if report.Binding != want || report.Advice == "" {
-		t.Fatalf("%s resolved to %+v; want %+v", session, report, want)
+	if report.Agent != want || report.Advice == "" {
+		t.Fatalf("%s announced %+v; want agent %q", session, report, want)
 	}
 }
 
 // runAdapterHelper spawns a hook the way the host does: the session arrives as
 // a substituted argument, and CLAUDE_CODE_SESSION_ID is set because the host
 // exports it to every child -- including hooks, where it must be ignored.
-func runAdapterHelper(t *testing.T, root, project, session string, args ...string) ([]byte, []byte, error) {
+func runAdapterHelper(t *testing.T, root, session string, args ...string) ([]byte, []byte, error) {
 	t.Helper()
-	return runAdapterProcess(t, root, project, session, append(args, "--session="+session)...)
+	return runAdapterProcess(t, root, session, append(args, "--session="+session)...)
 }
 
-// runAdapterProcess runs from a directory with no identity file above it, so
-// only the project the environment names can answer.
-func runAdapterProcess(t *testing.T, root, project, session string, args ...string) ([]byte, []byte, error) {
+// runAdapterProcess runs a command inside a host session, which the host names
+// in the environment of everything the session starts.
+func runAdapterProcess(t *testing.T, root, session string, args ...string) ([]byte, []byte, error) {
 	t.Helper()
 	command := exec.Command(os.Args[0], args...)
 	command.Dir = t.TempDir()
 	command.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
 	command.Env = replaceEnvironment(command.Env, "CONDUCTOR_HOME", root)
-	command.Env = replaceEnvironment(command.Env, claude.ProjectEnvironment, project)
 	command.Env = replaceEnvironment(command.Env, claude.SessionEnvironment, session)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout

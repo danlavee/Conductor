@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	adapterbundle "github.com/danlavee/Conductor/adapters"
+	"github.com/danlavee/Conductor/internal/adapters/binding"
 	"github.com/danlavee/Conductor/internal/adapters/claude"
 	"github.com/danlavee/Conductor/internal/install"
 	conductor "github.com/danlavee/Conductor/internal/state"
@@ -29,19 +30,14 @@ type adapterReport struct {
 }
 
 // identityReport is the SessionStart hook's announcement into the session it
-// serves: who this session acts as, which binding said so, and how to change
-// it. This is where host-specific identity knowledge reaches an agent, since
-// the shared skill cannot carry facts about one host.
+// serves: who this session acts as, if anyone yet, and how that is decided.
 type identityReport struct {
-	claude.Binding
+	Agent  string `json:"agent,omitempty"`
 	Advice string `json:"advice"`
 }
 
-// identityAdvice is this host's remedy for a wrong identity. Constant, because
-// only the reader knows whether the identity is wrong.
-const identityAdvice = "If this is not the identity you were told to act as, run: conductor adapter claude bind <your-agent-name>. " +
-	"It binds this session alone, outranks the project's .conductor-agent, and is forgotten when this session ends. " +
-	"Never bind an agent that is not you."
+const identityAdvice = "Conductor's Claude Code adapter serves this session. Joining binds the session to the name you join as, " +
+	"and the adapter keeps that name wakeable until the session ends; a join under another name rebinds it."
 
 // sessionFlag carries the host's substituted session identifier. A flag rather
 // than a positional, so a lost substitution is a usage error, not a value.
@@ -72,8 +68,6 @@ func runClaudeAdapterCommand(args []string) error {
 	switch command {
 	case "install":
 		return runAdapterInstall(rest)
-	case "bind":
-		return runAdapterBind(rest)
 	case "arm", "release", "identity":
 	default:
 		return adapterUsageError()
@@ -82,34 +76,33 @@ func runClaudeAdapterCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Hooks are handed the project; their working directory is nothing in
-	// particular, so there is nothing to fall back to.
-	project := os.Getenv(claude.ProjectEnvironment)
-	if strings.TrimSpace(project) == "" {
-		return errors.New(claude.ProjectEnvironment + " is unset, so this host did not export it to the hook")
-	}
 	root, err := conductor.Root(os.Getenv("CONDUCTOR_HOME"))
 	if err != nil {
 		return err
 	}
-	binding, err := claude.ResolveBinding(root, session, project)
+	if command == "identity" {
+		if err := binding.Serve(root, claude.BindingName, session); err != nil {
+			return err
+		}
+	}
+	agent, err := binding.Identity(root, claude.BindingName, session)
 	if err != nil {
 		return err
 	}
 	if command == "identity" {
-		return conductor.WriteJSON(os.Stdout, identityReport{Binding: binding, Advice: identityAdvice})
+		return conductor.WriteJSON(os.Stdout, identityReport{Agent: agent, Advice: identityAdvice})
 	}
-	if binding.Agent == "" {
+	if agent == "" {
 		return reportAdapter(command, claude.Unbound, "", nil)
 	}
-	client, err := conductor.Open(root, binding.Agent)
+	client, err := conductor.Open(root, agent)
 	if err != nil {
 		return err
 	}
 	if command == "arm" {
-		return runAdapterArm(client, session, binding.Agent)
+		return runAdapterArm(client, session, agent)
 	}
-	return runAdapterRelease(client, root, session, binding.Agent)
+	return runAdapterRelease(client, root, session, agent)
 }
 
 // hookSession takes the session identifier from the substituted argument. A
@@ -120,7 +113,7 @@ func hookSession(args []string) (string, error) {
 		return "", adapterUsageError()
 	}
 	session := strings.TrimPrefix(args[0], sessionFlag)
-	if err := claude.ValidateSession(session); err != nil {
+	if err := binding.Validate(session, claude.SessionPlaceholder); err != nil {
 		return "", fmt.Errorf("%s: %w", sessionFlag, err)
 	}
 	return session, nil
@@ -131,7 +124,7 @@ func hookSession(args []string) (string, error) {
 // failure.
 func runAdapterRelease(client *conductor.Client, root, session, agent string) error {
 	released, releaseErr := claude.Release(client, session)
-	if err := errors.Join(releaseErr, claude.ForgetSession(root, session)); err != nil {
+	if err := errors.Join(releaseErr, binding.Forget(root, claude.BindingName, session)); err != nil {
 		return err
 	}
 	outcome := claude.NotOwned
@@ -139,40 +132,6 @@ func runAdapterRelease(client *conductor.Client, root, session, agent string) er
 		outcome = claude.Released
 	}
 	return reportAdapter("release", outcome, agent, nil)
-}
-
-// runAdapterBind records that this session acts as agent, for the case the
-// project file cannot express: several agents in one directory. An identity
-// absent from the roster is a typo, refused rather than bound into a session
-// that would then hold a stream for nobody.
-func runAdapterBind(args []string) error {
-	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-		return adapterBindUsageError()
-	}
-	agent := strings.TrimSpace(args[0])
-	session := os.Getenv(claude.SessionEnvironment)
-	if err := claude.ValidateSession(session); err != nil {
-		return fmt.Errorf("%s: %w", claude.SessionEnvironment, err)
-	}
-	root, err := conductor.Root(os.Getenv("CONDUCTOR_HOME"))
-	if err != nil {
-		return err
-	}
-	client, err := conductor.Open(root, agent)
-	if err != nil {
-		return err
-	}
-	status, err := client.WatchStatus()
-	if err != nil {
-		return err
-	}
-	if !status.Registered {
-		return errors.New("cannot bind to " + agent + ": it is not on the roster, so join first")
-	}
-	if err := claude.BindSession(root, session, agent); err != nil {
-		return err
-	}
-	return conductor.WriteJSON(os.Stdout, claude.Binding{Agent: agent, Source: claude.FromSession})
 }
 
 // runAdapterArm exits with the host's wake code exactly when something was
@@ -227,13 +186,9 @@ func adapterHostsUsageError() error {
 }
 
 func adapterUsageError() error {
-	return errors.New("usage: conductor adapter claude <arm|release|identity> --session=<id> | bind <agent> | install <dir>")
+	return errors.New("usage: conductor adapter claude <arm|release|identity> --session=<id> | install <dir>")
 }
 
 func adapterInstallUsageError() error {
 	return errors.New("usage: conductor adapter claude install <absolute-adapter-directory> [--replace]")
-}
-
-func adapterBindUsageError() error {
-	return errors.New("usage: conductor adapter claude bind <agent>")
 }

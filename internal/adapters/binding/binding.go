@@ -1,5 +1,6 @@
-// Package binding stores the identity a host session speaks for.
-// The file is the agent name alone, which is the shape Claude already uses.
+// Package binding stores the identity a host session speaks for. A session's
+// file exists once its adapter has served it, and holds the agent name once
+// the agent joins from inside it.
 package binding
 
 import (
@@ -46,13 +47,47 @@ func Identity(root, adapter, session string) (string, error) {
 	return readName(path)
 }
 
+// Serve records that the adapter's session-start hook ran for session, which
+// is what lets a join inside it hand the session to the adapter. An identity
+// already bound -- a resumed or compacted session -- stays bound.
+func Serve(root, adapter, session string) error {
+	path, err := sessionPath(root, adapter, session)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}
+
+// Served reports whether the adapter has served session.
+func Served(root, adapter, session string) (bool, error) {
+	path, err := sessionPath(root, adapter, session)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // Bind records that this session acts as agent.
 func Bind(root, adapter, session, agent string) error {
 	path, err := sessionPath(root, adapter, session)
 	if err != nil {
 		return err
 	}
-	return writeAtomic(path, []byte(agent))
+	return WriteAtomic(path, []byte(agent))
 }
 
 // Forget removes a session binding. Absence is success.
@@ -85,7 +120,8 @@ func readName(path string) (string, error) {
 	return strings.TrimSpace(strings.TrimPrefix(string(data), byteOrderMark)), nil
 }
 
-func writeAtomic(path string, data []byte) error {
+// WriteAtomic publishes by rename, so a reader never sees a partial file.
+func WriteAtomic(path string, data []byte) error {
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err

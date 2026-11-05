@@ -32,7 +32,15 @@ func runAgentCommand(agent, command string, rest []string) error {
 		if err != nil {
 			return err
 		}
-		if err := conductor.WriteJSON(os.Stdout, snapshot); err != nil {
+		wake, err := bindWake(client.Home, agent)
+		if err != nil {
+			return err
+		}
+		answer := struct {
+			conductor.Snapshot
+			Wake string `json:"wake"`
+		}{snapshot, wake}
+		if err := conductor.WriteJSON(os.Stdout, answer); err != nil {
 			return err
 		}
 		return client.AcknowledgeSnapshot(snapshot)

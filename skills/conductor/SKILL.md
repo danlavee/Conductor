@@ -33,9 +33,7 @@ Later sessions under the same name omit the responsibility. Join answers with th
 Do exactly what `wake` says. Never decide it from which app you think you are in.
 
 - `"adapter"` — this host wakes you. Do nothing, now or later.
-- `"watch"` — you hold your own wake. Start `conductor <agent> watch` in the background and keep the handle. It blocks until something reaches you, prints it, and exits; that exit is what wakes you. **Start it again before you process what it printed**, every time — otherwise anything sent while you work waits for your next session. A second watcher for your name fails with `LOCKED`: one is already running, so start none.
-- `"none"` — nothing on this host can wake you. Arm nothing. Tell the user once that you will see messages only when they next prompt you.
-- `"unknown"` — do what `"watch"` says, and tell the user once that waking is unverified here.
+- `"watch"` — you hold your own wake. Start `conductor <agent> watch` in the background and keep the handle. It blocks until something reaches you, prints it, and exits; that exit is what wakes you. **Start it again before you process what it printed**, every time — otherwise anything sent while you work waits for your next session. A second watcher for your name fails with `LOCKED`: one is already running, so start none. If you cannot run a background process, start nothing and tell the user once that you will see messages only when they next prompt you.
 
 ## 3. Talk
 

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/danlavee/Conductor/internal/adapters/binding"
 	"github.com/danlavee/Conductor/internal/platform"
 	conductor "github.com/danlavee/Conductor/internal/state"
 )
@@ -24,15 +25,16 @@ const (
 	// spelling for both.
 	AdapterName = "claude-code"
 
+	// BindingName is this adapter's directory in the state root, holding its
+	// session bindings and residencies.
+	BindingName = "claude"
+
 	// SessionEnvironment is exported to processes the model starts.
 	SessionEnvironment = "CLAUDE_CODE_SESSION_ID"
 
 	// SessionPlaceholder is substituted into a hook's argument list, and is
 	// named here so an unsubstituted one can be rejected.
 	SessionPlaceholder = "${CLAUDE_SESSION_ID}"
-
-	// ProjectEnvironment is substituted into a hook's argument list.
-	ProjectEnvironment = "CLAUDE_PROJECT_DIR"
 
 	// WakeExitCode starts a turn in an idle session when a backgrounded hook
 	// exits with it.
@@ -200,7 +202,7 @@ func residencyPath(client *conductor.Client) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(adapterDirectory(client.Home), agent+".json"), nil
+	return filepath.Join(binding.Directory(client.Home, BindingName), agent+".json"), nil
 }
 
 func writeResidency(path string, value residency) error {
@@ -208,7 +210,7 @@ func writeResidency(path string, value residency) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(path, data)
+	return binding.WriteAtomic(path, data)
 }
 
 func readResidency(path string) (residency, error) {

@@ -53,7 +53,7 @@ func TestGrokInstallRewritesTheHookExecutable(t *testing.T) {
 }
 
 func TestGrokIdentityReportsWhenItDoesNotArm(t *testing.T) {
-	stdout, stderr, err := runAdapterHelper(t, t.TempDir(), t.TempDir(), "session-1", "adapter", "grok", "identity")
+	stdout, stderr, err := runAdapterHelper(t, t.TempDir(), "session-1", "adapter", "grok", "identity")
 	if err != nil {
 		t.Fatalf("identity: %v: %s", err, stderr)
 	}

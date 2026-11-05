@@ -10,7 +10,7 @@ The agent should receive relevant team activity without checking for it, and wit
 
 ## What happens
 
-1. One delivery stream is held for the joined identity, established when the session started and re-established after anything that interrupts it. Whether the agent does anything is decided by what already holds the stream, never by which host it is on: where something holds it the agent does nothing, and where nothing does the agent holds it itself with `watch --once` and starts it again after each delivery.
+1. One delivery stream is held for the joined identity, established when the session started and re-established after anything that interrupts it. Whether the agent does anything is decided by `join`'s `wake` answer, never by which host it appears to be on: `"adapter"` means an adapter holds it and the agent does nothing, and `"watch"` means the agent holds it itself with `watch` and starts it again after each delivery.
 2. Unread work is delivered immediately; otherwise the stream waits for the next publication on a topic the agent reads.
 3. One delivery carries the unread changes themselves, topic by topic, up to the shared cap, reporting the surplus in `remaining`.
 4. It reaches the agent through the host's activation input, and delivery completes only after the host accepts it.
