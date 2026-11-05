@@ -47,17 +47,28 @@ const identityAdvice = "If this is not the identity you were told to act as, run
 // than a positional, so a lost substitution is a usage error, not a value.
 const sessionFlag = "--session="
 
+// runAdapterCommand routes a host's hook to that host. Each host owns its own
+// usage, so the verbs only hooks run never reach the surface agents read.
 func runAdapterCommand(args []string) error {
-	if len(args) >= 1 && args[0] == "grok" {
-		return runGrokAdapterCommand(args[1:])
+	if len(args) == 0 {
+		return adapterHostsUsageError()
 	}
-	if len(args) >= 1 && args[0] == "agy" {
+	switch args[0] {
+	case "claude":
+		return runClaudeAdapterCommand(args[1:])
+	case "grok":
+		return runGrokAdapterCommand(args[1:])
+	case "agy":
 		return runAGYAdapterCommand(args[1:])
 	}
-	if len(args) < 2 || args[0] != "claude" {
+	return adapterHostsUsageError()
+}
+
+func runClaudeAdapterCommand(args []string) error {
+	if len(args) == 0 {
 		return adapterUsageError()
 	}
-	command, rest := args[1], args[2:]
+	command, rest := args[0], args[1:]
 	switch command {
 	case "install":
 		return runAdapterInstall(rest)
@@ -209,6 +220,10 @@ func reportAdapter(command string, outcome claude.Outcome, agent string, detail 
 		report.Detail = detail.Error()
 	}
 	return conductor.WriteJSON(os.Stderr, report)
+}
+
+func adapterHostsUsageError() error {
+	return errors.New("usage: conductor adapter <claude|grok|agy> <command>")
 }
 
 func adapterUsageError() error {

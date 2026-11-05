@@ -374,9 +374,24 @@ func TestUsageExposesNoVendorWatchTransports(t *testing.T) {
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace] | conductor adapter grok <identity|reside|stop|release|reannounce> --session=<id> | conductor adapter grok bind <agent> [--session=<id>] | conductor adapter grok install <absolute-adapter-directory> [--replace] | conductor adapter agy <identity|stop> [--hook] [--session=<id>] | conductor adapter agy reside --session=<id> | conductor adapter agy release [--session=<id>] | conductor adapter agy bind <agent> [--session=<id>] | conductor adapter agy takeover --agent=<agent> [--confirm=<token>] | conductor adapter agy install <absolute-adapter-directory> [--replace] | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch | conductor <agent> status"
+	const want = "usage: conductor <agent> join [responsibility] | conductor <agent> put <group/topic> (<text> | --file=<path> | --jsonl=<path>) | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> watch | conductor <agent> status | conductor <agent> leave | conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor version | conductor adapter <host> <command>"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
+	}
+}
+
+// Hook verbs are for hooks. An agent that mistypes a command reads the usage,
+// so a hook verb there is a command it may try; each host answers for its own.
+func TestAdapterUsageStaysWithItsHost(t *testing.T) {
+	for _, args := range [][]string{{"adapter"}, {"adapter", "nosuchhost"}} {
+		if err := run(args); err == nil || err.Error() != adapterHostsUsageError().Error() {
+			t.Fatalf("%v: error = %v, want the host list", args, err)
+		}
+	}
+	for host, want := range map[string]error{"claude": adapterUsageError(), "grok": grokUsageError(), "agy": agyAdapterUsageError()} {
+		if err := run([]string{"adapter", host, "nosuchverb"}); err == nil || err.Error() != want.Error() {
+			t.Fatalf("%s: error = %v, want %v", host, err, want)
+		}
 	}
 }
 
