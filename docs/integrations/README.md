@@ -13,7 +13,7 @@ Conductor's core is host-neutral. `watch` acknowledges the arming act and then d
 
 ## Interim fallback
 
-A host without an adapter uses `conductor <agent> watch --once`, and the agent owns the lifecycle: start it through the host's background facility, retain the handle, process the delivery, start it again. It writes two JSON documents, not one — the participation answer at the moment it acquires ownership, so arming reports what it achieved, and then the single delivery it blocks for before exiting. Parse its stdout as a sequence, and read the exit code with it: a failed wait leaves the arm answer written and reports on stderr, so one document at a non-zero exit is a watch that ended, not a delivery still coming.
+A host without an adapter uses `conductor <agent> watch`, and the agent owns the lifecycle: start it through the host's background facility, retain the handle, process the delivery, start it again. It blocks for one delivery, writes it as one JSON document, and exits. A failed wait exits non-zero with stdout empty and the reason on stderr.
 
 `--once` is a lifecycle flag, not a vendor flag — the core still knows nothing about which host is calling it — and it is not merely a transition shim. Every wake verified on an un-adapted host works by the watch *process completing*: the harness notices the backgrounded task finish and resumes the turn. A stream that never exits cannot be woken that way. So `--once` is the primitive for hosts whose wake is process completion, and it outlives the transition even though it is also what the un-migrated path uses.
 

@@ -25,12 +25,6 @@ func runWatch(ctx context.Context, client *conductor.Client) error {
 		return err
 	}
 	defer func() { _ = release() }()
-	// Answering before the wait puts what `status` reports in front of the
-	// agent at the one moment it decides whether arming is done; a started
-	// process alone says nothing about reachability.
-	if err := writeStatus(client); err != nil {
-		return err
-	}
 	batch, err := client.WatchContext(ctx)
 	if err != nil {
 		return err

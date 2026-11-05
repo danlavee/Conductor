@@ -422,10 +422,8 @@ func TestWatchResolvesContentBeforeWaking(t *testing.T) {
 	if err != nil || len(stderr) != 0 {
 		t.Fatalf("watch failed: %v, stderr = %q", err, stderr)
 	}
-	deliveries := json.NewDecoder(bytes.NewReader(stdout))
-	readArmAcknowledgement(t, deliveries)
 	var batch conductor.Batch
-	if err := deliveries.Decode(&batch); err != nil {
+	if err := json.Unmarshal(stdout, &batch); err != nil {
 		t.Fatalf("stdout is not a delivery batch: %q: %v", stdout, err)
 	}
 	if len(batch.Deliveries) != 1 || batch.Deliveries[0].Topic != "collaboration/agents" || len(batch.Deliveries[0].Publications) != 1 || batch.Deliveries[0].Publications[0].Records[0].Text != "peer: review" {
@@ -510,15 +508,7 @@ func TestStatusReportsRegistrationAndLiveWakeability(t *testing.T) {
 		t.Fatalf("status after join = %#v", joined)
 	}
 
-	// Registered before waiting on ownership, not after: every step between
-	// here and the deliberate stop below can t.Fatal, and a watcher left alive
-	// by one of them still holds a handle inside the directory the test's own
-	// cleanup then tries to remove. Stopping twice is harmless -- stopWatch
-	// discards both the kill and the wait error -- so the insurance costs
-	// nothing on the path where the test succeeds.
 	watch, _ := startWatch(t, root)
-	defer stopWatch(t, watch)
-	waitForOwnership(t, root)
 	watching := readStatus(t, root)
 	if !watching.Registered || !watching.Wakeable || watching.Holder != conductor.HolderSelf {
 		t.Fatalf("status while watching = %#v", watching)
@@ -552,13 +542,7 @@ func TestJoinSnapshotReportsWhoWouldRespond(t *testing.T) {
 			t.Fatalf("join %s: %v: %s", join[0], err, stderr)
 		}
 	}
-	// Registered before waiting on ownership, not after: waitForOwnership can
-	// t.Fatal, and a defer registered later would never run -- leaking a
-	// watcher that still holds a handle inside the directory the test's own
-	// cleanup then tries to remove.
-	watch, _ := startWatch(t, root)
-	defer stopWatch(t, watch)
-	waitForOwnership(t, root)
+	startWatch(t, root)
 
 	stdout, stderr, err := runCLIHelper(os.Args[0], root, "", "b", "join")
 	if err != nil {
@@ -601,9 +585,9 @@ func TestStatusDoesNotInitializeTheBus(t *testing.T) {
 	}
 }
 
-// startWatch runs a watch as a real process, and hands back a
-// decoder over its stdout so a test can wait on an actual delivery rather than
-// poll a buffer the child is concurrently writing.
+// startWatch runs agent a's watch as a real process, returns once it holds the
+// stream, and hands back a decoder over its stdout so a test can wait on an
+// actual delivery rather than poll a buffer the child is concurrently writing.
 func startWatch(t *testing.T, root string) (*exec.Cmd, *json.Decoder) {
 	t.Helper()
 	watch := exec.Command(os.Args[0], "a", "watch")
@@ -616,37 +600,12 @@ func startWatch(t *testing.T, root string) (*exec.Cmd, *json.Decoder) {
 	if err := watch.Start(); err != nil {
 		t.Fatal(err)
 	}
-	deliveries := json.NewDecoder(stdout)
-	readArmAcknowledgement(t, deliveries)
-	return watch, deliveries
-}
-
-// readArmAcknowledgement consumes what watch answers the moment it takes the
-// stream, and is the reason every caller here decodes a sequence rather than
-// one document. Arming is an act the agent concludes from, and it used to
-// return nothing at all -- leaving the host's pid as the only evidence, which
-// reports that a process exists and not that anything reaches the identity.
-func readArmAcknowledgement(t *testing.T, deliveries *json.Decoder) conductor.WatchStatus {
-	t.Helper()
-	var armed conductor.WatchStatus
-	// Bounded, because the defect this helper exists to catch is the answer
-	// arriving only with the first delivery. On a stream where no delivery is
-	// coming -- the case that matters -- an unbounded decode reports that as a
-	// package-wide test timeout instead of as this assertion.
-	decoded := make(chan error, 1)
-	go func() { decoded <- deliveries.Decode(&armed) }()
-	select {
-	case err := <-decoded:
-		if err != nil {
-			t.Fatalf("watch armed without answering: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("watch took the stream and answered nothing before waiting")
-	}
-	if !armed.Wakeable || armed.Holder != conductor.HolderSelf {
-		t.Fatalf("arm acknowledgement = %#v; want a wakeable identity held by this session", armed)
-	}
-	return armed
+	// Cleanup before the wait, which can t.Fatal: a leaked watcher holds a
+	// handle inside the directory the test's own cleanup removes. Stopping
+	// twice is harmless, so a test may also stop it deliberately.
+	t.Cleanup(func() { stopWatch(t, watch) })
+	waitForOwnership(t, root)
+	return watch, json.NewDecoder(stdout)
 }
 
 func stopWatch(t *testing.T, watch *exec.Cmd) {
