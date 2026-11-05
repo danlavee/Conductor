@@ -187,6 +187,35 @@ func TestTextIdenticalEditStillPublishes(t *testing.T) {
 	}
 }
 
+// "Tell X" must reach X with nothing set up by either side, and nobody else:
+// a private topic is the bus's only form of address.
+func TestPrivateTopicReachesItsOwnerAlone(t *testing.T) {
+	home := t.TempDir()
+	sender := joined(t, home, "sender")
+	joined(t, home, "target")
+	joined(t, home, "bystander")
+
+	dispatch, err := sender.Put("private/target", "for target only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatch.Recipients) != 1 || dispatch.Recipients[0] != "target" {
+		t.Fatalf("recipients = %#v; want exactly the owner", dispatch.Recipients)
+	}
+	news, err := sender.Put("collaboration/broadcast", "for everyone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(news.Recipients) != 2 {
+		t.Fatalf("broadcast recipients = %#v; want every agent but the publisher", news.Recipients)
+	}
+
+	_, err = sender.SubscribeTopic("private/target")
+	assertCode(t, err, "INVALID")
+	_, err = sender.SubscribeTopicGroup("private")
+	assertCode(t, err, "INVALID")
+}
+
 // A publisher subscribed to its own topic looks addressed and reaches nobody.
 // The dispatch must not hand the publisher its own name back, or an agent
 // alone on a topic it created reads a non-empty audience and stops there.

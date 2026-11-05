@@ -17,9 +17,17 @@ func (c *Client) Subscription() (Subscription, error) {
 	return c.loadSubscription(agent)
 }
 
+// errPrivateSubscription refuses every subscription into the private group:
+// an agent's own private topic already reaches it, and another's is not its
+// to read.
+var errPrivateSubscription = &ProtocolError{Code: "INVALID", Text: "private/<name> reaches only <name>, without subscribing"}
+
 func (c *Client) SubscribeTopicGroup(group string) (Subscription, error) {
 	if strings.TrimSpace(group) != group || group == "" || strings.ContainsAny(group, `/\\`) {
 		return Subscription{}, errors.New("invalid topic group")
+	}
+	if group == privateGroup {
+		return Subscription{}, errPrivateSubscription
 	}
 	return c.updateSubscription(func(subscription *Subscription) {
 		subscription.TopicGroups = appendUnique(subscription.TopicGroups, group)
@@ -29,6 +37,9 @@ func (c *Client) SubscribeTopicGroup(group string) (Subscription, error) {
 func (c *Client) SubscribeTopic(topic string) (Subscription, error) {
 	if err := validTopic(topic); err != nil {
 		return Subscription{}, err
+	}
+	if strings.HasPrefix(topic, privateGroup+"/") {
+		return Subscription{}, errPrivateSubscription
 	}
 	return c.updateSubscription(func(subscription *Subscription) {
 		subscription.Topics = appendUnique(subscription.Topics, topic)
@@ -85,12 +96,12 @@ func (c *Client) updateSubscription(update func(*Subscription)) (Subscription, e
 	if err != nil {
 		return Subscription{}, err
 	}
-	before, err := c.topicsReadableBy(subscription)
+	before, err := c.topicsReadableBy(agent, subscription)
 	if err != nil {
 		return Subscription{}, err
 	}
 	update(&subscription)
-	after, err := c.topicsReadableBy(subscription)
+	after, err := c.topicsReadableBy(agent, subscription)
 	if err != nil {
 		return Subscription{}, err
 	}
@@ -126,10 +137,10 @@ func (c *Client) loadSubscription(agent string) (Subscription, error) {
 }
 
 // isSubscribed answers whether a topic's content is the agent's to read, and
-// so whether a publication there wakes it. The forced-broadcast topics are,
+// so whether a publication there wakes it. The automatic topics are,
 // unconditionally.
 func (c *Client) isSubscribed(agent, topic string) (bool, error) {
-	if forcedBroadcastTopic(topic) {
+	if slices.Contains(automaticTopics(agent), topic) {
 		return true, nil
 	}
 	subscription, err := c.loadSubscription(agent)
@@ -166,18 +177,18 @@ func (c *Client) readersOf(topic, publisher string) ([]string, error) {
 }
 
 // readableTopics lists, sorted, every topic whose delta is the agent's to
-// read: the forced-broadcast topics, its subscribed topics, and every topic
-// that currently exists in its subscribed groups.
+// read: its automatic topics, its subscribed topics, and every topic that
+// currently exists in its subscribed groups.
 func (c *Client) readableTopics(agent string) ([]string, error) {
 	subscription, err := c.loadSubscription(agent)
 	if err != nil {
 		return nil, err
 	}
-	return c.topicsReadableBy(subscription)
+	return c.topicsReadableBy(agent, subscription)
 }
 
-func (c *Client) topicsReadableBy(subscription Subscription) ([]string, error) {
-	topics := append([]string{collaborationRulesTopic, collaborationAgentsTopic}, subscription.Topics...)
+func (c *Client) topicsReadableBy(agent string, subscription Subscription) ([]string, error) {
+	topics := append(automaticTopics(agent), subscription.Topics...)
 	for _, group := range subscription.TopicGroups {
 		listed, err := c.ListTopics(group)
 		if err != nil {

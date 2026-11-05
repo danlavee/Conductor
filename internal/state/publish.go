@@ -7,20 +7,26 @@ import (
 	"time"
 )
 
-// collaborationRulesTopic and collaborationAgentsTopic are the two topics the
-// collaboration group always broadcasts to every registered agent, with no
-// subscription and no opt-out (see forcedBroadcastTopic).
+// The collaboration topics reach every registered agent, with no subscription
+// and no opt-out: the team's rules, its roster, and its broadcast channel.
 const (
-	collaborationRulesTopic  = "collaboration/rules"
-	collaborationAgentsTopic = "collaboration/agents"
+	collaborationRulesTopic     = "collaboration/rules"
+	collaborationAgentsTopic    = "collaboration/agents"
+	collaborationBroadcastTopic = "collaboration/broadcast"
 )
 
-// forcedBroadcastTopic reports whether a topic bypasses subscription-based
-// recipient selection and reaches every registered agent unconditionally.
-// Only these two exact topics are special; the rest of the collaboration
-// group (and everything else) stays subscription-gated as normal.
-func forcedBroadcastTopic(topic string) bool {
-	return topic == collaborationRulesTopic || topic == collaborationAgentsTopic
+// privateGroup holds one topic per agent, private/<name>, which reaches that
+// agent alone. It is how one agent addresses another on a bus that otherwise
+// has no addressees.
+const privateGroup = "private"
+
+func privateTopic(agent string) string { return privateGroup + "/" + agent }
+
+// automaticTopics lists what reaches agent without subscribing: the
+// collaboration topics and its own private topic. Everything else stays
+// subscription-gated.
+func automaticTopics(agent string) []string {
+	return []string{collaborationRulesTopic, collaborationAgentsTopic, collaborationBroadcastTopic, privateTopic(agent)}
 }
 
 // Op is one record change within a publication: a zero Index creates a new
