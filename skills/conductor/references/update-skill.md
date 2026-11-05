@@ -13,11 +13,11 @@ This is a conversation you carry out, not a CLI command. When asked to update or
 5. **Execute.** Run every command from the binary you built in step 1.
    1. Announce on the bus, then have every agent session that uses this installation stop — its watch, and on an adapter host the session itself.
    2. If the protocol changes, move the old state root aside and keep it as a snapshot. The first `join` creates a fresh one, and every agent joins and subscribes again.
-   3. Replace both installed trees in the same step, never one later — the adapter carries its own copy of the executable:
+   3. Replace the skill and every installed adapter in the same step, never one later — each adapter carries its own copy of the executable. `<host>` is the adapter's row in the [adapter registry](https://github.com/danlavee/Conductor/blob/main/docs/integrations/README.md):
 
    ```bash
    conductor install <absolute-skill-directory> --replace
-   conductor adapter claude install <absolute-adapter-directory> --replace
+   conductor adapter <host> install <absolute-adapter-directory> --replace
    ```
 
    Each outgoing tree is moved to `~/.conductor/backups/<skills|adapters>/<name>.pre-upgrade-<timestamp>` and left there.

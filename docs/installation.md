@@ -22,20 +22,18 @@ go run github.com/danlavee/Conductor/cmd/conductor@latest install "<absolute-ski
 
 ## Then install the host's adapter
 
-Check the [adapter registry](integrations/README.md) for the installing host. A host with no adapter yet keeps the interim fallback described there, and the steps below do not apply to it.
+Find the installing host's row in the [adapter registry](integrations/README.md). A host with no adapter keeps the fallback described there, and the steps below do not apply to it.
 
-For Claude Code:
-
-1. Resolve and show the absolute destination, ending in `adapters/claude-code`. The outer directory is yours to choose — `$HOME/.conductor/adapters/claude-code` is the conventional one — because the host is pointed at the result rather than discovering it.
-2. Wait for confirmation, then run:
+1. Resolve and show the absolute destination, ending in the row's directory. The outer directory is yours to choose — `$HOME/.conductor/adapters/<name>` is the conventional one — because the host is pointed at the result rather than discovering it.
+2. Wait for confirmation, then run, with the row's `<host>`:
 
 ```bash
-go run github.com/danlavee/Conductor/cmd/conductor@latest adapter claude install "<absolute-adapter-directory>"
+go run github.com/danlavee/Conductor/cmd/conductor@latest adapter <host> install "<absolute-adapter-directory>"
 ```
 
-That places the plugin and the executable its hooks name, together, so the two cannot disagree about where the binary is. One step remains and it is the user's: enable the plugin with the host's own commands, `claude plugin marketplace add <the directory above>`, then install `conductor@conductor-adapters`. Conductor does not write the host's plugin registry — see [the adapter's README](../adapters/claude-code/README.md) for why. Nothing is configured per project: in a session the plugin serves, `join` answers `"wake": "adapter"` and binds the session to the joining name.
+That places the plugin and the executable its hooks name, together, so the two cannot disagree about where the binary is. One step remains and it is the user's: the row's enable commands.
 
-Confirm the result in a new session: `join` answers `"wake": "adapter"`, and after the turn ends `conductor <agent> status` reports `"holder": "adapter"`. A join answering `"watch"` means the session was not served — the plugin is missing, not enabled, or was enabled after the session started.
+Confirm the result in a new session: `join` answers `"wake": "adapter"`. A join answering `"watch"` means the session was not served — the plugin is missing, not enabled, or was enabled after the session started.
 
 ## Behavior rules
 

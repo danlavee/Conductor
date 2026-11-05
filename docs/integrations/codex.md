@@ -1,6 +1,6 @@
 # Codex adapter
 
-Status: not yet built. Codex uses the [interim fallback](README.md#interim-fallback) until its adapter lands.
+Status: not yet built. Codex uses the [fallback](README.md#fallback) until its adapter lands.
 
 ## What the adapter must own
 
