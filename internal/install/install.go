@@ -45,11 +45,14 @@ func (p Payload) executable() string {
 }
 
 // Source is the exact payload and executable being installed.
+// Rewrite edits a payload file before it is hashed. Grok's hook command has
+// to name this OS's executable, and the published tree is that rewritten one.
 type Source struct {
 	Payload
 	Executable string
 	Version    string
 	Protocol   int
+	Rewrite    func(name string, data []byte) []byte
 }
 
 // Result is the install response the CLI writes.
@@ -178,6 +181,11 @@ func (s Source) build(destination string) (map[string][]byte, manifest, error) {
 	})
 	if err != nil {
 		return nil, manifest{}, fmt.Errorf("read payload: %w", err)
+	}
+	if s.Rewrite != nil {
+		for name, data := range files {
+			files[name] = s.Rewrite(name, data)
+		}
 	}
 	if files[s.executable()], err = os.ReadFile(s.Executable); err != nil {
 		return nil, manifest{}, fmt.Errorf("read running executable: %w", err)

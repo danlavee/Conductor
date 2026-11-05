@@ -1,0 +1,5 @@
+{
+  "name": "conductor",
+  "version": "0.1.0",
+  "description": "Holds a Conductor delivery stream for an opted-in Grok session. Joining, subscribing, reading, and publishing stay with the Conductor skill."
+}

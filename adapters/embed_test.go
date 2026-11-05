@@ -1,6 +1,7 @@
 package adapterbundle_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -8,6 +9,7 @@ import (
 
 	adapterbundle "github.com/danlavee/Conductor/adapters"
 	"github.com/danlavee/Conductor/internal/adapters/claude"
+	"github.com/danlavee/Conductor/internal/adapters/grok"
 )
 
 // TestEmbeddedAdapterCarriesWhatTheHostLoads guards the two files the host
@@ -86,6 +88,21 @@ func TestEmbeddedHooksNameTheInstalledExecutable(t *testing.T) {
 // TestAdapterNameMatchesTheEmbeddedDirectory keeps the installed directory and
 // the embedded tree spelled the same. The constant decides where the payload
 // lands; the directory decides what lands there.
+func TestEmbeddedGrokAdapterCarriesWhatTheHostLoads(t *testing.T) {
+	for _, required := range []string{".grok-plugin/marketplace.json", "plugin.json", "hooks/hooks.json"} {
+		if _, err := fs.Stat(adapterbundle.Grok, required); err != nil {
+			t.Errorf("embedded grok adapter is missing %s: %v", required, err)
+		}
+	}
+	data, err := fs.ReadFile(adapterbundle.Grok, "hooks/hooks.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(grok.HookCommandPlaceholder)) || !bytes.Contains(data, []byte("--session="+grok.SessionPlaceholder)) {
+		t.Fatalf("grok hooks do not name the placeholder executable and session: %s", data)
+	}
+}
+
 func TestAdapterNameMatchesTheEmbeddedDirectory(t *testing.T) {
 	if _, err := os.Stat(claude.AdapterName); err != nil {
 		t.Fatalf("AdapterName %q names no directory beside the embedding: %v", claude.AdapterName, err)

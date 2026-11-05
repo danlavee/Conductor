@@ -10,11 +10,14 @@ import (
 // what carries `.claude-plugin`, which the host reads and which an ordinary
 // embed directive would silently drop for beginning with a dot.
 //
-//go:embed all:claude-code
+//go:embed all:claude-code all:grok
 var embedded embed.FS
 
 // ClaudeCode is rooted at the plugin manifest the host loads.
 var ClaudeCode = mustSub(embedded, "claude-code")
+
+// Grok is rooted at the plugin manifest the host loads.
+var Grok = mustSub(embedded, "grok")
 
 func mustSub(source fs.FS, directory string) fs.FS {
 	result, err := fs.Sub(source, directory)
