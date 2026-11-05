@@ -124,7 +124,7 @@ func removeEventually(path string) error {
 }
 
 func readJSON(path string, value any) error {
-	file, err := os.Open(path)
+	file, err := platform.Open(path)
 	if err != nil {
 		return err
 	}

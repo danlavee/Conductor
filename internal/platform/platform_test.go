@@ -49,3 +49,39 @@ func TestReplaceFile(t *testing.T) {
 		t.Fatalf("source still exists: %v", err)
 	}
 }
+
+// TestReadFileWaitsOutAReplacement reads a file while another goroutine keeps
+// replacing it: every read must see one whole version, never a refusal.
+func TestReadFileWaitsOutAReplacement(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target")
+	if err := os.WriteFile(target, []byte("v"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error)
+	stop := time.Now().Add(500 * time.Millisecond)
+	go func() {
+		for i := 0; time.Now().Before(stop); i++ {
+			source := filepath.Join(directory, "source")
+			if err := os.WriteFile(source, []byte("v"), 0o600); err != nil {
+				done <- err
+				return
+			}
+			if err := ReplaceFile(source, target); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	for time.Now().Before(stop) {
+		data, err := ReadFile(target)
+		if err != nil || string(data) != "v" {
+			t.Errorf("read during replacement = %q, %v", data, err)
+			break
+		}
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

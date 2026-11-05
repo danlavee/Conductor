@@ -30,10 +30,32 @@ func Rename(source, target string) error {
 	return waitOut(func() error { return os.Rename(source, target) })
 }
 
-func waitOut(move func() error) error {
+// Open opens a file for reading, waiting out the same transient answers: a
+// reader that arrives while ReplaceFile holds the file is refused, not queued.
+// Every file published by replacement is read through here or ReadFile.
+func Open(path string) (*os.File, error) {
+	var file *os.File
+	err := waitOut(func() (err error) {
+		file, err = os.Open(path)
+		return err
+	})
+	return file, err
+}
+
+// ReadFile reads a whole file the way Open opens it.
+func ReadFile(path string) ([]byte, error) {
+	var data []byte
+	err := waitOut(func() (err error) {
+		data, err = os.ReadFile(path)
+		return err
+	})
+	return data, err
+}
+
+func waitOut(attempt func() error) error {
 	deadline := time.Now().Add(replaceWait)
 	for {
-		err := move()
+		err := attempt()
 		if err == nil {
 			return nil
 		}

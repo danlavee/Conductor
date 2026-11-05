@@ -110,7 +110,7 @@ func sessionPath(root, adapter, session string) (string, error) {
 }
 
 func readName(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := platform.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}

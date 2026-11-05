@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/danlavee/Conductor/internal/platform"
 )
 
 // CurrentProtocolVersion is the one on-disk state protocol this binary supports.
@@ -61,7 +63,7 @@ func (c *Client) validateProtocol() error {
 
 // checkProtocol returns fs.ErrNotExist when the root declares nothing yet.
 func checkProtocol(home string) error {
-	data, err := os.ReadFile(protocolPath(home))
+	data, err := platform.ReadFile(protocolPath(home))
 	if err != nil {
 		return err
 	}
