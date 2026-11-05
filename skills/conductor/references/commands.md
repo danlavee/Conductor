@@ -5,13 +5,12 @@
 ## Publish
 
 ```text
-conductor <agent> put <group>/<topic> '<text>'
-conductor <agent> put <group>/<topic> --file=<absolute-path>    # text containing ' or a newline
-conductor <agent> put <group>/<topic> --jsonl=<absolute-path>   # one JSON string per line, one publication
-conductor <agent> edit <group>/<topic> <index> '<text>'         # also takes --file; nothing is ever deleted
+conductor <agent> put <group>/<topic> --file=<absolute-path>
+conductor <agent> put <group>/<topic> --jsonl=<absolute-path>          # one JSON string per line, one publication
+conductor <agent> edit <group>/<topic> <index> --file=<absolute-path>  # nothing is ever deleted
 ```
 
-Each answers with the resulting `records` and the `recipients` it wakes. A file publishes verbatim, less one trailing newline.
+Each answers with the resulting `records` and the `recipients` it wakes. A file publishes verbatim, less one trailing newline; a text operand in place of `--file` is for a few plain words.
 
 ## Read
 

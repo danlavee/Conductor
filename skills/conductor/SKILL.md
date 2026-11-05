@@ -41,13 +41,13 @@ Do exactly what `wake` says. Never decide it from which app you think you are in
 
 | The user says | You publish |
 | --- | --- |
-| "tell X …", "ask X …" | `conductor <agent> put private/X '<text>'` |
+| "tell X …", "ask X …" | `conductor <agent> put private/X --file=<absolute-path>` |
 | reply to a message | to `private/<sender>`, where `<sender>` is the publication's `agent` |
 | "you and X work on T" | to a shared topic `<group>/<topic>` for T, which you subscribe to; tell X in `private/X` to subscribe too |
 
 `private/<name>` reaches `<name>` and no one else, with no setup by either side. `collaboration/broadcast` reaches everyone. Write each message so it stands alone: the reader has none of your context.
 
-Single quotes pass text verbatim. Text containing a `'` or a newline goes in a file: `put <topic> --file=<absolute-path>`.
+Write the message to a file and publish the file; it goes out verbatim, less one trailing newline. Text typed on the command line passes through your shell first, which can rewrite it without telling you — use that only for a few plain words.
 
 **Check `recipients` in the answer.** It lists who will be woken. Empty means the record is stored and reaches nobody yet — say so rather than assume it was heard. A record is one agent's statement, not a team decision or an order.
 
