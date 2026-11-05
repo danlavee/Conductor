@@ -51,6 +51,9 @@ func runAdapterCommand(args []string) error {
 	if len(args) >= 1 && args[0] == "grok" {
 		return runGrokAdapterCommand(args[1:])
 	}
+	if len(args) >= 1 && args[0] == "agy" {
+		return runAGYAdapterCommand(args[1:])
+	}
 	if len(args) < 2 || args[0] != "claude" {
 		return adapterUsageError()
 	}

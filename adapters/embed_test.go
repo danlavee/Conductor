@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	adapterbundle "github.com/danlavee/Conductor/adapters"
+	"github.com/danlavee/Conductor/internal/adapters/agy"
 	"github.com/danlavee/Conductor/internal/adapters/claude"
 	"github.com/danlavee/Conductor/internal/adapters/grok"
 )
@@ -103,8 +104,25 @@ func TestEmbeddedGrokAdapterCarriesWhatTheHostLoads(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAGYAdapterCarriesWhatTheHostLoads(t *testing.T) {
+	for _, required := range []string{"plugin.json", "hooks.json", "README.md"} {
+		if _, err := fs.Stat(adapterbundle.AGY, required); err != nil {
+			t.Errorf("embedded agy adapter is missing %s: %v", required, err)
+		}
+	}
+	data, err := fs.ReadFile(adapterbundle.AGY, "hooks.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(agy.HookCommandPlaceholder)) {
+		t.Fatalf("agy hooks do not name the placeholder executable: %s", data)
+	}
+}
+
 func TestAdapterNameMatchesTheEmbeddedDirectory(t *testing.T) {
-	if _, err := os.Stat(claude.AdapterName); err != nil {
-		t.Fatalf("AdapterName %q names no directory beside the embedding: %v", claude.AdapterName, err)
+	for _, name := range []string{claude.AdapterName, grok.AdapterName, agy.AdapterName} {
+		if _, err := os.Stat(name); err != nil {
+			t.Fatalf("AdapterName %q names no directory beside the embedding: %v", name, err)
+		}
 	}
 }

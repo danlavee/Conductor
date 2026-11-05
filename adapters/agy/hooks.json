@@ -1,0 +1,18 @@
+{
+  "conductor": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "${CONDUCTOR_BIN} adapter agy identity --hook",
+        "timeout": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "${CONDUCTOR_BIN} adapter agy stop --hook",
+        "timeout": 86400
+      }
+    ]
+  }
+}
