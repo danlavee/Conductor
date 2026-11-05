@@ -368,13 +368,13 @@ func TestUsageExposesNoVendorWatchTransports(t *testing.T) {
 			t.Fatalf("usage retains vendor watch transport %s: %s", flag, message)
 		}
 	}
-	if !strings.Contains(message, "watch [--once]") {
+	if !strings.Contains(message, "<agent> watch |") {
 		t.Fatalf("usage omits the host-neutral watch: %s", message)
 	}
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace] | conductor adapter grok <identity|reside|stop|release|reannounce> --session=<id> | conductor adapter grok bind <agent> [--session=<id>] | conductor adapter grok install <absolute-adapter-directory> [--replace] | conductor adapter agy <identity|stop> [--hook] [--session=<id>] | conductor adapter agy reside --session=<id> | conductor adapter agy release [--session=<id>] | conductor adapter agy bind <agent> [--session=<id>] | conductor adapter agy takeover --agent=<agent> [--confirm=<token>] | conductor adapter agy install <absolute-adapter-directory> [--replace] | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch [--once] | conductor <agent> status"
+	const want = "usage: conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor adapter claude <arm|release> --session=<id> | conductor adapter claude identity [--session=<id>] | conductor adapter claude bind <agent> | conductor adapter claude install <absolute-adapter-directory> [--replace] | conductor adapter grok <identity|reside|stop|release|reannounce> --session=<id> | conductor adapter grok bind <agent> [--session=<id>] | conductor adapter grok install <absolute-adapter-directory> [--replace] | conductor adapter agy <identity|stop> [--hook] [--session=<id>] | conductor adapter agy reside --session=<id> | conductor adapter agy release [--session=<id>] | conductor adapter agy bind <agent> [--session=<id>] | conductor adapter agy takeover --agent=<agent> [--confirm=<token>] | conductor adapter agy install <absolute-adapter-directory> [--replace] | conductor version | conductor <agent> join [responsibility] | conductor <agent> leave | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> put <group/topic> (<text> | --file=<path>) | conductor <agent> put <group/topic> --jsonl=<path> | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> watch | conductor <agent> status"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}
@@ -403,9 +403,9 @@ func TestWatchResolvesContentBeforeWaking(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], state, "", "peer", "join", "review"); err != nil {
 		t.Fatalf("peer join failed: %v", err)
 	}
-	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "a", "watch", "--once")
+	stdout, stderr, err := runCLIHelper(os.Args[0], state, "", "a", "watch")
 	if err != nil || len(stderr) != 0 {
-		t.Fatalf("watch --once failed: %v, stderr = %q", err, stderr)
+		t.Fatalf("watch failed: %v, stderr = %q", err, stderr)
 	}
 	deliveries := json.NewDecoder(bytes.NewReader(stdout))
 	readArmAcknowledgement(t, deliveries)
@@ -436,7 +436,7 @@ func TestOneShotWatchReleasesOwnership(t *testing.T) {
 	if _, err := peer.Join("peer", "review"); err != nil {
 		t.Fatal(err)
 	}
-	if err := runWatch(context.Background(), client, true); err != nil {
+	if err := runWatch(context.Background(), client); err != nil {
 		t.Fatal(err)
 	}
 	second, err := conductor.New(state, "a")
@@ -466,46 +466,13 @@ func TestRemovedWatchModesReturnUsage(t *testing.T) {
 		// An adapter holds the stream through the client and chooses there.
 		{"a", "watch", "--mode=summary"},
 		{"a", "watch", "--mode=content"},
-		{"a", "watch", "--once", "--once"},
+		// Watch is one delivery and exit, always; there is no mode to pick.
+		{"a", "watch", "--once"},
 		{"a", "status", "extra"},
 	} {
 		if err := run(args); err == nil || err.Error() != usageError().Error() {
 			t.Fatalf("%v: error = %v, want usage error", args, err)
 		}
-	}
-}
-
-// A continuous watch must hold ownership across the quiet gap between
-// deliveries. If it released after draining a batch, a second watcher could
-// arm for the same identity and both would deliver.
-func TestContinuousWatchRetainsOwnershipAfterDelivering(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "runtime-state")
-	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
-		t.Fatal(err)
-	}
-	// A peer's registration is what the stream below delivers: an agent is
-	// not woken by its own join.
-	if _, _, err := runCLIHelper(os.Args[0], root, "", "peer", "join", "review"); err != nil {
-		t.Fatal(err)
-	}
-	watch, deliveries := startWatch(t, root)
-	defer stopWatch(t, watch)
-
-	var batch conductor.Batch
-	if err := deliveries.Decode(&batch); err != nil {
-		t.Fatalf("continuous watch delivered nothing: %v", err)
-	}
-	if len(batch.Deliveries) == 0 {
-		t.Fatalf("batch = %#v", batch)
-	}
-
-	client, err := conductor.New(root, "a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if release, err := client.AcquireWatchOwnership(conductor.HolderSelf); err == nil {
-		_ = release()
-		t.Fatal("a second watcher armed while a live stream owned the identity")
 	}
 }
 
@@ -563,9 +530,11 @@ func TestStatusReportsRegistrationAndLiveWakeability(t *testing.T) {
 // wakeability observed live beside it rather than stored.
 func TestJoinSnapshotReportsWhoWouldRespond(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
-	for agent, responsibility := range map[string]string{"a": "dev", "b": "review"} {
-		if _, stderr, err := runCLIHelper(os.Args[0], root, "", agent, "join", responsibility); err != nil {
-			t.Fatalf("join %s: %v: %s", agent, err, stderr)
+	// b registers first, so a joins with nothing pending and its one-shot
+	// watch is still holding when the snapshot is taken.
+	for _, join := range [][2]string{{"b", "review"}, {"a", "dev"}} {
+		if _, stderr, err := runCLIHelper(os.Args[0], root, "", join[0], "join", join[1]); err != nil {
+			t.Fatalf("join %s: %v: %s", join[0], err, stderr)
 		}
 	}
 	// Registered before waiting on ownership, not after: waitForOwnership can
@@ -617,7 +586,7 @@ func TestStatusDoesNotInitializeTheBus(t *testing.T) {
 	}
 }
 
-// startWatch runs a continuous watch as a real process, and hands back a
+// startWatch runs a watch as a real process, and hands back a
 // decoder over its stdout so a test can wait on an actual delivery rather than
 // poll a buffer the child is concurrently writing.
 func startWatch(t *testing.T, root string) (*exec.Cmd, *json.Decoder) {

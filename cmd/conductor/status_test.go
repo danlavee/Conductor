@@ -30,7 +30,7 @@ func TestArmingAnswersBeforeItWaits(t *testing.T) {
 	if _, _, err := runCLIHelper(os.Args[0], root, "", "peer", "join", "review"); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err := runCLIHelper(os.Args[0], root, "", "nomad", "watch", "--once")
+	stdout, stderr, err := runCLIHelper(os.Args[0], root, "", "nomad", "watch")
 	if err != nil {
 		t.Fatalf("watch: %v: %s", err, stderr)
 	}
@@ -131,7 +131,7 @@ func TestAFailedWaitStillCarriesItsArmAnswer(t *testing.T) {
 	}
 	// Nothing to drain: an agent is not woken by its own join, so the watcher
 	// below blocks instead of delivering a backlog and exiting successfully.
-	watch := exec.Command(os.Args[0], "nomad", "watch", "--once")
+	watch := exec.Command(os.Args[0], "nomad", "watch")
 	watch.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
 	watch.Env = replaceEnvironment(watch.Env, "CONDUCTOR_HOME", root)
 	stdout, err := watch.StdoutPipe()
