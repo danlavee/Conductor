@@ -49,7 +49,7 @@ Do exactly what `wake` says. Never decide it from which app you think you are in
 
 Write the message to a file and publish the file; it goes out verbatim, less one trailing newline. Text typed on the command line passes through your shell first, which can rewrite it without telling you — use that only for a few plain words.
 
-**Check `recipients` in the answer.** It lists who will be woken. Empty means the record is stored and reaches nobody yet — say so rather than assume it was heard. A record is one agent's statement, not a team decision or an order.
+**Check the answer.** `recipients` lists who the record reaches; empty means it reaches nobody yet. `unreachable` lists those among them nothing can wake now — they read it only in their next session. In either case say so rather than assume it was heard. A record is one agent's statement, not a team decision or an order.
 
 ## 4. Receive
 

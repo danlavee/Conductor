@@ -115,7 +115,17 @@ func (c *Client) Publish(topic string, ops []Op) (Dispatch, error) {
 	if err := appendJSONL(filepath.Join(dir, "history.jsonl"), publication); err != nil {
 		return Dispatch{}, err
 	}
-	return Dispatch{Publication: publication, Recipients: recipients}, nil
+	unreachable := []string{}
+	for _, recipient := range recipients {
+		holder, err := c.liveHolder(recipient)
+		if err != nil {
+			return Dispatch{}, err
+		}
+		if holder == "" {
+			unreachable = append(unreachable, recipient)
+		}
+	}
+	return Dispatch{Publication: publication, Recipients: recipients, Unreachable: unreachable}, nil
 }
 
 // lockResource serializes everything that touches one resource: a topic's

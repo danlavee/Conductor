@@ -3,6 +3,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -214,6 +215,28 @@ func TestPrivateTopicReachesItsOwnerAlone(t *testing.T) {
 	assertCode(t, err, "INVALID")
 	_, err = sender.SubscribeTopicGroup("private")
 	assertCode(t, err, "INVALID")
+}
+
+// A recipient with no live stream stores the record but nothing wakes it, and
+// the sender must hear that from the act itself rather than assume it was read.
+func TestDispatchNamesTheRecipientsNothingCanWake(t *testing.T) {
+	home := t.TempDir()
+	sender := joined(t, home, "sender")
+	listening := joined(t, home, "listening")
+	joined(t, home, "away")
+	release, err := listening.AcquireWatchOwnership(HolderSelf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	news, err := sender.Put("collaboration/broadcast", "anyone?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(news.Unreachable, []string{"away"}) {
+		t.Fatalf("unreachable = %#v; want only the agent with no stream", news.Unreachable)
+	}
 }
 
 // A publisher subscribed to its own topic looks addressed and reaches nobody.

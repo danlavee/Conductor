@@ -29,13 +29,15 @@ type Publication struct {
 	Records   []Record  `json:"records"`
 }
 
-// Dispatch is what one publishing act did: the publication it made, and every
-// agent the bus will wake for it -- never the publisher itself. It wraps
+// Dispatch is what one publishing act did: the publication it made, every
+// agent it reaches -- never the publisher itself -- and which of those no live
+// stream holds, so nothing wakes them until their next session. It wraps
 // Publication rather than extending it because the audience is true only of
 // the instant it was resolved, while Publication is what history stores.
 type Dispatch struct {
 	Publication
-	Recipients []string `json:"recipients"`
+	Recipients  []string `json:"recipients"`
+	Unreachable []string `json:"unreachable,omitempty"`
 }
 
 // Record answers the one record a single-record verb published; a dispatch

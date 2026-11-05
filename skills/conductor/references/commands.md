@@ -10,7 +10,7 @@ conductor <agent> put <group>/<topic> --jsonl=<absolute-path>          # one JSO
 conductor <agent> edit <group>/<topic> <index> --file=<absolute-path>  # nothing is ever deleted
 ```
 
-Each answers with the resulting `records` and the `recipients` it wakes. A file publishes verbatim, less one trailing newline; a text operand in place of `--file` is for a few plain words.
+Each answers with the resulting `records`, the `recipients` it reaches, and the `unreachable` among them that nothing can wake now. A file publishes verbatim, less one trailing newline; a text operand in place of `--file` is for a few plain words.
 
 ## Read
 
