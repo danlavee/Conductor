@@ -21,9 +21,19 @@ const replaceWait = 3 * time.Second
 // moment later. Platforms whose rename does not have this behaviour report
 // nothing transient and take the first answer.
 func ReplaceFile(source, target string) error {
+	return waitOut(func() error { return replaceFile(source, target) })
+}
+
+// Rename moves a directory into a free path, waiting out the same transient
+// answers: a tree just written is briefly held open by whatever scans new files.
+func Rename(source, target string) error {
+	return waitOut(func() error { return os.Rename(source, target) })
+}
+
+func waitOut(move func() error) error {
 	deadline := time.Now().Add(replaceWait)
 	for {
-		err := replaceFile(source, target)
+		err := move()
 		if err == nil {
 			return nil
 		}

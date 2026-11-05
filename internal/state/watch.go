@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/danlavee/Conductor/internal/platform"
 )
 
 // Batch is what one watch delivers: the unread delta of every topic that has
@@ -62,7 +64,8 @@ func (c *Client) WatchContext(ctx context.Context) (Batch, error) {
 		}
 		if _, err := os.Stat(filepath.Join(c.Home, "registry", agent+".json")); errors.Is(err, os.ErrNotExist) {
 			return Batch{}, &ProtocolError{Code: "NOT_FOUND", Text: "registered agent does not exist"}
-		} else if err != nil {
+		} else if err != nil && !platform.IsDeletePending(err) {
+			// A leave caught mid-removal is settled by the next poll.
 			return Batch{}, err
 		}
 		if c.watchIdleFn != nil {

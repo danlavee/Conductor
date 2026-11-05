@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/danlavee/Conductor/internal/platform"
 )
 
 const manifestName = ".conductor-manifest.json"
@@ -145,9 +147,9 @@ func Install(destination string, source Source, replace bool) (Result, error) {
 		}
 		result.Status, result.PreviousVersion = "upgraded", present.InstalledVersion
 	}
-	if err := os.Rename(stage, destination); err != nil {
+	if err := platform.Rename(stage, destination); err != nil {
 		if backup != "" {
-			if restoreErr := os.Rename(backup, destination); restoreErr != nil {
+			if restoreErr := platform.Rename(backup, destination); restoreErr != nil {
 				return Result{}, fmt.Errorf("install publish: %w; the previous installation is at %s: %v", err, backup, restoreErr)
 			}
 		}
@@ -296,7 +298,7 @@ func retire(destination string) (string, error) {
 		return "", err
 	}
 	backup := filepath.Join(directory, filepath.Base(destination)+".pre-upgrade-"+time.Now().Format("20060102150405.000000000"))
-	if err := os.Rename(destination, backup); err != nil {
+	if err := platform.Rename(destination, backup); err != nil {
 		return "", fmt.Errorf("move %s aside: %w", destination, err)
 	}
 	return backup, nil
