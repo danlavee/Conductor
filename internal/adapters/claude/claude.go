@@ -123,18 +123,27 @@ func arm(ctx context.Context, client *conductor.Client, session string, out io.W
 	}
 	defer func() { _ = release() }()
 
-	path, err := residencyPath(client)
+	agent, err := client.ResolveAgent()
 	if err != nil {
 		return "", err
 	}
+	path := residencyPath(client.Home, agent)
 	if err := writeResidency(path, residency{Session: session, Target: target}); err != nil {
 		return "", err
 	}
 	defer func() { _ = os.Remove(path) }()
 
+	// The stream speaks for the session only while the session acts as this
+	// agent: a join under another name rebinds it, and this stream must then
+	// let go rather than wake the session with someone else's work.
+	rebound := func() bool {
+		bound, err := binding.Identity(client.Home, BindingName, session)
+		return err != nil || bound != agent
+	}
+
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go awaitStreamEnd(streamCtx, path, session, target, client.PollInterval, cancel)
+	go awaitStreamEnd(streamCtx, path, session, target, rebound, client.PollInterval, cancel)
 
 	batch, err := client.WatchContext(streamCtx)
 	if err != nil {
@@ -150,6 +159,9 @@ func arm(ctx context.Context, client *conductor.Client, session string, out io.W
 	if !target.alive() {
 		return Orphaned, nil
 	}
+	if rebound() {
+		return Released, nil
+	}
 	if err := conductor.WriteJSON(out, batch); err != nil {
 		return "", err
 	}
@@ -158,10 +170,11 @@ func arm(ctx context.Context, client *conductor.Client, session string, out io.W
 
 // Release ends the stream this session owns, and is a no-op when it owns none.
 func Release(client *conductor.Client, session string) (bool, error) {
-	path, err := residencyPath(client)
+	agent, err := client.ResolveAgent()
 	if err != nil {
 		return false, err
 	}
+	path := residencyPath(client.Home, agent)
 	current, err := readResidency(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -177,10 +190,10 @@ func Release(client *conductor.Client, session string) (bool, error) {
 }
 
 // awaitStreamEnd cancels the stream when teardown releases this session's
-// residency, or when the session it wakes is gone. The second is not a safety
-// net for the first: teardown fires only on an orderly exit, and the hook's
-// timeout is a day.
-func awaitStreamEnd(ctx context.Context, path, session string, target wakeTarget, interval time.Duration, cancel context.CancelFunc) {
+// residency, when the session is rebound to another agent, or when the session
+// it wakes is gone. The last is not a safety net for the first: teardown fires
+// only on an orderly exit, and the hook's timeout is a day.
+func awaitStreamEnd(ctx context.Context, path, session string, target wakeTarget, rebound func() bool, interval time.Duration, cancel context.CancelFunc) {
 	for {
 		timer := time.NewTimer(interval)
 		select {
@@ -190,19 +203,15 @@ func awaitStreamEnd(ctx context.Context, path, session string, target wakeTarget
 		case <-timer.C:
 		}
 		current, err := readResidency(path)
-		if err != nil || current.Session != session || current.Released || !target.alive() {
+		if err != nil || current.Session != session || current.Released || rebound() || !target.alive() {
 			cancel()
 			return
 		}
 	}
 }
 
-func residencyPath(client *conductor.Client) (string, error) {
-	agent, err := client.ResolveAgent()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(binding.Directory(client.Home, BindingName), agent+".json"), nil
+func residencyPath(home, agent string) string {
+	return filepath.Join(binding.Directory(home, BindingName), agent+".json")
 }
 
 func writeResidency(path string, value residency) error {

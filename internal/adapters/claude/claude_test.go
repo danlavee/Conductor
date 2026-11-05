@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danlavee/Conductor/internal/adapters/binding"
 	"github.com/danlavee/Conductor/internal/platform"
 	conductor "github.com/danlavee/Conductor/internal/state"
 )
@@ -169,6 +170,34 @@ func TestReleaseEndsOnlyTheCallingSessionsStream(t *testing.T) {
 	}
 }
 
+// A session that joins under another name acts as that agent from then on, so
+// the stream it held for the old one must let go rather than hold the old
+// identity until a delivery wakes the session as the wrong agent.
+func TestArmLetsGoWhenItsSessionIsRebound(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-state")
+	client := joined(t, root)
+	drain(t, client)
+
+	armed := make(chan Outcome, 1)
+	go func() {
+		outcome, _ := Arm(context.Background(), open(t, root), "session-1", &bytes.Buffer{})
+		armed <- outcome
+	}()
+	waitForResidency(t, root, "planner")
+
+	if err := binding.Bind(client.Home, BindingName, "session-1", "peer"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case outcome := <-armed:
+		if outcome != Released {
+			t.Fatalf("outcome = %q", outcome)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream kept the old identity after its session was rebound")
+	}
+}
+
 func joined(t *testing.T, root string) *conductor.Client {
 	t.Helper()
 	client, err := conductor.New(root, "planner")
@@ -177,6 +206,13 @@ func joined(t *testing.T, root string) *conductor.Client {
 	}
 	if _, err := client.Join("planner", "dev"); err != nil {
 		t.Fatal(err)
+	}
+	// What the join the model runs would bind: every session these tests arm
+	// in acts as the planner.
+	for _, session := range []string{"session-1", "session-2", "drain"} {
+		if err := binding.Bind(client.Home, BindingName, session, "planner"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// An agent is not woken by its own join, so a peer supplies the pending
 	// work these tests arm against: its roster line on collaboration/agents,
@@ -211,11 +247,7 @@ func drain(t *testing.T, client *conductor.Client) {
 
 func waitForResidency(t *testing.T, root, agent string) {
 	t.Helper()
-	client := open(t, root)
-	path, err := residencyPath(client)
-	if err != nil {
-		t.Fatal(err)
-	}
+	path := residencyPath(open(t, root).Home, agent)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if _, err := os.Stat(path); err == nil {
