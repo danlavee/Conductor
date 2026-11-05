@@ -75,9 +75,16 @@ type Cursor struct {
 }
 
 type Snapshot struct {
-	Agents []RosterEntry       `json:"agents"`
-	Topics map[string][]Record `json:"topics"`
+	Agents []RosterEntry        `json:"agents"`
+	Topics map[string]TopicTail `json:"topics"`
 	heads  map[string]int64
+}
+
+// TopicTail is a topic's newest records, with the count of older ones left for
+// an --end range read.
+type TopicTail struct {
+	Records   []Record `json:"records"`
+	Remaining int      `json:"remaining,omitempty"`
 }
 
 type ReadMode int

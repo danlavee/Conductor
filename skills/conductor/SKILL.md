@@ -25,7 +25,7 @@ conductor <agent> join '<responsibility>'
 Later sessions under the same name omit the responsibility. Join answers with three things, once — read them now:
 
 - **`agents`**: the team, and what each member is responsible for;
-- **`topics`**: every topic's current records, including anything addressed to you while you were away;
+- **`topics`**: each topic's newest 20 records, including anything addressed to you while you were away; a topic's `remaining` counts older ones, readable with `get` ([commands.md](references/commands.md));
 - **`wake`**: what this session must do to stay reachable — step 2.
 
 ## 2. Stay wakeable

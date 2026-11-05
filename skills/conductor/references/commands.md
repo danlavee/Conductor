@@ -16,12 +16,12 @@ Each answers with the resulting `records` and the `recipients` it wakes. A file 
 ## Read
 
 ```text
-conductor <agent> get <group>/<topic> --full                         # current records; works unsubscribed
+conductor <agent> get <group>/<topic> --full [--limit=N]             # newest current records; works unsubscribed
 conductor <agent> get <group>/<topic> --delta [--limit=N]            # your unread, advancing your cursor
 conductor <agent> get <group>/<topic> [<index>] [--start=N] [--end=N] [--limit=N]   # index range
 ```
 
-A read returns at most 20 records unless `--limit` raises it; a non-zero `remaining` means continue with a range read from the next index. A `--delta` on a topic that does not reach you is always empty — confirm with `--full`.
+A read returns at most 20 records unless `--limit` raises it, and `remaining` counts what it left out: for `--full` and join, the older records (`--end=` one below the first index shown); for a range, the later ones (`--start=` one above the last). A `--delta` on a topic that does not reach you is always empty — confirm with `--full`.
 
 ## Subscribe and list
 

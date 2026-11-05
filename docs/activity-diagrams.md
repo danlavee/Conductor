@@ -26,7 +26,7 @@ sequenceDiagram
     A->>C: "register"
     C->>D: "Take the membership lock and write registry entry"
     C->>D: "Publish the roster line on collaboration/agents"
-    D-->>C: "Roster and complete current snapshot"
+    D-->>C: "Roster and each topic's newest records"
     C-->>A: "Agents and published records"
     W->>C: "watch"
     C-->>W: "Roster line delta"

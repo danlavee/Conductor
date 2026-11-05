@@ -129,7 +129,9 @@ func TestRangeDefaultsToReadLimitAndReportsRemaining(t *testing.T) {
 	}
 }
 
-func TestFullDefaultsToReadLimitAndReportsRemaining(t *testing.T) {
+// A full read is how an agent catches up, and what it acts on is the latest
+// word: the cap keeps the newest records and counts the older ones.
+func TestFullKeepsTheNewestRecordsAndReportsTheRest(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), "")
 	if _, err := client.Join("writer", "records"); err != nil {
 		t.Fatal(err)
@@ -140,8 +142,29 @@ func TestFullDefaultsToReadLimitAndReportsRemaining(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Records) != DefaultReadLimit || result.Remaining != 3 || result.DefaultLimit != DefaultReadLimit {
+	if len(result.Records) != DefaultReadLimit || result.Records[0].Index != 4 || result.Remaining != 3 || result.DefaultLimit != DefaultReadLimit {
 		t.Fatalf("full = %#v", result)
+	}
+	whole, err := client.Get(ReadRequest{Topic: "messages/capped-full", Mode: ReadFull, Limit: DefaultReadLimit + 3})
+	if err != nil || len(whole.Records) != DefaultReadLimit+3 || whole.Remaining != 0 {
+		t.Fatalf("explicit limit = %#v, %v", whole, err)
+	}
+}
+
+// Join hands every topic over the same way a full read does, so a busy bus
+// cannot bury the newcomer under its whole history.
+func TestJoinSnapshotCapsEachTopicToItsNewest(t *testing.T) {
+	home := t.TempDir()
+	writer := joined(t, home, "writer")
+	putN(t, writer, "messages/busy", DefaultReadLimit+2)
+
+	snapshot, err := newTestClient(t, home, "").Join("late", "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	busy := snapshot.Topics["messages/busy"]
+	if len(busy.Records) != DefaultReadLimit || busy.Records[0].Index != 3 || busy.Remaining != 2 {
+		t.Fatalf("busy topic = %#v", busy)
 	}
 }
 

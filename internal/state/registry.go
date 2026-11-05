@@ -172,7 +172,7 @@ func (c *Client) Roster() ([]RosterEntry, error) {
 	return roster, nil
 }
 
-// FullSnapshot returns all agents and every current record.
+// FullSnapshot returns all agents and each topic's newest current records.
 func (c *Client) FullSnapshot() (Snapshot, error) {
 	if err := c.validateProtocol(); err != nil {
 		return Snapshot{}, err
@@ -184,7 +184,7 @@ func (c *Client) FullSnapshot() (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	result := Snapshot{Agents: agents, Topics: map[string][]Record{}, heads: map[string]int64{}}
+	result := Snapshot{Agents: agents, Topics: map[string]TopicTail{}, heads: map[string]int64{}}
 	groups, err := os.ReadDir(filepath.Join(c.Home, "topics"))
 	if err != nil {
 		return Snapshot{}, err
@@ -210,9 +210,9 @@ func (c *Client) FullSnapshot() (Snapshot, error) {
 			if err := errors.Join(err, release()); err != nil {
 				return Snapshot{}, err
 			}
-			records := materialize(history)
+			records, remaining := newest(materialize(history), DefaultReadLimit)
 			if len(records) > 0 {
-				result.Topics[topicName] = records
+				result.Topics[topicName] = TopicTail{Records: records, Remaining: remaining}
 				result.heads[topicName] = history[len(history)-1].Sequence
 			}
 		}

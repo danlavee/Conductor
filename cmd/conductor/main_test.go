@@ -374,7 +374,7 @@ func TestUsageExposesNoVendorWatchTransports(t *testing.T) {
 }
 
 func TestUsageContract(t *testing.T) {
-	const want = "usage: conductor <agent> join [responsibility] | conductor <agent> put <group/topic> (<text> | --file=<path> | --jsonl=<path>) | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | --delta [--limit=N] | --full) | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> watch | conductor <agent> status | conductor <agent> leave | conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor version | conductor adapter <host> <command>"
+	const want = "usage: conductor <agent> join [responsibility] | conductor <agent> put <group/topic> (<text> | --file=<path> | --jsonl=<path>) | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | (--delta | --full) [--limit=N]) | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> watch | conductor <agent> status | conductor <agent> leave | conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor version | conductor adapter <host> <command>"
 	if got := usageError().Error(); got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}
@@ -661,13 +661,13 @@ func TestParseGetDeltaAndFull(t *testing.T) {
 	if err != nil || delta.Mode != conductor.ReadDelta || delta.RecordIndex != 7 || delta.Limit != 5 {
 		t.Fatalf("delta = %+v, error = %v", delta, err)
 	}
-	full, err := parseGet([]string{"messages/team", "--full"})
-	if err != nil || full.Mode != conductor.ReadFull {
+	full, err := parseGet([]string{"messages/team", "--full", "--limit=50"})
+	if err != nil || full.Mode != conductor.ReadFull || full.Limit != 50 {
 		t.Fatalf("full = %+v, error = %v", full, err)
 	}
 	for _, args := range [][]string{
 		{"messages/team", "--delta", "--start=1"},
-		{"messages/team", "--full", "--limit=1"},
+		{"messages/team", "--full", "--end=1"},
 		{"messages/team", "--delta", "--full"},
 	} {
 		if _, err := parseGet(args); err == nil {

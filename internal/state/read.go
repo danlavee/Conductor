@@ -10,9 +10,18 @@ import (
 	"strings"
 )
 
-// DefaultReadLimit caps get/watch responses. Range and delta reads may
-// request a larger explicit limit; full reads always use this cap.
+// DefaultReadLimit caps get, join, and watch responses. Any get may request
+// a larger explicit limit.
 const DefaultReadLimit = 20
+
+// newest keeps a topic's latest limit records -- the ones a reader catching
+// up acts on -- and counts what it left behind, which an --end range reaches.
+func newest(records []Record, limit int) ([]Record, int) {
+	if len(records) <= limit {
+		return records, 0
+	}
+	return records[len(records)-limit:], len(records) - limit
+}
 
 // Get reads a current record range, the full current topic, or unread
 // subscribed content.
@@ -44,6 +53,10 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 	if err := errors.Join(err, release()); err != nil {
 		return ReadResult{}, err
 	}
+	limit := request.Limit
+	if limit == 0 {
+		limit = DefaultReadLimit
+	}
 	result := ReadResult{Topic: request.Topic, record: request.RecordIndex, Records: []Record{}, Publications: []Publication{}}
 	switch request.Mode {
 	case ReadRange:
@@ -51,10 +64,6 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 		start, end := request.Start, request.End
 		if request.RecordIndex > 0 {
 			start, end = request.RecordIndex, request.RecordIndex
-		}
-		limit := request.Limit
-		if limit == 0 {
-			limit = DefaultReadLimit
 		}
 		matched := 0
 		for _, record := range materialize(history) {
@@ -72,13 +81,7 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 		}
 	case ReadFull:
 		result.Mode = "full"
-		all := materialize(history)
-		if len(all) > DefaultReadLimit {
-			result.Records = all[:DefaultReadLimit]
-			result.Remaining = len(all) - DefaultReadLimit
-		} else {
-			result.Records = all
-		}
+		result.Records, result.Remaining = newest(materialize(history), limit)
 	case ReadDelta:
 		result.Mode = "delta"
 		subscribed, err := c.isSubscribed(agent, request.Topic)
@@ -93,10 +96,6 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 			return ReadResult{}, err
 		}
 		read := cursor.Topics[recordCursorSlot(request.Topic, request.RecordIndex)]
-		limit := request.Limit
-		if limit == 0 {
-			limit = DefaultReadLimit
-		}
 		// The reader's own publications, and those not touching the requested
 		// record, are passed over rather than delivered; the cursor still moves
 		// past every one scanned before the limit stops the read.
