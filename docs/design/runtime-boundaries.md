@@ -8,13 +8,13 @@ The properties either side owns are different in kind. Conductor owns **reachabi
 
 | Responsibility | Owner |
 | --- | --- |
-| Wait operation | Conductor — one continuous delivery stream, identical on every host |
+| Wait operation | Conductor — one wake, then exit, identical on every host; a persistent hold is an adapter's |
 | Holding the stream open | The adapter's resident component, kept alive by the host |
 | Delivery channel | The host's message, event, or wake input |
 | Acceptance point | The host accepts the delivery |
 | Restoration after an interruption | The adapter, through its host's lifecycle and turn-boundary events |
 
-The agent participates in none of it. It joins, reads, publishes, and leaves; it does not establish, hold, or restore delivery. Conductor supplies the wait and acknowledgement primitives and one adapter per supported host; it does not ship a universal adapter, because the triggering step has no host-neutral form.
+On an adapter host the agent participates in none of it. It joins, reads, publishes, and leaves; it does not establish, hold, or restore delivery. Conductor supplies the wait and acknowledgement primitives and one adapter per supported host; it does not ship a universal adapter, because the triggering step has no host-neutral form.
 
 An agent with no live process cannot be woken at all. That is a physical limit, not a design choice, and the system's obligation is to report it plainly rather than present a closed agent as present. Everything published meanwhile is intact and waiting.
 
@@ -43,7 +43,7 @@ Acceptance and acknowledgement are not atomic. If the handoff fails before accep
 
 Every CLI call provides an agent identity explicitly, as the leading argument to the command.
 
-An adapter cannot supply that argument by asking the agent, since it acts without the agent's participation. It resolves the identity from configuration the session carries. The runtime owns the mapping from Conductor identity to host session; Conductor verifies membership and does not choose which conversation, queue, or worker represents that identity.
+An adapter cannot supply that argument by asking the agent, since it acts without the agent's participation. It resolves the identity from the binding the agent's join wrote for its session. The runtime owns the mapping from Conductor identity to host session; Conductor verifies membership and does not choose which conversation, queue, or worker represents that identity.
 
 ## Liveness and failure
 

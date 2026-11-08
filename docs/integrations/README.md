@@ -2,7 +2,7 @@
 
 An adapter is one installable unit per host. It owns four responsibilities — a resident component that holds the delivery stream, a turn-boundary trigger that prevents an idle turn while deliveries pend, a lifecycle trigger that serves the session and restores the stream, and teardown that ends the stream with its session. See [the model](../design/model.md) for what they exist to guarantee and [wake adapters](../design/wake-adapters.md) for the requirements they satisfy.
 
-Conductor's core is host-neutral. `join` answers `"wake": "adapter"` exactly when an adapter served the session it runs in, and binds that session to the joining name; everywhere else it answers `"watch"`. `status` answers what holds an identity's stream. Nothing vendor-specific lives in either.
+Conductor's core is host-neutral. `join` answers `"wake": "adapter"` exactly when an adapter served the session it runs in, and binds that session to the joining name; everywhere else it answers `"watch"`. The join roster answers what holds each identity's stream. Nothing vendor-specific lives in either.
 
 This table is the one place that names each host's adapter. [Installation](../installation.md) and the [update procedure](../../skills/conductor/references/update-skill.md) run whatever its row says.
 
@@ -20,6 +20,6 @@ Conductor never writes a host's plugin registry or trust store, so enabling stay
 
 ## Fallback
 
-On a host without an adapter, `join` answers `"watch"` and the agent owns the lifecycle: start `conductor <agent> watch` through the host's background facility, retain the handle, process the delivery, start it again. It blocks for one delivery, writes it as one JSON document, and exits; a failed wait exits non-zero with stdout empty and the reason on stderr. That exit is the wake on every host verified so far: the harness notices the backgrounded task finish and resumes the turn.
+On a host without an adapter, `join` answers `"watch"` and the agent owns its own wake, by the `"watch"` rule in [SKILL.md](../../skills/conductor/SKILL.md) step 2; [protocol.md](../../skills/conductor/references/protocol.md) gives what `watch` writes and how it exits.
 
 Adapter lifetime, retry after host acceptance, and behavior when an accepted delivery never reaches an agent are host-specific policy. They live with each adapter, not in the core.

@@ -10,7 +10,7 @@ Reachability was already sound — durable state, persistent cursors, backlog dr
 
 ## The shape
 
-`watch` becomes a single host-neutral contract: one continuous delivery stream, identical on every host, with no vendor variants and no one-shot semantics.
+`watch` is a single host-neutral contract: it waits for one wake, writes it, acknowledges it, and exits, identical on every host. A host that can hold a stream persistently does so through an adapter's hold, not through `watch`.
 
 Everything host-specific — how a delivery becomes a turn, how the connection restores itself — moves out of the core into a per-harness **adapter**. The core stops knowing that vendors exist.
 
@@ -20,7 +20,7 @@ The invariants this rests on are in [the model](model.md); the requirements belo
 
 ### Conductor core
 
-1. **One watch contract.** `watch` blocks, emits one delivery, acknowledges it as accepted, and continues. It carries no vendor flags; host differences are expressible only in adapters. `--once` ends the stream after one delivery, which is a lifecycle choice belonging to the caller: on a host whose wake primitive is process completion, exiting is how the delivery reaches a turn. The core still cannot tell which host is asking.
+1. **One watch contract.** `watch` blocks, writes one wake, acknowledges it as accepted, and exits: on a host whose wake primitive is process completion, exiting is how the delivery reaches a turn. It carries no vendor flags; host differences are expressible only in adapters, and a persistent hold is an adapter's, built on the same client. The core still cannot tell which host is asking.
 2. **Wakeability is queryable.** A cheap, authoritative answer to "is this identity wakeable right now" exists, derived from observable state and never from an agent's recollection.
 3. **The roster reports wakeability.** What an operator or agent sees is who would respond to a publication, not who once registered.
 4. **The core never decides how a host starts a turn, and never learns what a stream would wake.** This is a publish-subscribe bus: a publication goes to a topic and accumulates for its subscribers, so there is no addressee and no wake mechanism expressible in that vocabulary at all. What a stream would wake stays outside Conductor. What *holds* it does not: the core records that, because an adapter's hold and a watcher's differ in how long they stay true and the agent has to know which it is looking at. It is reported and never routed on — see [the model](model.md).
@@ -31,7 +31,7 @@ The invariants this rests on are in [the model](model.md); the requirements belo
 6. **The adapter owns delivery-to-turn.** It converts an arriving delivery into a real agent turn by whatever means its host provides.
 7. **No idle turn while deliveries pend.** An agent cannot finish a turn and go idle while unread team work is waiting for it.
 8. **Restoration is blind-safe.** Any number of restore attempts, from any source, converge on exactly one live stream. A redundant attempt is a no-op, never a fault.
-9. **Identity binds without the agent.** The adapter resolves which Conductor identity a session represents from configuration, not from a model-supplied argument.
+9. **Identity binds without the agent.** The agent's join writes the binding for the session it runs in, and the adapter's hooks read it by session id, never from a model-supplied argument.
 10. **Failure degrades to latency, not loss.** If the immediate-wake path fails, deliveries are still consumed at the next turn boundary.
 11. **Residency ends with its session, and the adapter observes that rather than waiting to be told.** Holding a stream is the promise to deliver through it, so a stream that outlives the session it wakes must end. Leaking one does not merely waste a process or block the next session from arming: it keeps consuming. It takes each delivery, writes it where nothing is reading, and acknowledges it — putting the publication beyond the reach of redelivery, which only ever covers what was never acknowledged. Teardown events do not cover this, because a crash, a kill, or a one-shot process that simply exits fires none of them. The adapter therefore ends its own stream from the observed liveness of what it wakes, and acknowledges nothing once that is gone.
 
@@ -46,12 +46,12 @@ Four adapter responsibilities are fixed. Only their realization is host-specific
 ```mermaid
 flowchart TB
     subgraph core["Conductor core, host-neutral"]
-        watch["watch<br/>one continuous delivery stream"]
-        status["status<br/>is this identity wakeable now"]
+        watch["watch<br/>one wake, then exit"]
+        roster["roster / dispatch<br/>who is wakeable now"]
     end
 
     subgraph h1["Harness A adapter"]
-        r1["Resident component<br/>holds the stream, queues deliveries"]
+        r1["Resident component<br/>holds the stream"]
         t1["Turn-boundary trigger<br/>blocks idle while deliveries pend"]
         l1["Lifecycle trigger<br/>binds identity, restores the stream"]
         e1["Teardown<br/>ends the stream with the session"]
@@ -66,8 +66,8 @@ flowchart TB
 
     watch --> r1
     watch --> r2
-    status --> l1
-    status --> l2
+    roster --> l1
+    roster --> l2
     r1 -->|pending| t1
     r2 -->|pending| t2
     t1 --> turn1["Agent turn"]
@@ -91,18 +91,20 @@ Requirement 10 is what makes the resident component and the turn-boundary trigge
 
 ## What the core exposes
 
-`watch` is the stream. `status` reports whether an identity is on the roster, whether a live process holds its ownership guard, and whether that holder is `adapter` or `self` — derived from the guard's owner record and the operating system's view of that process. The difference matters because durability differs: an adapter holds across turns, a self-armed watcher exits on its first delivery. It never acquires the guard — a check that could momentarily block a live stream would be a way to cause the failure it exists to detect — and never trusts a claim to be watching, since that claim is exactly what goes stale when a stream dies silently.
+The watch guard is the stream. Who it reaches is answered where an agent already looks: each entry in join's roster carries `wakeable` and a `holder` of `adapter` or `self`, and a publication's dispatch names the recipients it found `unreachable`. Both derive from the guard's owner record and the operating system's view of that process. The holder matters because durability differs: an adapter holds across turns, a self-armed watcher exits on its first delivery. Neither answer acquires the guard — a check that could momentarily block a live stream would be a way to cause the failure it exists to detect — and neither trusts a claim to be watching, since that claim is exactly what goes stale when a stream dies silently.
 
-The join snapshot answers the same of everyone at once: each roster entry carries `wakeable` and the same holder, so choosing whom to address starts from what join already handed over rather than from publishing and hoping — and so that an entry held by an adapter is not read as the same fact as one held by a watcher a delivery away from exiting. No command asks it again — that answer is a moment's observation, and a verb returning it would invite an agent to treat a stale one as current. `ListAgents` remains the bare membership answer underneath, because delivery resolves recipients on every publication and must not pay a process probe per agent.
+No command asks it on its own — that answer is a moment's observation, and a verb returning it would invite an agent to treat a stale one as current. `ListAgents` remains the bare membership answer underneath, because delivery resolves recipients on every publication and must not pay a process probe per agent.
 
 It is reported beside the registration record, never stored in it. Registration is durable and self-declared; a held stream is observed at the moment of asking and is false the instant one dies. Persisting it would recreate the failure this design removes — a record asserting someone is listening, outliving the listener.
 
-Because `status` answers from outside the bus, it reads no protocol version and stays answerable against an uninitialized root: asking must never create the thing being asked about. A join is a genuine bus operation.
-
 All three are host-neutral. Host knowledge lives in the adapter subtree, which reaches the bus through the same client the CLI uses — the inverse of the vendor `watch` flags this design replaced.
+
+## Instances
+
+Each host's realization lives on its page in the [adapter registry](../integrations/README.md), with the findings verified on that host and why enabling it stays the user's step.
 
 ## Consequences
 
 - The vendor variants of `watch` are removed from the CLI surface; the integration matrix becomes a list of adapters rather than a table of commands.
 - Installation grows a new responsibility: registering host configuration, not only placing a skill directory and an executable.
-- Identity binding becomes configuration a session carries, rather than an argument a model supplies per command. On this host it must be a project-owned file the adapter reads itself: plugin-level user configuration is deliberately not readable from project settings, so it cannot vary per project.
+- Identity comes from the session binding the agent's join writes, rather than an argument a model supplies per command; the adapter reads it by session id.

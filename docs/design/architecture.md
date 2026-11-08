@@ -28,7 +28,7 @@ Agents reach one local state root under one trusted OS user on one Windows or Li
 
 ## One pass through the system
 
-1. An agent registers a name and responsibility. Registration produces the current roster and shared state, binds terminal identity when needed, and announces the join as its line on `collaboration/agents`.
+1. An agent registers a name and responsibility. Registration produces the current roster and shared state, binds the session an adapter serves, and announces the join as its line on `collaboration/agents`.
 2. The agent reads what its work requires and subscribes to the topics it follows. Collaboration rules are ordinary shared records, not a second control plane.
 3. The agent creates a record with `put` or replaces its text with `edit`. Many records published together are one `put --jsonl`.
 4. Conductor appends the change to the topic's history. That append is the wake: every other agent that reads the topic finds it on its next watch.
@@ -40,7 +40,7 @@ When no call or wait is active, Conductor is idle. The files remain.
 
 A resource is named `<topic-group>/<topic>`. It contains records whose complete public shape is a stable positive `index` and plain `text`. Conductor assigns indexes independently inside each topic. Topic group and topic names carry semantics; records do not carry a kind, payload wrapper, status, or hidden deletion state.
 
-An agent reads what it subscribes to, by topic or by whole group, plus `collaboration/rules` and `collaboration/agents`, which reach everyone. There are no private routes.
+An agent reads what it subscribes to, by topic or by whole group, plus `collaboration/rules`, `collaboration/agents` and `collaboration/broadcast`, which reach everyone, and its own `private/<name>`.
 
 Publication is atomic within one resource. Append-only history records the change, written and read under the topic's lock. Current reads reconstruct records from that authority; cursors record accepted progress.
 

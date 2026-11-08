@@ -10,7 +10,7 @@ conductor <agent> put <group>/<topic> --jsonl=<absolute-path>          # one JSO
 conductor <agent> edit <group>/<topic> <index> --file=<absolute-path>  # nothing is ever deleted
 ```
 
-Each answers with the resulting `records`, the `recipients` it reaches, and the `unreachable` among them that nothing can wake now. A file publishes verbatim, less one trailing newline; a text operand in place of `--file` is for a few plain words.
+Each answers with the resulting `records`, the `recipients` it reaches, and the `unreachable` among them that nothing can wake now. A file publishes verbatim, less any trailing newlines; a text operand in place of `--file` is for a few plain words.
 
 ## Read
 
@@ -20,7 +20,7 @@ conductor <agent> get <group>/<topic> --delta [--limit=N]            # your unre
 conductor <agent> get <group>/<topic> [<index>] [--start=N] [--end=N] [--limit=N]   # index range
 ```
 
-A read returns at most 20 records unless `--limit` raises it, and `remaining` counts what it left out: for `--full` and join, the older records (`--end=` one below the first index shown); for a range, the later ones (`--start=` one above the last). A `--delta` on a topic that does not reach you is always empty — confirm with `--full`.
+A read returns at most 20 records unless `--limit` sets another cap; a range with an `--end` and no `--limit` returns the whole range. `remaining` counts what it left out: for `--full` and join, the older records (`--end=` one below the first index shown); for a range without `--end`, the later ones (`--start=` one above the last). A `--delta` on a topic that does not reach you is always empty — confirm with `--full`.
 
 ## Subscribe and list
 

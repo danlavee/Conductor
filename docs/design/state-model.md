@@ -6,9 +6,9 @@ The root `protocol.json` is the compatibility gate for all of that state. Openin
 
 ## Stable identities
 
-An **agent** is a registered name and responsibility. Every CLI call names it explicitly as its leading argument. A binding is not membership: every operation still requires the registry entry to exist.
+An **agent** is a registered name and responsibility. Every CLI call names it explicitly as its leading argument. A binding is not membership: every operation except `list` still requires the registry entry to exist.
 
-A **resource** is a `<topic-group>/<topic>` name. A **record** is exactly a positive topic-local `index` and plain `text`. Conductor assigns the index when creating the record, as the topic's highest index plus one; edit preserves it. One publication may change several records, but only within one resource.
+A **resource** is a `<topic-group>/<topic>` name. A **record** is exactly a positive topic-local `index` and plain `text` of at most 2,000 characters. Conductor assigns the index when creating the record, as the topic's highest index plus one; edit preserves it. One publication may change several records, but only within one resource.
 
 A publication's **sequence** orders it within its topic: one more than the topic's last. It is unrelated to record indexes, and nothing orders publications across topics. Timestamps describe; they do not order.
 
@@ -20,7 +20,7 @@ Membership follows a short path:
 unregistered -> registered -> departed
 ```
 
-Registration validates the identity, serializes against membership changes, writes the registry entry, publishes the `name: responsibility` line on `collaboration/agents`, and returns the current roster and published state. Repeating the same name and responsibility is idempotent, and publishes the line only if it is missing. Reusing the name with a different responsibility is rejected.
+Registration validates the identity, serializes against membership changes, writes the registry entry, publishes the `name: responsibility` line on `collaboration/agents`, and returns the current roster and published state. A rejoin omits the responsibility, and publishes the line only if it is missing; repeating any responsibility, even the same one, is rejected.
 
 Departure edits that line to struck-through text, then removes the registry entry and subscriptions. Prior publications remain. The roster line is the whole join and leave announcement: every agent reads `collaboration/agents`, so peers are woken by it like any publication.
 
@@ -36,7 +36,7 @@ stateDiagram-v2
     Visible --> [*]: release the lock
 ```
 
-Under the lock Conductor reads the topic's history, gives each new record the highest index plus one, checks that every edited index exists, resolves the recipients, and appends the publication to `history.jsonl` with the topic's next sequence. The append is the visibility boundary and the wake: readers take the same lock, so they see the whole publication or none of it, and a watcher finds it there. A `--jsonl` load is one publication carrying many records. The operating system releases the lock of a dead process, so a crash never strands a topic.
+Under the lock Conductor reads the topic's history, gives each new record the highest index plus one, checks that every edited index exists, resolves the recipients, and appends the publication to `history.jsonl` with the topic's next sequence. The append is the visibility boundary and the wake: readers take the same lock, so they see the whole publication or none of it, and a watcher finds it there. A `--jsonl` load is one publication carrying many records. Publish admits a publication only if one wake can show it whole: at most 5 records, rendering within the wake's 10,000 UTF-16 units less its framing. So the 20-record budget always fits a first publication, and a wake always shows one. The operating system releases the lock of a dead process, so a crash never strands a topic.
 
 The publishing act answers with the publication and its recipients. A publisher that only got its own record back could not tell a topic somebody reads from one nobody is subscribed to; both succeed, and the difference is a delivery that never happens. The answer is who will be woken, not who is subscribed — an agent is not an addressee of its own act, so the publisher is absent from it even on a topic it subscribes to. The set is not written to history: the next subscription change falsifies it.
 
@@ -44,11 +44,11 @@ The publishing act answers with the publication and its recipients. A publisher 
 
 Three read views share the same published history:
 
-- **Delta** returns other agents' publications after the accepted topic or record cursor.
+- **Delta** returns other agents' publications after the accepted topic cursor.
 - **Historical** returns an inclusive index range without moving that cursor.
 - **Full** reconstructs the current records from history without moving that cursor.
 
-A watch polls the topics its agent reads — the two broadcast topics, its subscriptions, and every topic in its subscribed groups — and reads a delta of each whose history grew. It returns the unread deltas as one batch up to a shared record cap; `remaining` counts what was left for the next call. Acknowledgement advances each delivered cursor past every publication the delta scanned, the agent's own included. Subscribing starts the new topics' cursors at their current heads, so a subscription is never retroactive.
+A watch polls the topics its agent reads — the three collaboration topics, its private topic, its subscriptions, and every topic in its subscribed groups — and reads a delta of each whose history grew. It returns the unread deltas as one batch of at most 20 records, filled as [the protocol](../../skills/conductor/references/protocol.md) says, and `remaining` counts what was left. Acknowledgement advances each delivered cursor past every publication the delta scanned, the agent's own included. Subscribing starts the new topics' cursors at their current heads, so a subscription is never retroactive.
 
 ## Locking
 
@@ -59,7 +59,7 @@ Every read and write of a topic takes that topic's OS file lock, so operations o
 | Concern | Authority | Derived or delivery state |
 | --- | --- | --- |
 | State compatibility | Root protocol declaration | Installer and version metadata |
-| Membership | Registry entries | Terminal session bindings |
+| Membership | Registry entries | Adapter session bindings |
 | Published value | Append-only topic history | None |
 | Record identity | Highest index in topic history | None |
 | Publication order | Sequence in topic history | Timestamps |

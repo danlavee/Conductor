@@ -8,9 +8,12 @@ Every stateful path first crosses the same compatibility gate:
 
 ```mermaid
 flowchart LR
-    O["Stateful operation"] --> P{"Supported root protocol?"}
-    P -- "Yes" --> A["Perform the requested activity"]
-    P -- "No" --> M["PROTOCOL_MISMATCH; preserve state and stop"]
+    O["Stateful operation"] --> D{"Root declared?"}
+    D -- "No, and not watch" --> W["Declare this protocol"] --> A["Perform the requested activity"]
+    D -- "No, watch" --> M["PROTOCOL_MISMATCH; preserve state and stop"]
+    D -- "Yes" --> P{"Supported root protocol?"}
+    P -- "Yes" --> A
+    P -- "No" --> M
 ```
 
 ```mermaid
@@ -65,7 +68,7 @@ flowchart LR
     R --> D["Delta: explicit"]
     R --> F["Full current state"]
     D --> A["Acknowledge after delivery"]
-    A --> C["Advance resource or record cursor"]
+    A --> C["Advance topic cursor"]
     H --> N["Return without cursor change"]
     F --> N
 ```

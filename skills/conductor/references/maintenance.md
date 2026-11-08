@@ -18,4 +18,4 @@ Run this at the start of every session, before anything else. It is the one duty
 2. Run `conductor verify <installed-skill-directory>` using that binary. It is read-only and writes nothing.
 3. `current` — note it and move on to whatever else you were asked to do.
 4. `outdated` — follow [update-skill.md](update-skill.md)'s full procedure.
-5. `unknown` — no manifest, or the content changed since install; follow [update-skill.md](update-skill.md)'s `unknown` step. `not-installed` — this copy was never placed via `conductor install`; report that finding rather than guessing.
+5. `unknown` — no manifest, or the content changed since install; follow [update-skill.md](update-skill.md)'s `unknown` step. `not-installed` — nothing is at that directory; report that finding rather than guessing.

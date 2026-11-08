@@ -1,6 +1,6 @@
 # Current limitations
 
-- Conductor coordinates trusted agents under one OS user on one Windows or Linux host. Network and multi-host filesystems are unsupported.
+- Conductor coordinates trusted agents under one OS user on one Windows or Linux host, and builds for no other OS. Network and multi-host filesystems are unsupported.
 - Atomic publication is limited to one topic. There is no cross-topic transaction.
 - There is no delete, tombstone, hidden-record, or purge operation. History only grows; a record changes only by `edit`.
 - Delivery is at least once around a crash before acknowledgement persistence, so recipients must tolerate replay.
