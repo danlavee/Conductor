@@ -3,6 +3,7 @@
 package install
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -23,11 +24,18 @@ const manifestName = ".conductor-manifest.json"
 
 // Payload is one installable tree: its embedded files, the two trailing path
 // segments its host expects it under, and where the executable sits inside it.
+// HookCommand, when set, is what every HookCommandPlaceholder in the tree
+// becomes before it is hashed, given the executable's path inside the tree, so
+// a host whose hooks must name this OS's executable publishes them that way.
 type Payload struct {
 	Bundle        fs.FS
 	Parent, Name  string
 	ExecutableDir string
+	HookCommand   func(executable string) string
 }
+
+// HookCommandPlaceholder stands in a payload's hooks for the installed executable.
+const HookCommandPlaceholder = "${CONDUCTOR_BIN}"
 
 // Check enforces the destination contract without writing anything.
 func (p Payload) Check(destination string) error {
@@ -47,14 +55,11 @@ func (p Payload) executable() string {
 }
 
 // Source is the exact payload and executable being installed.
-// Rewrite edits a payload file before it is hashed. Grok's hook command has
-// to name this OS's executable, and the published tree is that rewritten one.
 type Source struct {
 	Payload
 	Executable string
 	Version    string
 	Protocol   int
-	Rewrite    func(name string, data []byte) []byte
 }
 
 // Result is the install response the CLI writes.
@@ -184,9 +189,10 @@ func (s Source) build(destination string) (map[string][]byte, manifest, error) {
 	if err != nil {
 		return nil, manifest{}, fmt.Errorf("read payload: %w", err)
 	}
-	if s.Rewrite != nil {
+	if s.HookCommand != nil {
+		command := []byte(s.HookCommand(s.executable()))
 		for name, data := range files {
-			files[name] = s.Rewrite(name, data)
+			files[name] = bytes.ReplaceAll(data, []byte(HookCommandPlaceholder), command)
 		}
 	}
 	if files[s.executable()], err = os.ReadFile(s.Executable); err != nil {
