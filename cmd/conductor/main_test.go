@@ -339,6 +339,10 @@ func (c cli) command(args ...string) *exec.Cmd {
 	command.Dir = c.dir
 	command.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
 	command.Env = replaceEnvironment(command.Env, "CONDUCTOR_HOME", c.home)
+	// A test run inside a host session must not hand that session to the CLI.
+	for _, host := range adapterHosts {
+		command.Env = replaceEnvironment(command.Env, host.environment, "")
+	}
 	for key, value := range c.env {
 		command.Env = replaceEnvironment(command.Env, key, value)
 	}
@@ -394,6 +398,11 @@ func TestAdapterUsageStaysWithItsHost(t *testing.T) {
 	for _, args := range [][]string{{"adapter"}, {"adapter", "nosuchhost"}} {
 		if err := run(args); err == nil || err.Error() != adapterHostsUsageError().Error() {
 			t.Fatalf("%v: error = %v, want the host list", args, err)
+		}
+	}
+	for _, host := range adapterHosts {
+		if err := run([]string{"adapter", host.binding, "nosuchverb"}); err == nil || err.Error() != host.usage().Error() {
+			t.Fatalf("%s: error = %v, want %v", host.binding, err, host.usage())
 		}
 	}
 }

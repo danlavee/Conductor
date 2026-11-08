@@ -31,14 +31,15 @@ func runAgentCommand(agent, command string, rest []string) error {
 		if err != nil {
 			return err
 		}
-		wake, err := bindWake(client.Home, agent)
+		wake, tookOver, err := bindWake(client.Home, agent)
 		if err != nil {
 			return err
 		}
 		answer := struct {
 			conductor.Snapshot
-			Wake string `json:"wake"`
-		}{snapshot, wake}
+			Wake     string `json:"wake"`
+			TookOver string `json:"took_over,omitempty"`
+		}{snapshot, wake, tookOver}
 		if err := conductor.WriteJSON(os.Stdout, answer); err != nil {
 			return err
 		}
