@@ -3,6 +3,7 @@ package platform
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -52,6 +53,46 @@ func ReadFile(path string) ([]byte, error) {
 	return data, err
 }
 
+// WriteFile publishes data at path by atomic replacement, so a reader sees the
+// old file or the new one and never a partial one.
+func WriteFile(path string, data []byte) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(directory, ".conductor-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+	_, err = temp.Write(data)
+	if err == nil {
+		err = temp.Sync()
+	}
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return ReplaceFile(temp.Name(), path)
+}
+
+// Remove deletes path the way ReplaceFile replaces it, waiting out a reader
+// that holds the file open, and persists the removal. Absence is success.
+func Remove(path string) error {
+	err := waitOut(func() error { return os.Remove(path) })
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return SyncParent(path)
+}
+
+// waitOut retries only what Windows reports transiently; elsewhere a
+// permission error is genuine and answers at once.
 func waitOut(attempt func() error) error {
 	deadline := time.Now().Add(replaceWait)
 	for {
@@ -59,7 +100,7 @@ func waitOut(attempt func() error) error {
 		if err == nil {
 			return nil
 		}
-		transient := errors.Is(err, os.ErrPermission) || IsTransientFileAccess(err)
+		transient := isTransientFileAccess(err) || IsDeletePending(err)
 		if !transient || time.Now().After(deadline) {
 			return err
 		}

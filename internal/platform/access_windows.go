@@ -13,8 +13,8 @@ const (
 	errorLockViolation    syscall.Errno = 33
 )
 
-// IsTransientFileAccess reports a Windows sharing conflict during atomic publication.
-func IsTransientFileAccess(err error) bool {
+// isTransientFileAccess reports a Windows sharing conflict during atomic publication.
+func isTransientFileAccess(err error) bool {
 	return errors.Is(err, errorSharingViolation) || errors.Is(err, errorLockViolation)
 }
 
