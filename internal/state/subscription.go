@@ -9,22 +9,14 @@ import (
 	"strings"
 )
 
-func (c *Client) Subscription() (Subscription, error) {
-	agent, err := c.requireAgent()
-	if err != nil {
-		return Subscription{}, err
-	}
-	return c.loadSubscription(agent)
-}
-
 // errPrivateSubscription refuses every subscription into the private group:
 // an agent's own private topic already reaches it, and another's is not its
 // to read.
 var errPrivateSubscription = &ProtocolError{Code: "INVALID", Text: "private/<name> reaches only <name>, without subscribing"}
 
 func (c *Client) SubscribeTopicGroup(group string) (Subscription, error) {
-	if strings.TrimSpace(group) != group || group == "" || strings.ContainsAny(group, `/\\`) {
-		return Subscription{}, errors.New("invalid topic group")
+	if err := validName(group); err != nil {
+		return Subscription{}, err
 	}
 	if group == privateGroup {
 		return Subscription{}, errPrivateSubscription
@@ -62,8 +54,8 @@ func (c *Client) ListTopicGroups() ([]string, error) {
 }
 
 func (c *Client) ListTopics(group string) ([]string, error) {
-	if strings.TrimSpace(group) != group || group == "" || strings.ContainsAny(group, `/\\`) {
-		return nil, errors.New("invalid topic group")
+	if err := validName(group); err != nil {
+		return nil, err
 	}
 	entries, err := os.ReadDir(filepath.Join(c.Home, "topics", group))
 	if errors.Is(err, os.ErrNotExist) {
@@ -203,12 +195,8 @@ func (c *Client) topicsReadableBy(agent string, subscription Subscription) ([]st
 // topicHead answers the sequence of the topic's last publication, zero when it
 // has none.
 func (c *Client) topicHead(topic string) (int64, error) {
-	release, err := c.lockResource(topic)
-	if err != nil {
-		return 0, err
-	}
-	history, err := c.readHistory(topic)
-	if err := errors.Join(err, release()); err != nil || len(history) == 0 {
+	history, err := c.lockedHistory(topic)
+	if err != nil || len(history) == 0 {
 		return 0, err
 	}
 	return history[len(history)-1].Sequence, nil

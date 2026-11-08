@@ -3,8 +3,10 @@ package state
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 )
 
 // The collaboration topics reach every registered agent, with no subscription
@@ -54,9 +56,6 @@ func (c *Client) Edit(topic string, index int64, text string) (Dispatch, error) 
 // writer and reader of the topic, and gives it the topic's next sequence. The
 // append is both the publication and its wake: a watcher finds it in history.
 func (c *Client) Publish(topic string, ops []Op) (Dispatch, error) {
-	if err := c.validateProtocol(); err != nil {
-		return Dispatch{}, err
-	}
 	agent, err := c.requireAgent()
 	if err != nil {
 		return Dispatch{}, err
@@ -66,6 +65,11 @@ func (c *Client) Publish(topic string, ops []Op) (Dispatch, error) {
 	}
 	if len(ops) == 0 {
 		return Dispatch{}, errors.New("publication has no records")
+	}
+	for n, op := range ops {
+		if count := utf8.RuneCountInString(op.Text); count > MaxRecordText {
+			return Dispatch{}, &ProtocolError{Code: "INVALID", Text: fmt.Sprintf("record %d of the publication has %d characters; a record holds at most %d", n+1, count, MaxRecordText)}
+		}
 	}
 	release, err := c.lockResource(topic)
 	if err != nil {
@@ -106,24 +110,28 @@ func (c *Client) Publish(topic string, ops []Op) (Dispatch, error) {
 		Sequence: sequence, Topic: topic, Agent: agent,
 		Timestamp: time.Now().UTC(), Records: sortedRecords(records),
 	}
+	if err := admitWake(publication); err != nil {
+		return Dispatch{}, err
+	}
 	dir, err := c.topicDir(topic)
 	if err != nil {
 		return Dispatch{}, err
 	}
-	// Only the publication is stored. Recipients answer who this act reaches
-	// now, which the next subscription changes; history must not carry it.
-	if err := appendJSONL(filepath.Join(dir, "history.jsonl"), publication); err != nil {
-		return Dispatch{}, err
-	}
+	// Reachability is resolved before the append: an error after commit would
+	// invite a retry that publishes twice. Recipients answer who this act
+	// reaches now; history must not carry it.
 	unreachable := []string{}
 	for _, recipient := range recipients {
-		holder, err := c.liveHolder(recipient)
+		owner, err := c.liveHolder(recipient)
 		if err != nil {
 			return Dispatch{}, err
 		}
-		if holder == "" {
+		if owner.Holder == "" {
 			unreachable = append(unreachable, recipient)
 		}
+	}
+	if err := appendJSONL(filepath.Join(dir, "history.jsonl"), publication); err != nil {
+		return Dispatch{}, err
 	}
 	return Dispatch{Publication: publication, Recipients: recipients, Unreachable: unreachable}, nil
 }

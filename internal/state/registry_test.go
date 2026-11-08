@@ -3,10 +3,13 @@ package state
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/danlavee/Conductor/internal/platform"
 )
 
 // TestRosterSaysHowLongEachWakeableEntryStaysTrue covers what every roster
@@ -20,7 +23,7 @@ func TestRosterSaysHowLongEachWakeableEntryStaysTrue(t *testing.T) {
 		if _, err := client.Join(name, "dev"); err != nil {
 			t.Fatal(err)
 		}
-		release, err := newTestClient(t, home, name).AcquireWatchOwnership(holder)
+		release, err := newTestClient(t, home, name).AcquireWatchOwnership(holder, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -45,6 +48,45 @@ func TestRosterSaysHowLongEachWakeableEntryStaysTrue(t *testing.T) {
 	}
 }
 
+// An owner record outlives a killed holder, and its PID can be reused. Only a
+// record whose process is alive and still matches its start token answers.
+func TestADeadOrRecycledHolderIsUnreachable(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+	exited := exec.Command(os.Args[0], "-test.run=^$")
+	if err := exited.Run(); err != nil {
+		t.Fatal(err)
+	}
+	self, err := platform.ProcessOf(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := map[string]watchOwner{
+		"live":      {Process: self, Holder: HolderAdapter},
+		"tokenless": {Process: platform.Process{PID: self.PID}, Holder: HolderAdapter},
+		"recycled":  {Process: platform.Process{PID: self.PID, Start: "not-this-process"}, Holder: HolderAdapter},
+		"dead":      {Process: platform.Process{PID: exited.Process.Pid, Start: self.Start}, Holder: HolderAdapter},
+	}
+	for name, owner := range owners {
+		if _, err := client.Join(name, "dev"); err != nil {
+			t.Fatal(err)
+		}
+		_, ownerPath := watchGuardPaths(home, name)
+		if err := writeJSONAtomic(ownerPath, owner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	roster, err := client.Roster()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range roster {
+		if want := entry.Name == "live"; entry.Wakeable != want {
+			t.Errorf("%s wakeable = %v, want %v", entry.Name, entry.Wakeable, want)
+		}
+	}
+}
+
 func TestRegisterPutGetAndDiskState(t *testing.T) {
 	home := t.TempDir()
 	client := newTestClient(t, home, "")
@@ -65,7 +107,7 @@ func TestRegisterPutGetAndDiskState(t *testing.T) {
 		t.Fatalf("record index = %d, want 1", record.Index)
 	}
 
-	result, err := client.Get(ReadRequest{Topic: "messages/team", RecordIndex: record.Index, Mode: ReadFull})
+	result, err := client.Get(ReadRequest{Topic: "messages/team", Mode: ReadFull})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +137,7 @@ func TestIdentityIsNeverInferredFromSoleRegistration(t *testing.T) {
 
 func TestExplicitIdentityRejectsPathTraversal(t *testing.T) {
 	client := newTestClient(t, t.TempDir(), `..\victim`)
-	if _, err := client.ResolveAgent(); err == nil || !strings.Contains(err.Error(), "invalid name") {
+	if _, err := client.requireAgent(); err == nil || !strings.Contains(err.Error(), "invalid name") {
 		t.Fatalf("traversing identity accepted: %v", err)
 	}
 }
@@ -302,5 +344,27 @@ func TestJoinArityValidation(t *testing.T) {
 	}
 	if len(agents) != 1 || agents[0].Responsibility != "reviewer" {
 		t.Fatalf("expected responsibility to be 'reviewer', got %#v", agents)
+	}
+}
+
+// The roster line is a record, struck through on leave, so a responsibility
+// that would push the struck line past MaxRecordText is refused at join.
+func TestJoinRefusesAResponsibilityTooLongForTheRoster(t *testing.T) {
+	home := t.TempDir()
+	client := newTestClient(t, home, "")
+	fixed := len("~~" + rosterText("agent", "") + "~~")
+	if _, err := client.Join("agent", strings.Repeat("r", MaxRecordText-fixed+1)); err == nil {
+		t.Fatal("an over-long responsibility was accepted")
+	} else {
+		assertCode(t, err, "INVALID")
+	}
+	if _, err := os.Stat(filepath.Join(home, "registry", "agent.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a refused join left a registration: %v", err)
+	}
+	if _, err := client.Join("agent", strings.Repeat("r", MaxRecordText-fixed)); err != nil {
+		t.Fatalf("a responsibility that just fits was refused: %v", err)
+	}
+	if err := client.Leave("agent"); err != nil {
+		t.Fatalf("leave could not strike the longest roster line: %v", err)
 	}
 }

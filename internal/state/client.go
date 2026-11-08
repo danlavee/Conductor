@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-const defaultLockTimeout = 3 * time.Minute
+// lockTimeout bounds every wait for a state mutex.
+const lockTimeout = 3 * time.Minute
 
 // Client is safe to construct per CLI invocation.
 type Client struct {
 	Home         string
 	Agent        string
-	LockTimeout  time.Duration
 	PollInterval time.Duration
 	saveCursorFn func(string, Cursor) error
 	watchIdleFn  func()
@@ -25,7 +25,7 @@ func Open(home, agent string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{Home: root, Agent: agent, LockTimeout: defaultLockTimeout, PollInterval: 200 * time.Millisecond}, nil
+	return &Client{Home: root, Agent: agent, PollInterval: 200 * time.Millisecond}, nil
 }
 
 // Root resolves a state root the same way opening a client does, without an

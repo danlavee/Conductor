@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 )
 
 func (c *Client) loadCursor(agent string) (Cursor, error) {
@@ -24,13 +23,6 @@ func (c *Client) saveCursor(agent string, cursor Cursor) error {
 		return c.saveCursorFn(agent, cursor)
 	}
 	return writeJSONAtomic(filepath.Join(c.Home, "cursors", agent+".json"), cursor)
-}
-
-func recordCursorSlot(topic string, recordIndex int64) string {
-	if recordIndex == 0 {
-		return topic
-	}
-	return topic + "#" + strconv.FormatInt(recordIndex, 10)
 }
 
 func (c *Client) updateCursor(agent string, update func(*Cursor)) error {

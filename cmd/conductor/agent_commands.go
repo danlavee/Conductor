@@ -9,10 +9,9 @@ import (
 
 func runAgentCommand(agent, command string, rest []string) error {
 	open := conductor.New
-	// Neither may bring a protocol root into being as a side effect of being
-	// asked: watch attaches to a bus that must already exist, and status
-	// answers about one that may never have.
-	if command == "watch" || command == "status" {
+	// watch attaches to a bus that must already exist, so it must not bring a
+	// protocol root into being.
+	if command == "watch" {
 		open = conductor.Open
 	}
 	client, err := open(os.Getenv("CONDUCTOR_HOME"), agent)
@@ -137,24 +136,9 @@ func runAgentCommand(agent, command string, rest []string) error {
 		return nil
 	case "watch":
 		return runWatchCommand(client, rest)
-	case "status":
-		if len(rest) != 0 {
-			return usageError()
-		}
-		return writeStatus(client)
 	default:
 		return usageError()
 	}
-}
-
-// writeStatus emits the participation answer. Asking and arming both answer
-// with it, so the agent has one account of its own reachability.
-func writeStatus(client *conductor.Client) error {
-	status, err := client.WatchStatus()
-	if err != nil {
-		return err
-	}
-	return conductor.WriteJSON(os.Stdout, status)
 }
 
 // writeDispatch is the single answer every record verb gives. Taking the whole

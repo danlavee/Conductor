@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -26,7 +25,6 @@ func TestHelpIsAskedForTwoWaysAndIsAnOperandEverywhereElse(t *testing.T) {
 		{"planner", "put", "dev/tasks", "--help"},
 		{"planner", "put", "dev/tasks", "help"},
 		{"planner", "put", "help", "-h"},
-		{"planner", "status"},
 		{"install", "--help", "--replace"},
 		{"planner", "join", "help"},
 	} {
@@ -53,7 +51,7 @@ func TestPrintedHelpAndUsageErrorAreOneStatement(t *testing.T) {
 func TestAskingTheBinaryWhatItDoesAnswersOnTheJSONWire(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "runtime-state")
 	for _, args := range [][]string{{"--help"}, {"planner", "--help"}} {
-		stdout, stderr, err := runCLIHelper(os.Args[0], state, t.TempDir(), args...)
+		stdout, stderr, err := cli{home: state, dir: t.TempDir()}.run(args...)
 		if err != nil {
 			t.Fatalf("%v: %v: %s", args, err, stderr)
 		}

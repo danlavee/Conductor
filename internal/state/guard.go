@@ -5,19 +5,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/danlavee/Conductor/internal/platform"
 )
 
 // watchOwner records which process currently holds an agent's watch-ownership
 // guard. The mutual exclusion itself is the OS file lock; this record is what
-// WatchStatus derives wakeability from, so an unreadable one fails that query
+// liveHolder derives wakeability from, so an unreadable one fails that query
 // rather than reading as "not wakeable".
 type watchOwner struct {
-	PID          int    `json:"pid"`
-	ProcessStart string `json:"process_start,omitempty"`
-	Holder       Holder `json:"holder"`
+	platform.Process
+	Holder  Holder `json:"holder"`
+	Session string `json:"session,omitempty"` // the adapter session it holds for, opaque here
 }
 
 // Holder is what armed a delivery stream, which decides how long wakeability
@@ -31,12 +30,14 @@ const (
 )
 
 // AcquireWatchOwnership prevents more than one watcher from delivering signals
-// for the same agent. The OS releases ownership on crash.
-func (c *Client) AcquireWatchOwnership(holder Holder) (func() error, error) {
-	if err := c.validateProtocol(); err != nil {
+// for the same agent, recording session ("" for none) as the owner's. The OS
+// releases ownership on crash.
+func (c *Client) AcquireWatchOwnership(holder Holder, session string) (func() error, error) {
+	agent, err := c.requireAgent()
+	if err != nil {
 		return nil, err
 	}
-	agent, err := c.requireAgent()
+	self, err := platform.ProcessOf(os.Getpid())
 	if err != nil {
 		return nil, err
 	}
@@ -48,14 +49,12 @@ func (c *Client) AcquireWatchOwnership(holder Holder) (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	pid := os.Getpid()
-	processStart, _ := platform.ProcessStartToken(pid)
-	if writeErr := writeJSONAtomic(ownerPath, watchOwner{PID: pid, ProcessStart: processStart, Holder: holder}); writeErr != nil {
+	if writeErr := writeJSONAtomic(ownerPath, watchOwner{Process: self, Holder: holder, Session: session}); writeErr != nil {
 		_ = release()
 		return nil, writeErr
 	}
 	return func() error {
-		_ = os.Remove(ownerPath)
+		_ = platform.Remove(ownerPath)
 		return release()
 	}, nil
 }
@@ -66,71 +65,34 @@ func watchGuardPaths(home, agent string) (guard, owner string) {
 	return filepath.Join(directory, agent+".guard"), filepath.Join(directory, agent+".owner.json")
 }
 
-// WatchStatus is whether an identity can be woken right now -- on the roster,
-// with a live stream holding its guard -- and what would reach it. An agent
-// that armed nothing and one subscribed to nothing are both unreachable, and
-// only one of them looks it, so subscriptions are reported either way.
-type WatchStatus struct {
-	Agent         string       `json:"agent"`
-	Registered    bool         `json:"registered"`
-	Wakeable      bool         `json:"wakeable"`
-	Holder        Holder       `json:"holder,omitempty"`
-	Subscriptions Subscription `json:"subscriptions"`
-}
-
-// WatchStatus answers without acquiring the guard, because a status check must
-// never displace or block a live stream. It reads no protocol version, so it
-// still answers for a root that was never initialized.
-func (c *Client) WatchStatus() (WatchStatus, error) {
-	if strings.TrimSpace(c.Agent) == "" {
-		return WatchStatus{}, errors.New("agent identity is required")
-	}
-	agent := c.Agent
-	if err := validName(agent); err != nil {
-		return WatchStatus{}, err
-	}
-	status := WatchStatus{Agent: agent}
-	if _, err := os.Stat(filepath.Join(c.Home, "registry", agent+".json")); err == nil {
-		status.Registered = true
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return WatchStatus{}, err
-	}
-	holder, err := c.liveHolder(agent)
-	if err != nil {
-		return WatchStatus{}, err
-	}
-	status.Wakeable, status.Holder = holder != "", holder
-	if status.Subscriptions, err = c.loadSubscription(agent); err != nil {
-		return WatchStatus{}, err
-	}
-	return status, nil
-}
-
-// liveHolder reports what holds an agent's stream, or "" when nothing would
-// answer a signal for it: no owner record, or one naming a dead or recycled
-// process.
-func (c *Client) liveHolder(agent string) (Holder, error) {
+// liveHolder reports what holds an agent's stream, or the zero record when
+// nothing would answer a signal for it: no owner record, or one naming a dead
+// or recycled process. It never acquires the guard, so a roster or publication
+// reading reachability never displaces or blocks a live stream.
+func (c *Client) liveHolder(agent string) (watchOwner, error) {
 	_, ownerPath := watchGuardPaths(c.Home, agent)
 	var owner watchOwner
 	if err := readJSON(ownerPath, &owner); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", nil
+			return watchOwner{}, nil
 		}
-		return "", err
+		return watchOwner{}, err
 	}
-	if owner.PID <= 0 || !watchOwnerAlive(owner) {
-		return "", nil
+	if !owner.Alive() {
+		return watchOwner{}, nil
 	}
-	return owner.Holder, nil
+	return owner, nil
 }
 
-// watchOwnerAlive rejects a recycled PID by comparing the operating system's
-// process-instance token, where the platform can supply one.
-func watchOwnerAlive(owner watchOwner) bool {
-	if current, ok := platform.ProcessStartToken(owner.PID); ok && owner.ProcessStart != "" {
-		return current == owner.ProcessStart && platform.ProcessAlive(owner.PID)
+// WatchOwnerSession is the session the live owner of this agent's guard holds
+// for, or "" when nothing live holds it or the owner holds for no session.
+func (c *Client) WatchOwnerSession() (string, error) {
+	agent, err := c.requireAgent()
+	if err != nil {
+		return "", err
 	}
-	return platform.ProcessAlive(owner.PID)
+	owner, err := c.liveHolder(agent)
+	return owner.Session, err
 }
 
 // watchOwnershipHint names the holder's PID in a LOCKED error when the owner
@@ -144,7 +106,7 @@ func watchOwnershipHint(ownerPath string) string {
 }
 
 func (c *Client) acquireStateMutex(path string) (func() error, error) {
-	release, err := platform.AcquireFileMutex(path, c.LockTimeout)
+	release, err := platform.AcquireFileMutex(path, lockTimeout)
 	if errors.Is(err, platform.ErrMutexTimeout) {
 		return nil, &ProtocolError{Code: "TIMEOUT", Text: "state mutex did not become available"}
 	}

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/danlavee/Conductor/internal/platform"
 )
@@ -20,29 +18,11 @@ import (
 var portableName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$`)
 
 func writeJSONAtomic(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	temp, err := os.CreateTemp(filepath.Dir(path), ".conductor-*.tmp")
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	encoder := json.NewEncoder(temp)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(value); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return platform.ReplaceFile(tempPath, path)
+	return platform.WriteFile(path, append(data, '\n'))
 }
 
 func appendJSONL(path string, value any) error {
@@ -105,24 +85,6 @@ func trimUnterminatedTail(file *os.File) error {
 	return file.Truncate(size)
 }
 
-func removeEventually(path string) error {
-	var err error
-	for attempt := 0; attempt < 100; attempt++ {
-		err = os.Remove(path)
-		if err == nil {
-			return platform.SyncParent(path)
-		}
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		if !errors.Is(err, os.ErrPermission) {
-			return err
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	return err
-}
-
 func readJSON(path string, value any) error {
 	file, err := platform.Open(path)
 	if err != nil {
@@ -131,27 +93,7 @@ func readJSON(path string, value any) error {
 	defer file.Close()
 	decoder := json.NewDecoder(bufio.NewReader(file))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("JSON file contains multiple values")
-		}
-		return err
-	}
-	switch typed := value.(type) {
-	case *Agent:
-		return validateAgent(typed)
-	case *Publication:
-		return validatePublication(typed)
-	default:
-		if validator, ok := value.(stateValidator); ok {
-			return validator.validate()
-		}
-	}
-	return nil
+	return decoder.Decode(value)
 }
 
 // WriteJSON writes indented JSON followed by a newline.

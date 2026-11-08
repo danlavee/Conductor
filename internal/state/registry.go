@@ -2,11 +2,15 @@ package state
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/danlavee/Conductor/internal/platform"
 )
 
 // Join adds or reconnects an agent and returns the full current snapshot.
@@ -29,6 +33,10 @@ func (c *Client) Join(name, responsibility string) (snapshot Snapshot, err error
 	if !exists {
 		if strings.TrimSpace(responsibility) == "" {
 			return Snapshot{}, &ProtocolError{Code: "INVALID", Text: "responsibility is required for new agent"}
+		}
+		// Leaving strikes the roster line through, so that edit must fit too.
+		if utf8.RuneCountInString(retiredRosterText(name, responsibility)) > MaxRecordText {
+			return Snapshot{}, &ProtocolError{Code: "INVALID", Text: fmt.Sprintf("responsibility is too long: the roster line holds at most %d characters", MaxRecordText)}
 		}
 	} else {
 		if responsibility != "" {
@@ -56,17 +64,13 @@ func (c *Client) Join(name, responsibility string) (snapshot Snapshot, err error
 	if err := writeJSONAtomic(registrationPath, agent); err != nil {
 		return Snapshot{}, err
 	}
-	if err := writeJSONAtomic(c.subscriptionPath(name), Subscription{TopicGroups: []string{}, Topics: []string{}}); err != nil {
-		_ = removeEventually(registrationPath)
-		return Snapshot{}, err
-	}
 	if err := c.ensureRosterRecord(name, responsibility); err != nil {
-		_ = removeEventually(registrationPath)
+		_ = platform.Remove(registrationPath)
 		return Snapshot{}, err
 	}
 	snapshot, err = c.FullSnapshot()
 	if err != nil {
-		_ = removeEventually(registrationPath)
+		_ = platform.Remove(registrationPath)
 		return Snapshot{}, err
 	}
 	return snapshot, nil
@@ -98,13 +102,10 @@ func (c *Client) Leave(name string) error {
 	if err := c.retireRosterRecord(agent); err != nil {
 		return err
 	}
-	if err := removeEventually(path); err != nil {
+	if err := platform.Remove(path); err != nil {
 		return err
 	}
-	if err := removeEventually(c.subscriptionPath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	return platform.Remove(c.subscriptionPath(name))
 }
 
 // ListAgents returns the complete registry ordered by name.
@@ -163,20 +164,17 @@ func (c *Client) Roster() ([]RosterEntry, error) {
 	}
 	roster := make([]RosterEntry, 0, len(agents))
 	for _, agent := range agents {
-		holder, err := c.liveHolder(agent.Name)
+		owner, err := c.liveHolder(agent.Name)
 		if err != nil {
 			return nil, err
 		}
-		roster = append(roster, RosterEntry{Agent: agent, Wakeable: holder != "", Holder: holder})
+		roster = append(roster, RosterEntry{Agent: agent, Wakeable: owner.Holder != "", Holder: owner.Holder})
 	}
 	return roster, nil
 }
 
 // FullSnapshot returns all agents and each topic's newest current records.
 func (c *Client) FullSnapshot() (Snapshot, error) {
-	if err := c.validateProtocol(); err != nil {
-		return Snapshot{}, err
-	}
 	if _, err := c.requireAgent(); err != nil {
 		return Snapshot{}, err
 	}
@@ -202,12 +200,8 @@ func (c *Client) FullSnapshot() (Snapshot, error) {
 				continue
 			}
 			topicName := group.Name() + "/" + topic.Name()
-			release, err := c.lockResource(topicName)
+			history, err := c.lockedHistory(topicName)
 			if err != nil {
-				return Snapshot{}, err
-			}
-			history, err := c.readHistory(topicName)
-			if err := errors.Join(err, release()); err != nil {
 				return Snapshot{}, err
 			}
 			records, remaining := newest(materialize(history), DefaultReadLimit)
@@ -223,9 +217,6 @@ func (c *Client) FullSnapshot() (Snapshot, error) {
 // AcknowledgeSnapshot records the state delivered by Register. As with delta
 // acknowledgement, CLI callers invoke it only after stdout accepts the result.
 func (c *Client) AcknowledgeSnapshot(snapshot Snapshot) error {
-	if err := c.validateProtocol(); err != nil {
-		return err
-	}
 	agent, err := c.requireAgent()
 	if err != nil {
 		return err
@@ -249,17 +240,17 @@ func rosterText(name, responsibility string) string {
 	return name + ": " + responsibility
 }
 
+func retiredRosterText(name, responsibility string) string {
+	return "~~" + rosterText(name, responsibility) + "~~"
+}
+
 // rosterRecord answers the index of the agent's live line on
 // collaboration/agents, or zero when it has none. The line itself is the only
 // record of it: names cannot contain the separator, so the text identifies
 // the agent.
 func (c *Client) rosterRecord(name, responsibility string) (int64, error) {
-	release, err := c.lockResource(collaborationAgentsTopic)
+	history, err := c.lockedHistory(collaborationAgentsTopic)
 	if err != nil {
-		return 0, err
-	}
-	history, err := c.readHistory(collaborationAgentsTopic)
-	if err := errors.Join(err, release()); err != nil {
 		return 0, err
 	}
 	for _, record := range materialize(history) {
@@ -291,6 +282,6 @@ func (c *Client) retireRosterRecord(agent Agent) error {
 	if err != nil || index == 0 {
 		return err
 	}
-	_, err = c.Edit(collaborationAgentsTopic, index, "~~"+rosterText(agent.Name, agent.Responsibility)+"~~")
+	_, err = c.Edit(collaborationAgentsTopic, index, retiredRosterText(agent.Name, agent.Responsibility))
 	return err
 }

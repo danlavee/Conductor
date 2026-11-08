@@ -3,40 +3,27 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-	"io"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	conductor "github.com/danlavee/Conductor/internal/state"
 )
 
-// A watch's stdout is the delivery and nothing else. The agent reads what
-// wakes it as one document; a preface before it is a document an agent can
-// mistake for the delivery and drop the mail with.
+// A watch's stdout is the wake and nothing else: a preface before it is text
+// an agent can mistake for the delivery and drop the mail with.
 func TestWatchPrintsOnlyTheDelivery(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
 	for _, join := range [][2]string{{"a", "dev"}, {"peer", "review"}} {
-		if _, _, err := runCLIHelper(os.Args[0], root, "", join[0], "join", join[1]); err != nil {
+		if _, _, err := (cli{home: root}).run(join[0], "join", join[1]); err != nil {
 			t.Fatal(err)
 		}
 	}
-	stdout, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "watch")
+	stdout, stderr, err := cli{home: root}.run("a", "watch")
 	if err != nil {
 		t.Fatalf("watch: %v: %s", err, stderr)
 	}
-	documents := json.NewDecoder(bytes.NewReader(stdout))
-	var batch conductor.Batch
-	if err := documents.Decode(&batch); err != nil || len(batch.Deliveries) == 0 {
-		t.Fatalf("first document = %#v, %v; want the delivery", batch, err)
-	}
-	var extra json.RawMessage
-	if err := documents.Decode(&extra); !errors.Is(err, io.EOF) {
-		t.Fatalf("watch wrote more than the delivery: %s", extra)
+	if !strings.HasPrefix(string(stdout), "Conductor: ") || !bytes.Contains(stdout, []byte("peer: review")) {
+		t.Fatalf("watch stdout = %q; want the wake and nothing before it", stdout)
 	}
 }
 
@@ -44,7 +31,7 @@ func TestWatchPrintsOnlyTheDelivery(t *testing.T) {
 // read as a delivery.
 func TestAnEmptyStreamWritesNothing(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
-	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
+	if _, _, err := (cli{home: root}).run("a", "join", "dev"); err != nil {
 		t.Fatal(err)
 	}
 	_, deliveries := startWatch(t, root)
@@ -56,21 +43,18 @@ func TestAnEmptyStreamWritesNothing(t *testing.T) {
 // unreachable for the record it is waiting for.
 func TestPublishingDoesNotEndTheStreamThatArmedIt(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
-	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
+	if _, _, err := (cli{home: root}).run("a", "join", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "subscribe", "--topic=dev/log"); err != nil {
+	if _, _, err := (cli{home: root}).run("a", "subscribe", "--topic=dev/log"); err != nil {
 		t.Fatal(err)
 	}
 	_, deliveries := startWatch(t, root)
 
-	if _, stderr, err := runCLIHelper(os.Args[0], root, "", "a", "put", "dev/log", "picked this up"); err != nil {
+	if _, stderr, err := (cli{home: root}).run("a", "put", "dev/log", "picked this up"); err != nil {
 		t.Fatalf("put: %v: %s", err, stderr)
 	}
 	expectSilence(t, deliveries, "the stream took the agent's own publication as a delivery")
-	if !readStatus(t, root).Wakeable {
-		t.Fatal("publishing left the agent unreachable")
-	}
 }
 
 // A failed wait exits non-zero having written nothing, so an exit with no
@@ -78,21 +62,19 @@ func TestPublishingDoesNotEndTheStreamThatArmedIt(t *testing.T) {
 // is the cheapest way to fail a wait.
 func TestAFailedWaitWritesNoDocument(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-state")
-	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "join", "dev"); err != nil {
+	if _, _, err := (cli{home: root}).run("a", "join", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	watch := exec.Command(os.Args[0], "a", "watch")
-	watch.Env = replaceEnvironment(os.Environ(), cliHelperEnvironment, "1")
-	watch.Env = replaceEnvironment(watch.Env, "CONDUCTOR_HOME", root)
+	watch := cli{home: root}.command("a", "watch")
 	var stdout, stderr bytes.Buffer
 	watch.Stdout, watch.Stderr = &stdout, &stderr
 	if err := watch.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer stopWatch(t, watch)
-	waitForOwnership(t, root)
+	waitForOwner(t, root, "a")
 
-	if _, _, err := runCLIHelper(os.Args[0], root, "", "a", "leave"); err != nil {
+	if _, _, err := (cli{home: root}).run("a", "leave"); err != nil {
 		t.Fatal(err)
 	}
 	exited := make(chan error, 1)

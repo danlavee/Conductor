@@ -2,7 +2,7 @@ package state
 
 import "testing"
 
-func TestReadModesAndIndependentRecordCursors(t *testing.T) {
+func TestReadModes(t *testing.T) {
 	home := t.TempDir()
 	writer := newTestClient(t, home, "")
 	if _, err := writer.Join("writer", "dev"); err != nil {
@@ -23,20 +23,24 @@ func TestReadModesAndIndependentRecordCursors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, second := firstDispatch.Record(), secondDispatch.Record()
+	first := firstDispatch.Record()
 	if _, err := writer.Edit("dev/tasks", first.Index, "one-updated"); err != nil {
 		t.Fatal(err)
 	}
-	delta, err := reader.Get(ReadRequest{Topic: "dev/tasks", RecordIndex: first.Index, Mode: ReadDelta})
-	if err != nil || len(delta.Publications) != 2 || delta.Publications[0].Records[0].Index != first.Index || delta.Publications[1].Records[0].Index != first.Index {
+	delta, err := reader.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadDelta})
+	if err != nil || len(delta.Publications) != 3 || delta.Publications[1].Sequence != secondDispatch.Sequence {
 		t.Fatalf("delta = %#v, error = %v", delta, err)
 	}
 	if err := reader.AcknowledgeRead(delta); err != nil {
 		t.Fatal(err)
 	}
-	other, err := reader.Get(ReadRequest{Topic: "dev/tasks", RecordIndex: second.Index, Mode: ReadDelta})
-	if err != nil || len(other.Publications) != 1 || other.Publications[0].Records[0].Index != second.Index {
-		t.Fatalf("independent delta = %#v, error = %v", other, err)
+	if again, err := reader.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadDelta}); err != nil || len(again.Publications) != 0 {
+		t.Fatalf("delta after acknowledging = %#v, error = %v", again, err)
+	}
+	for _, mode := range []ReadMode{ReadDelta, ReadFull} {
+		if _, err := reader.Get(ReadRequest{Topic: "dev/tasks", RecordIndex: first.Index, Mode: mode}); err == nil {
+			t.Errorf("mode %d accepted a record index", mode)
+		}
 	}
 	full, err := reader.Get(ReadRequest{Topic: "dev/tasks", Mode: ReadFull})
 	if err != nil || len(full.Records) != 2 || full.Records[0].Text != "one-updated" || full.Records[1].Text != "two" {
@@ -77,11 +81,11 @@ func TestStruckRecordRemainsInFullAndDelta(t *testing.T) {
 	if _, err := writer.Edit("collaboration/shared", record.Index, "~~plain~~"); err != nil {
 		t.Fatal(err)
 	}
-	full, err := client.Get(ReadRequest{Topic: "collaboration/shared", RecordIndex: record.Index, Mode: ReadFull})
+	full, err := client.Get(ReadRequest{Topic: "collaboration/shared", Mode: ReadFull})
 	if err != nil || len(full.Records) != 1 || full.Records[0].Text != "~~plain~~" {
 		t.Fatalf("full = %#v, error = %v", full, err)
 	}
-	delta, err := client.Get(ReadRequest{Topic: "collaboration/shared", RecordIndex: record.Index, Mode: ReadDelta})
+	delta, err := client.Get(ReadRequest{Topic: "collaboration/shared", Mode: ReadDelta})
 	if err != nil || len(delta.Publications) != 2 || delta.Publications[1].Records[0].Text != "~~plain~~" {
 		t.Fatalf("delta = %#v, error = %v", delta, err)
 	}
@@ -126,6 +130,17 @@ func TestRangeDefaultsToReadLimitAndReportsRemaining(t *testing.T) {
 	}
 	if len(explicit.Records) != DefaultReadLimit+5 || explicit.Remaining != 0 || explicit.DefaultLimit != 0 {
 		t.Fatalf("explicit = %#v", explicit)
+	}
+
+	// A range with an end names its records and gets all of them; one with
+	// only a start is still capped.
+	closed, err := client.Get(ReadRequest{Topic: "messages/capped", Mode: ReadRange, Start: 2, End: DefaultReadLimit + 4})
+	if err != nil || len(closed.Records) != DefaultReadLimit+3 || closed.Remaining != 0 {
+		t.Fatalf("closed range = %#v, %v", closed, err)
+	}
+	open, err := client.Get(ReadRequest{Topic: "messages/capped", Mode: ReadRange, Start: 2})
+	if err != nil || len(open.Records) != DefaultReadLimit || open.Remaining != 4 {
+		t.Fatalf("open range = %#v, %v", open, err)
 	}
 }
 
@@ -206,19 +221,21 @@ func TestDeltaPassesOverTheReadersOwnPublications(t *testing.T) {
 	}
 }
 
+// A publication is never split, so a delta limited below the size of its
+// first publication still returns that publication whole.
 func TestDeltaAlwaysIncludesFirstOversizedPublicationWhole(t *testing.T) {
 	home := t.TempDir()
 	writer := joined(t, home, "writer")
 	client := joined(t, home, "reader", "messages/big-batch")
-	if _, err := writer.Publish("messages/big-batch", creates(DefaultReadLimit+2, "x")); err != nil {
+	if _, err := writer.Publish("messages/big-batch", creates(3, "x")); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := client.Get(ReadRequest{Topic: "messages/big-batch", Mode: ReadDelta})
+	result, err := client.Get(ReadRequest{Topic: "messages/big-batch", Mode: ReadDelta, Limit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Publications) != 1 || len(result.Publications[0].Records) != DefaultReadLimit+2 {
+	if len(result.Publications) != 1 || len(result.Publications[0].Records) != 3 {
 		t.Fatalf("expected the single oversized publication delivered whole, got %#v", result)
 	}
 	if result.Remaining != 0 || result.DefaultLimit != 0 {

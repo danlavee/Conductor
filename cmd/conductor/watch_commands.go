@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 
 	conductor "github.com/danlavee/Conductor/internal/state"
@@ -20,7 +21,7 @@ func runWatchCommand(client *conductor.Client, args []string) error {
 // streaming would deliver into a turn that never starts. Adapters hold the
 // stream through the client instead and never come here.
 func runWatch(ctx context.Context, client *conductor.Client) error {
-	release, err := client.AcquireWatchOwnership(conductor.HolderSelf)
+	release, err := client.AcquireWatchOwnership(conductor.HolderSelf, "")
 	if err != nil {
 		return err
 	}
@@ -29,8 +30,9 @@ func runWatch(ctx context.Context, client *conductor.Client) error {
 	if err != nil {
 		return err
 	}
-	if err := conductor.WriteJSON(os.Stdout, batch); err != nil {
+	text, shown := conductor.RenderWake(batch)
+	if _, err := io.WriteString(os.Stdout, text); err != nil {
 		return err
 	}
-	return client.AcknowledgeRead(batch.Deliveries...)
+	return client.AcknowledgeRead(shown...)
 }

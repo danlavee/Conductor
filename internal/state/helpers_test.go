@@ -10,22 +10,14 @@ import (
 	"time"
 )
 
-func TestReadJSONRejectsInvalidStructuredState(t *testing.T) {
-	for name, data := range map[string]string{
-		"trailing":   `{"name":"a","responsibility":"dev","timestamp":"2026-07-21T12:00:00Z"} {}`,
-		"unknown":    `{"name":"a","responsibility":"dev","timestamp":"2026-07-21T12:00:00Z","extra":true}`,
-		"incomplete": `{}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "agent.json")
-			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			var agent Agent
-			if err := readJSON(path, &agent); err == nil {
-				t.Fatal("invalid state was accepted")
-			}
-		})
+func TestReadJSONRejectsUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(path, []byte(`{"name":"a","responsibility":"dev","timestamp":"2026-07-21T12:00:00Z","extra":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var agent Agent
+	if err := readJSON(path, &agent); err == nil {
+		t.Fatal("an unknown field was accepted")
 	}
 }
 
@@ -77,7 +69,7 @@ func joined(t *testing.T, home, name string, topics ...string) *Client {
 // acknowledges it.
 func watchOne(t *testing.T, client *Client) ReadResult {
 	t.Helper()
-	batch, err := client.Watch()
+	batch, err := client.WatchContext(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

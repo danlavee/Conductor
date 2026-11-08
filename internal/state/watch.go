@@ -5,57 +5,43 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/danlavee/Conductor/internal/platform"
 )
 
 // Batch is what one watch delivers: the unread delta of every topic that has
-// one, taken in order until DefaultReadLimit records are spent. A publication
-// is never split, so the last delivery may overrun the cap, and Remaining
-// counts the records left for the next call.
+// one, taken in order while DefaultReadLimit records last. A publication is
+// never split: one that does not fit waits for the next call, and Publish
+// admits none larger than a wake, so the first always fits. Remaining counts
+// the records left.
 type Batch struct {
 	Deliveries   []ReadResult `json:"deliveries"`
 	Remaining    int          `json:"remaining,omitempty"`
 	DefaultLimit int          `json:"default_read_limit,omitempty"`
 }
 
-// Watch blocks until a topic the agent reads has a publication by another
-// agent past its cursor, then returns every such unread delta.
-func (c *Client) Watch() (Batch, error) {
-	return c.WatchContext(context.Background())
-}
-
-// WatchContext is Watch, ending without acknowledging anything when ctx does.
+// WatchContext blocks until a topic the agent reads has a publication by
+// another agent past its cursor, then returns every such unread delta. It ends
+// without acknowledging anything when ctx does.
 //
 // History is append-only, so a topic whose file has not changed size since
 // the last look cannot have gained an unread publication; only the ones that
 // did are read again.
 func (c *Client) WatchContext(ctx context.Context) (Batch, error) {
-	if err := c.validateProtocol(); err != nil {
-		return Batch{}, err
-	}
 	agent, err := c.requireAgent()
 	if err != nil {
 		return Batch{}, err
 	}
-	sizes := map[string]int64{}
+	var seen map[string]int64
 	for {
-		topics, err := c.readableTopics(agent)
+		heads, err := c.heads(agent)
 		if err != nil {
 			return Batch{}, err
 		}
-		var changed []string
-		for _, topic := range topics {
-			size, err := c.historySize(topic)
-			if err != nil {
-				return Batch{}, err
-			}
-			if size != sizes[topic] {
-				sizes[topic] = size
-				changed = append(changed, topic)
-			}
-		}
+		changed := changedSince(heads, seen)
+		seen = heads
 		if len(changed) > 0 {
 			batch, err := c.unreadBatch(changed)
 			if err != nil || len(batch.Deliveries) > 0 {
@@ -81,6 +67,59 @@ func (c *Client) WatchContext(ctx context.Context) (Batch, error) {
 	}
 }
 
+// Unread is the batch WatchContext would return now, without waiting: what a
+// deliverer reads under its session's lock, so it never shows what another
+// deliverer acknowledged since the wait ended.
+func (c *Client) Unread() (Batch, error) {
+	agent, err := c.requireAgent()
+	if err != nil {
+		return Batch{}, err
+	}
+	heads, err := c.heads(agent)
+	if err != nil {
+		return Batch{}, err
+	}
+	return c.unreadBatch(changedSince(heads, nil))
+}
+
+// Heads is the history size of every topic the agent reads. History is
+// append-only and a cursor only advances, so heads equal to ones taken before
+// a read that found nothing unread mean nothing is unread now.
+func (c *Client) Heads() (map[string]int64, error) {
+	agent, err := c.requireAgent()
+	if err != nil {
+		return nil, err
+	}
+	return c.heads(agent)
+}
+
+func (c *Client) heads(agent string) (map[string]int64, error) {
+	topics, err := c.readableTopics(agent)
+	if err != nil {
+		return nil, err
+	}
+	heads := make(map[string]int64, len(topics))
+	for _, topic := range topics {
+		if heads[topic], err = c.historySize(topic); err != nil {
+			return nil, err
+		}
+	}
+	return heads, nil
+}
+
+// changedSince lists, in topic order, the topics whose head differs from
+// seen's; a topic seen lacks counts as empty.
+func changedSince(heads, seen map[string]int64) []string {
+	var changed []string
+	for topic, head := range heads {
+		if head != seen[topic] {
+			changed = append(changed, topic)
+		}
+	}
+	slices.Sort(changed)
+	return changed
+}
+
 // unreadBatch reads the delta of each topic, in order, into one batch.
 func (c *Client) unreadBatch(topics []string) (Batch, error) {
 	batch := Batch{Deliveries: []ReadResult{}}
@@ -96,8 +135,11 @@ func (c *Client) unreadBatch(topics []string) (Batch, error) {
 		}
 		switch {
 		case count == 0:
-		case budget <= 0:
+		// A topic whose next publication no longer fits waits for the next
+		// call, and so does every topic after it.
+		case count > budget:
 			batch.Remaining += count + result.Remaining
+			budget = 0
 		default:
 			batch.Deliveries = append(batch.Deliveries, result)
 			batch.Remaining += result.Remaining

@@ -36,19 +36,18 @@ func parseGet(args []string) (conductor.ReadRequest, error) {
 			} else {
 				request.Mode = conductor.ReadFull
 			}
-		case strings.HasPrefix(argument, "--start="):
-			value, err := strconv.ParseInt(strings.TrimPrefix(argument, "--start="), 10, 64)
-			if err != nil || value < 0 {
-				return conductor.ReadRequest{}, errors.New("--start requires a non-negative index")
+		// Get itself checks the bounds' values; this only reads them.
+		case strings.HasPrefix(argument, "--start="), strings.HasPrefix(argument, "--end="):
+			name, raw, _ := strings.Cut(argument, "=")
+			value, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil {
+				return conductor.ReadRequest{}, errors.New(name + " requires an integer index")
 			}
-			request.Start = value
-			hasBounds = true
-		case strings.HasPrefix(argument, "--end="):
-			value, err := strconv.ParseInt(strings.TrimPrefix(argument, "--end="), 10, 64)
-			if err != nil || value < 0 {
-				return conductor.ReadRequest{}, errors.New("--end requires a non-negative index")
+			if name == "--start" {
+				request.Start = value
+			} else {
+				request.End = value
 			}
-			request.End = value
 			hasBounds = true
 		case strings.HasPrefix(argument, "--limit="):
 			value, err := strconv.Atoi(strings.TrimPrefix(argument, "--limit="))
@@ -67,9 +66,6 @@ func parseGet(args []string) (conductor.ReadRequest, error) {
 			request.RecordIndex = value
 		}
 	}
-	if request.End > 0 && request.End < request.Start {
-		return conductor.ReadRequest{}, errors.New("--end must be greater than or equal to --start")
-	}
 	if request.Mode == conductor.ReadDelta && hasBounds {
 		return conductor.ReadRequest{}, errors.New("--start and --end cannot be used with --delta")
 	}
@@ -82,7 +78,7 @@ func parseGet(args []string) (conductor.ReadRequest, error) {
 // usageText is the agent's surface, reached two ways: printed on request, and
 // carried by the error a malformed command returns. Hook verbs stay behind
 // `conductor adapter <host>`, which answers with its own usage.
-const usageText = "usage: conductor <agent> join [responsibility] | conductor <agent> put <group/topic> (<text> | --file=<path> | --jsonl=<path>) | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> get <group/topic> [index] ([--start=N] [--end=N] [--limit=N] | (--delta | --full) [--limit=N]) | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> watch | conductor <agent> status | conductor <agent> leave | conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor version | conductor adapter <host> <command>"
+const usageText = "usage: conductor <agent> join [responsibility] | conductor <agent> put <group/topic> (<text> | --file=<path> | --jsonl=<path>) | conductor <agent> edit <group/topic> <index> (<text> | --file=<path>) | conductor <agent> get <group/topic> ([index] [--start=N] [--end=N] [--limit=N] | (--delta | --full) [--limit=N]) | conductor <agent> subscribe (--topic-group=<group> | --topic=<group/topic>) | conductor <agent> list (--topic-groups | --topic-group=<group>) | conductor <agent> watch | conductor <agent> leave | conductor install <absolute-skill-directory> [--replace] | conductor verify <absolute-skill-directory> | conductor version | conductor adapter <host> <command>"
 
 // usageResult keeps the surface on the same wire as every other answer. stdout
 // carries JSON and nothing else, so a reader that decodes every response needs

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -94,6 +95,54 @@ func TestEditOfAMissingRecordPublishesNothing(t *testing.T) {
 	}
 	if _, err := client.Put("dev/tasks", "works after failure"); err != nil {
 		t.Fatalf("failed publication left the topic locked: %v", err)
+	}
+}
+
+// A record holds at most MaxRecordText characters, counted as runes, on every
+// write path; one record too long rejects its whole publication.
+func TestRecordTextIsCappedInCharacters(t *testing.T) {
+	client := joined(t, t.TempDir(), "writer")
+	fits, over := strings.Repeat("é", MaxRecordText), strings.Repeat("é", MaxRecordText+1)
+	dispatch, err := client.Put("dev/tasks", fits)
+	if err != nil {
+		t.Fatalf("a record of exactly %d characters was rejected: %v", MaxRecordText, err)
+	}
+	_, err = client.Put("dev/tasks", over)
+	assertCode(t, err, "INVALID")
+	_, err = client.Edit("dev/tasks", dispatch.Record().Index, over)
+	assertCode(t, err, "INVALID")
+	_, err = client.Publish("dev/tasks", []Op{{Text: "short"}, {Text: over}})
+	assertCode(t, err, "INVALID")
+	history, err := client.readHistory("dev/tasks")
+	if err != nil || len(history) != 1 {
+		t.Fatalf("rejected records published history: %#v, %v", history, err)
+	}
+}
+
+func TestReachabilityReadFailurePublishesNothing(t *testing.T) {
+	home := t.TempDir()
+	writer := joined(t, home, "writer", "dev/tasks")
+	joined(t, home, "reader", "dev/tasks")
+	first, err := writer.Put("dev/tasks", "kept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, owner := watchGuardPaths(home, "reader")
+	if err := os.MkdirAll(filepath.Dir(owner), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(owner, []byte(`{"pid":"unreadable"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Put("dev/tasks", "rejected"); err == nil {
+		t.Fatal("unreadable reachability was silently accepted")
+	}
+	if err := os.Remove(owner); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := writer.Put("dev/tasks", "accepted once")
+	if err != nil || retried.Sequence != first.Sequence+1 || retried.Record().Index != first.Record().Index+1 {
+		t.Fatalf("the failed publication left history behind: %+v, %v", retried, err)
 	}
 }
 
@@ -224,7 +273,7 @@ func TestDispatchNamesTheRecipientsNothingCanWake(t *testing.T) {
 	sender := joined(t, home, "sender")
 	listening := joined(t, home, "listening")
 	joined(t, home, "away")
-	release, err := listening.AcquireWatchOwnership(HolderSelf)
+	release, err := listening.AcquireWatchOwnership(HolderSelf, "")
 	if err != nil {
 		t.Fatal(err)
 	}

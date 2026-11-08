@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -121,7 +122,7 @@ func TestStatefulBoundariesDoNotRecreateMissingProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	checks := map[string]func() error{
-		"resolve":      func() error { _, err := client.ResolveAgent(); return err },
+		"resolve":      func() error { _, err := client.requireAgent(); return err },
 		"join":         func() error { _, err := client.Join("other", "review"); return err },
 		"leave":        func() error { return client.Leave("agent") },
 		"list":         func() error { _, err := client.ListAgents(); return err },
@@ -129,8 +130,8 @@ func TestStatefulBoundariesDoNotRecreateMissingProtocol(t *testing.T) {
 		"ack-snapshot": func() error { return client.AcknowledgeSnapshot(Snapshot{}) },
 		"get":          func() error { _, err := client.Get(ReadRequest{Topic: "messages/team", Mode: ReadFull}); return err },
 		"ack-read":     func() error { return client.AcknowledgeRead(ReadResult{}) },
-		"watch":        func() error { _, err := client.Watch(); return err },
-		"watch-owner":  func() error { _, err := client.AcquireWatchOwnership(HolderSelf); return err },
+		"watch":        func() error { _, err := client.WatchContext(context.Background()); return err },
+		"watch-owner":  func() error { _, err := client.AcquireWatchOwnership(HolderSelf, ""); return err },
 		"put":          func() error { _, err := client.Put("messages/team", "text"); return err },
 	}
 	for name, check := range checks {

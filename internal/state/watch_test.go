@@ -49,7 +49,7 @@ func TestWatchRedeliversUntilAcknowledged(t *testing.T) {
 	if _, err := writer.Put("messages/team", "hello"); err != nil {
 		t.Fatal(err)
 	}
-	batch, err := reader.Watch()
+	batch, err := reader.WatchContext(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestWatchRedeliversUntilAcknowledged(t *testing.T) {
 		t.Fatalf("error = %v, want save failure", err)
 	}
 	reader.saveCursorFn = nil
-	replayed, err := reader.Watch()
+	replayed, err := reader.WatchContext(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestWatchFindsATopicCreatedInASubscribedGroup(t *testing.T) {
 	}
 	result := make(chan Batch, 1)
 	go func() {
-		batch, _ := reader.Watch()
+		batch, _ := reader.WatchContext(context.Background())
 		result <- batch
 	}()
 	<-idle
@@ -146,9 +146,9 @@ func TestWatchFindsATopicCreatedInASubscribedGroup(t *testing.T) {
 	}
 }
 
-// One batch shares the read limit across topics. A publication is never split,
-// so the last topic taken may overrun it; topics after it wait for the next
-// watch.
+// One batch shares the read limit across topics and stays within it. A
+// publication is never split, so the topic whose publication no longer fits,
+// and every topic after it, waits for the next watch.
 func TestWatchBatchSharesTheReadLimitAcrossTopics(t *testing.T) {
 	home := t.TempDir()
 	reader := joined(t, home, "reader")
@@ -157,30 +157,34 @@ func TestWatchBatchSharesTheReadLimitAcrossTopics(t *testing.T) {
 	}
 	writer := joined(t, home, "writer")
 	drainAllPending(t, reader)
-	// work/b's one publication overruns what work/a left of the cap and is
-	// still delivered whole; work/c finds the cap spent and waits.
-	for topic, count := range map[string]int{"work/a": 15, "work/b": 8, "work/c": 3} {
-		if _, err := writer.Publish(topic, creates(count, "x")); err != nil {
+	// work/a's four publications leave 4 of the cap; work/b's one publication
+	// of 5 does not fit in it, and work/c, after it, waits too.
+	for topic, sizes := range map[string][]int{"work/a": {4, 4, 4, 4}, "work/b": {5}, "work/c": {3}} {
+		for _, size := range sizes {
+			if _, err := writer.Publish(topic, creates(size, "x")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	watchTopics := func(wantRemaining int, want ...string) {
+		t.Helper()
+		batch, err := reader.WatchContext(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var topics []string
+		for _, delivery := range batch.Deliveries {
+			topics = append(topics, delivery.Topic)
+		}
+		if !reflect.DeepEqual(topics, want) || batch.Remaining != wantRemaining {
+			t.Fatalf("batch topics = %v remaining = %d, want %v remaining %d", topics, batch.Remaining, want, wantRemaining)
+		}
+		if err := reader.AcknowledgeRead(batch.Deliveries...); err != nil {
 			t.Fatal(err)
 		}
 	}
-	batch, err := reader.Watch()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var topics []string
-	for _, delivery := range batch.Deliveries {
-		topics = append(topics, delivery.Topic)
-	}
-	if !reflect.DeepEqual(topics, []string{"work/a", "work/b"}) || batch.Remaining != 3 || batch.DefaultLimit != DefaultReadLimit {
-		t.Fatalf("batch topics = %v remaining = %d limit = %d", topics, batch.Remaining, batch.DefaultLimit)
-	}
-	if err := reader.AcknowledgeRead(batch.Deliveries...); err != nil {
-		t.Fatal(err)
-	}
-	if got := watchOne(t, reader); got.Topic != "work/c" || len(got.Publications[0].Records) != 3 {
-		t.Fatalf("deferred topic delivered %#v", got)
-	}
+	watchTopics(8, "work/a")
+	watchTopics(0, "work/b", "work/c")
 }
 
 // What a topic held before the subscription is read with get, never woken
@@ -208,59 +212,6 @@ func TestASubscriptionIsNotRetroactive(t *testing.T) {
 	}
 }
 
-// An identity held by an adapter and one holding its own watcher are both
-// wakeable and differ in everything the agent must then do, so status has to
-// separate them. It also has to say what reaches the agent: an agent that armed
-// nothing and an agent subscribed to nothing are equally unreachable, and only
-// one of them looks it.
-func TestStatusReportsWhatHoldsTheStreamAndWhatReachesTheAgent(t *testing.T) {
-	home := t.TempDir()
-	client := newTestClient(t, home, "")
-	if _, err := client.Join("nomad", "parser"); err != nil {
-		t.Fatal(err)
-	}
-	nomad := newTestClient(t, home, "nomad")
-
-	status, err := nomad.WatchStatus()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.Wakeable || status.Holder != "" {
-		t.Fatalf("status = %+v, want no holder while nothing holds the stream", status)
-	}
-	if len(status.Subscriptions.TopicGroups) != 0 || len(status.Subscriptions.Topics) != 0 {
-		t.Fatalf("subscriptions = %+v, want empty for an agent that has subscribed to nothing", status.Subscriptions)
-	}
-
-	for _, holder := range []Holder{HolderSelf, HolderAdapter} {
-		release, err := nomad.AcquireWatchOwnership(holder)
-		if err != nil {
-			t.Fatal(err)
-		}
-		status, err := nomad.WatchStatus()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !status.Wakeable || status.Holder != holder {
-			t.Fatalf("status = %+v, want held by %q", status, holder)
-		}
-		if err := release(); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if _, err := nomad.SubscribeTopicGroup("development"); err != nil {
-		t.Fatal(err)
-	}
-	status, err = nomad.WatchStatus()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(status.Subscriptions.TopicGroups) != 1 || status.Subscriptions.TopicGroups[0] != "development" {
-		t.Fatalf("subscriptions = %+v, want the group just subscribed", status.Subscriptions)
-	}
-}
-
 func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 	home := t.TempDir()
 	first := newTestClient(t, home, "")
@@ -269,11 +220,11 @@ func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 	}
 	second := newTestClient(t, home, "a")
 
-	release, err := first.AcquireWatchOwnership(HolderSelf)
+	release, err := first.AcquireWatchOwnership(HolderSelf, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.AcquireWatchOwnership(HolderSelf); err == nil {
+	if _, err := second.AcquireWatchOwnership(HolderSelf, ""); err == nil {
 		t.Fatal("second watch owner acquired the same agent")
 	} else {
 		assertCode(t, err, "LOCKED")
@@ -285,7 +236,7 @@ func TestWatchOwnershipIsExclusiveAndCrashReleased(t *testing.T) {
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
-	releaseAgain, err := second.AcquireWatchOwnership(HolderSelf)
+	releaseAgain, err := second.AcquireWatchOwnership(HolderSelf, "")
 	if err != nil {
 		t.Fatal(err)
 	}

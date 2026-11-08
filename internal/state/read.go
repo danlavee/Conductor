@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// DefaultReadLimit caps get, join, and watch responses. Any get may request
-// a larger explicit limit.
+// DefaultReadLimit caps get, join (per topic), and watch responses. A get may
+// go past it with an explicit limit or a range with an end.
 const DefaultReadLimit = 20
+
+// MaxRecordText is the most characters (runes) one record's text may hold.
+const MaxRecordText = 2000
 
 // newest keeps a topic's latest limit records -- the ones a reader catching
 // up acts on -- and counts what it left behind, which an --end range reaches.
@@ -26,9 +30,6 @@ func newest(records []Record, limit int) ([]Record, int) {
 // Get reads a current record range, the full current topic, or unread
 // subscribed content.
 func (c *Client) Get(request ReadRequest) (ReadResult, error) {
-	if err := c.validateProtocol(); err != nil {
-		return ReadResult{}, err
-	}
 	agent, err := c.requireAgent()
 	if err != nil {
 		return ReadResult{}, err
@@ -45,19 +46,23 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 	if request.Limit < 0 {
 		return ReadResult{}, errors.New("read limit must not be negative")
 	}
-	release, err := c.lockResource(request.Topic)
+	if request.RecordIndex > 0 && request.Mode != ReadRange {
+		return ReadResult{}, errors.New("a record index reads a range; it cannot be used with --delta or --full")
+	}
+	history, err := c.lockedHistory(request.Topic)
 	if err != nil {
 		return ReadResult{}, err
 	}
-	history, err := c.readHistory(request.Topic)
-	if err := errors.Join(err, release()); err != nil {
-		return ReadResult{}, err
-	}
 	limit := request.Limit
-	if limit == 0 {
+	switch {
+	case limit > 0:
+	// A range with an end names its records: all of them are asked for.
+	case request.Mode == ReadRange && request.End > 0:
+		limit = math.MaxInt
+	default:
 		limit = DefaultReadLimit
 	}
-	result := ReadResult{Topic: request.Topic, record: request.RecordIndex, Records: []Record{}, Publications: []Publication{}}
+	result := ReadResult{Topic: request.Topic, Records: []Record{}, Publications: []Publication{}}
 	switch request.Mode {
 	case ReadRange:
 		result.Mode = "range"
@@ -95,33 +100,32 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 		if err != nil {
 			return ReadResult{}, err
 		}
-		read := cursor.Topics[recordCursorSlot(request.Topic, request.RecordIndex)]
-		// The reader's own publications, and those not touching the requested
-		// record, are passed over rather than delivered; the cursor still moves
-		// past every one scanned before the limit stops the read.
+		read := cursor.Topics[request.Topic]
+		// The reader's own publications are passed over rather than delivered;
+		// the cursor still moves past every one scanned before the limit stops
+		// the read.
 		included, full := 0, false
 		for _, publication := range history {
 			if publication.Sequence <= read {
 				continue
 			}
-			changed := filterRecords(publication.Records, request.RecordIndex)
+			size := len(publication.Records)
 			switch {
 			case full:
 				if publication.Agent != agent {
-					result.Remaining += len(changed)
+					result.Remaining += size
 				}
 				continue
-			case publication.Agent == agent || len(changed) == 0:
+			case publication.Agent == agent:
 			// The first unread publication is always included whole, even if it
 			// alone exceeds limit -- a publication can't be split across reads.
-			case included > 0 && included+len(changed) > limit:
+			case included > 0 && included+size > limit:
 				full = true
-				result.Remaining += len(changed)
+				result.Remaining += size
 				continue
 			default:
-				publication.Records = changed
 				result.Publications = append(result.Publications, publication)
-				included += len(changed)
+				included += size
 			}
 			result.maxSequence = publication.Sequence
 		}
@@ -137,18 +141,14 @@ func (c *Client) Get(request ReadRequest) (ReadResult, error) {
 // AcknowledgeRead records the sequence through which each delta's content was
 // accepted. Range and full reads never change delta progress.
 func (c *Client) AcknowledgeRead(results ...ReadResult) error {
-	if err := c.validateProtocol(); err != nil {
-		return err
-	}
 	agent, err := c.requireAgent()
 	if err != nil {
 		return err
 	}
 	return c.updateCursor(agent, func(cursor *Cursor) {
 		for _, result := range results {
-			slot := recordCursorSlot(result.Topic, result.record)
-			if result.Mode == "delta" && result.maxSequence > cursor.Topics[slot] {
-				cursor.Topics[slot] = result.maxSequence
+			if result.Mode == "delta" && result.maxSequence > cursor.Topics[result.Topic] {
+				cursor.Topics[result.Topic] = result.maxSequence
 			}
 		}
 	})
@@ -160,6 +160,16 @@ func (c *Client) topicDir(topic string) (string, error) {
 	}
 	parts := strings.Split(topic, "/")
 	return filepath.Join(c.Home, "topics", parts[0], parts[1]), nil
+}
+
+// lockedHistory reads a topic's history under the topic's lock.
+func (c *Client) lockedHistory(topic string) ([]Publication, error) {
+	release, err := c.lockResource(topic)
+	if err != nil {
+		return nil, err
+	}
+	history, err := c.readHistory(topic)
+	return history, errors.Join(err, release())
 }
 
 func (c *Client) readHistory(topic string) ([]Publication, error) {
@@ -190,18 +200,6 @@ func (c *Client) readHistory(topic string) ([]Publication, error) {
 		result = append(result, entry)
 	}
 	return result, nil
-}
-
-func filterRecords(records []Record, index int64) []Record {
-	if index == 0 {
-		return append([]Record(nil), records...)
-	}
-	for _, record := range records {
-		if record.Index == index {
-			return []Record{record}
-		}
-	}
-	return nil
 }
 
 func materializeMap(history []Publication) map[int64]Record {

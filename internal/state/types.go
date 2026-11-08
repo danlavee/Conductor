@@ -70,8 +70,7 @@ func (e *ProtocolError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Text)
 }
 
-// Cursor is how far an agent has read: the sequence it has accepted through,
-// per topic or per topic#index record slot.
+// Cursor is how far an agent has read: the sequence it has accepted through, per topic.
 type Cursor struct {
 	Topics map[string]int64 `json:"topic_sequences"`
 }
@@ -114,7 +113,6 @@ type ReadResult struct {
 	Remaining    int           `json:"remaining,omitempty"`
 	DefaultLimit int           `json:"default_read_limit,omitempty"`
 	maxSequence  int64
-	record       int64
 }
 
 // Subscription selects topic content for one agent's delta.
