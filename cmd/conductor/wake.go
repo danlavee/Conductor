@@ -4,7 +4,6 @@ import (
 	"os"
 
 	"github.com/danlavee/Conductor/internal/adapters/binding"
-	"github.com/danlavee/Conductor/internal/adapters/claude"
 )
 
 // wakeHost is an adapter that serves sessions on its host: its session-start
@@ -15,9 +14,7 @@ type wakeHost struct {
 	environment string
 }
 
-var wakeHosts = []wakeHost{
-	{binding: claude.BindingName, environment: claude.SessionEnvironment},
-}
+var wakeHosts []wakeHost
 
 // bindWake answers join's wake verdict. A join from inside a session an
 // adapter serves binds that session to the agent, so the adapter holds it from

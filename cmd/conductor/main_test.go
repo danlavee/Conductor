@@ -388,11 +388,6 @@ func TestAdapterUsageStaysWithItsHost(t *testing.T) {
 			t.Fatalf("%v: error = %v, want the host list", args, err)
 		}
 	}
-	for host, want := range map[string]error{"claude": adapterUsageError(), "grok": grokUsageError(), "agy": agyAdapterUsageError()} {
-		if err := run([]string{"adapter", host, "nosuchverb"}); err == nil || err.Error() != want.Error() {
-			t.Fatalf("%s: error = %v, want %v", host, err, want)
-		}
-	}
 }
 
 func TestInvalidAgentCommandPreservesClientInitializationOrder(t *testing.T) {

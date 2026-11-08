@@ -1,6 +1,0 @@
-{
-  "name": "conductor",
-  "displayName": "Conductor",
-  "version": "0.1.0",
-  "description": "Hold a Conductor delivery stream for an opted-in Antigravity session. Joining, subscribing, reading, and publishing stay with the Conductor skill."
-}

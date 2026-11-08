@@ -101,45 +101,6 @@ Because `status` answers from outside the bus, it reads no protocol version and 
 
 All three are host-neutral. Host knowledge lives in the adapter subtree, which reaches the bus through the same client the CLI uses — the inverse of the vendor `watch` flags this design replaced.
 
-## First instance: Claude
-
-Packaged as a plugin — `.claude-plugin/plugin.json` with `hooks/hooks.json` beside it, and an optional `.mcp.json`. It lives at [`adapters/claude-code/`](../../adapters/claude-code/README.md); its host-specific logic is `conductor adapter claude <arm|release|identity>`.
-
-| Responsibility | Realization |
-| --- | --- |
-| Resident component | A background hook running `watch`, marked `asyncRewake`. It blocks on the stream and exits 2 when a delivery arrives; its output reaches the model as a system reminder, and this wakes an idle session with no active turn. |
-| Turn-boundary trigger | A `Stop` hook, itself `asyncRewake`, so arming and residency are one hook: it backgrounds without blocking the turn, and every turn end re-arms. |
-| Lifecycle trigger | A `SessionStart` hook matching `startup`, `resume`, `clear`, `compact`, and `fork`. Arms the resident component and re-announces state. |
-| Teardown | A `SessionEnd` hook, plus the stream watching the process that spawned it. The host awaits outstanding rewake hooks while tearing a session down, so a stream that ignores session end delays the host's own exit — but `SessionEnd` covers only the orderly exit, and the hook's timeout is deliberately a day, so the stream must also end itself when the session process is gone. |
-
-Three findings shape this:
-
-**No model participation is required at any point.** The host arms the watcher, the host wakes the session, the host re-arms after each wake. Requirement 11 is satisfied outright rather than approximated.
-
-**The resident component is a hook process, not the MCP server.** Server-initiated turns do exist in this host, but through a gated preview path; and a stdio MCP server is not restarted automatically if it dies, whereas a hook is re-armed by the next lifecycle or turn-boundary event. The MCP server therefore carries no wake responsibility. Its value is ergonomic — Conductor's operations as typed tools instead of shell invocations by absolute path — and the adapter is correct without it.
-
-**Wake and re-arm form a closed cycle.** A delivery wakes the session; the resulting turn ends; the turn-boundary trigger arms the next watcher. Session start, resume, and compaction enter the same cycle. Every path that loses a watcher has an event that restores it.
-
-Where a host offers a first-class push channel, the resident component can adopt it in place of the exit-code wake without disturbing the other three responsibilities. Treat it as a swappable accelerator, not a dependency: on this host that path is a research preview requiring a launch flag, an allowlist, and a specific authentication backend, so it cannot carry a production guarantee.
-
-### Verified
-
-The capability the design stands on — that exiting 2 from a backgrounded hook starts a turn in a session sitting idle — has been observed in isolation, with no Conductor in the loop. Three arms, two wakes, no human input, the successor armed by the `Stop` hook at each turn end. The run is recorded in [verified wake methods](../integrations/verified-wake-methods.md).
-
-That confirms the arrangement and not only the mechanism. Because one process wakes at most once, and outstanding hooks are drained at session teardown rather than at turn end, the resident component and the turn-boundary trigger collapse into a single `asyncRewake` `Stop` hook — the successor is armed by the event that ends the woken turn, not by the process that fired.
-
-A third finding was not anticipated and matters more than either: **a resident component may have a lifetime imposed by its host, and may lose it silently.** Here the stream is killed at its hook's configured timeout, running no exit path, emitting no wake, while the session sits idle with no event due to re-arm it. Its lifetime is therefore a property the adapter must know, extend where the host allows, and survive the loss of where it does not — which is what requirement 10 is for. The turn-boundary trigger is not a backstop for a flaky wake path; the wake path is reliable. It is the backstop for a resident component that can vanish without saying so.
-
-A fourth finding is its mirror: **a resident component can also outlive its host, and nothing the bus can see distinguishes that from a healthy one.** An orphan holds the guard, wakes into a stdout nobody reads, and acknowledges — so the identity reports as reachable while every publication to it is destroyed on arrival. One-shot invocations reach this most easily, exiting without firing teardown, and the day-long timeout above is what makes it expensive. Requirement 11 closes it; teardown events alone do not satisfy it.
-
-Still open: the consecutive-block cap on turn-boundary blocking and how the adapter reports work it cannot drain within it; whether the lifecycle trigger behaves the same on `resume`, `clear`, `compact`, and `fork` as it does on `startup`; and whether a wake can land in a session other than the one that armed it.
-
-## Not yet built
-
-Installation places host configuration but does not enable it. `conductor adapter claude install <dir>` writes the plugin tree and puts the executable at the path its hooks name, with the same staging, hashing and atomic publication the skill gets, so the placement is no longer a manual copy that can be done half-right.
-
-Enabling stays a host command the user runs — deliberate, not unfinished. This host discovers plugins through private state of its own, an install registry and a marketplace index, both undocumented and versioned on the host's schedule; writing into them would make Conductor's correctness depend on a format nobody promised to keep. The payload ships a marketplace manifest so the remaining step is one documented command against a local directory. The same reasoning rules out writing hook registrations into the user's settings file: it would work, and it would mean Conductor editing a hand-maintained file it does not own, with no way to merge safely or to know what it overwrote.
-
 ## Consequences
 
 - The vendor variants of `watch` are removed from the CLI surface; the integration matrix becomes a list of adapters rather than a table of commands.
