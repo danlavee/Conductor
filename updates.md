@@ -2,7 +2,7 @@
 
 This file contains only release-specific steps that fall outside Conductor's normal update procedure.
 
-## Unreleased
+## v1.0.0
 
 Each adapter's plugin manifest now carries the release version, so a host that caches plugins by version sees each release as new. After reinstalling an adapter with `--replace`, run its host's update commands from the [adapter registry](docs/integrations/README.md); without them the host keeps running the old copy.
 

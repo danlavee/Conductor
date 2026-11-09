@@ -64,7 +64,7 @@ The skill is used in every environment. The host adapter changes only how a publ
 
 Conductor targets trusted, same-user agents on one Windows or Linux host. Delivery is at least once around crashes. History is not compacted automatically.
 
-Initial release: `v0.1.0`. Latest release: `v0.4.0`.
+Initial release: `v0.1.0`. Latest release: `v1.0.0`.
 
 ## License
 
