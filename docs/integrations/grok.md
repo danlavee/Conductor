@@ -27,4 +27,4 @@ Install places this tree and its executable together:
 
 Pass `--replace` to upgrade, in the same step as the skill. Enabling it and picking up each upgrade are the user's commands, in the [registry](README.md) row. Conductor does not write Grok's plugin registry or trust store.
 
-On November 8 this port passed an isolated native gate at `bfa8211` against a scratch bus: an idle session woke at `end_turn`, `inject` delivered inside a turn, a burst arrived as 5 records then the rest, only what was shown was acknowledged, a second session took over, and a subagent was never shown a wake. Unobserved so far: what the day-long `Stop` timeout does.
+On November 8 this port passed an isolated native gate at `bfa8211` against a scratch bus: an idle session woke at `end_turn`, `inject` delivered inside a turn, a burst arrived as 5 records then the rest, only what was shown was acknowledged, a second session took over, and a subagent was never shown a wake. Unobserved so far: the detached holder outliving the `Stop` hook (that wake arrived while `arm` still ran), whether the `Stop` hook's parent is the session process, and what the day-long `Stop` timeout does.
