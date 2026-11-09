@@ -1,0 +1,28 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "conductor-adapters",
+  "owner": {
+    "name": "Dan Lavee"
+  },
+  "metadata": {
+    "description": "Conductor's wake adapters, one per host."
+  },
+  "plugins": [
+    {
+      "name": "conductor",
+      "source": "./",
+      "description": "Keeps this session wakeable on the Conductor bus: holds a delivery stream, wakes the session when team work arrives, and re-arms itself without the agent doing anything.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Dan Lavee"
+      },
+      "keywords": [
+        "conductor",
+        "multi-agent",
+        "wake",
+        "pub-sub"
+      ],
+      "category": "workflow"
+    }
+  ]
+}

@@ -1,21 +1,129 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/danlavee/Conductor/internal/adapters/binding"
+	"github.com/danlavee/Conductor/internal/adapters/claude"
 	"github.com/danlavee/Conductor/internal/adapters/hold"
+	installer "github.com/danlavee/Conductor/internal/install"
 	"github.com/danlavee/Conductor/internal/platform"
 	conductor "github.com/danlavee/Conductor/internal/state"
 )
+
+// The wake is one contract on every host, and the rows hold only what the
+// hosts differ in. A session nobody joined from stays quiet rather than fail
+// every turn end; a join from a served session hands it to the adapter; an end
+// of turn the host's filter passes over delivers nothing; the main agent's end
+// of turn wakes it with the delivery, and only what reached the model is
+// acknowledged; and the holder the wake spawned keeps the agent wakeable until
+// the host ends the session.
+func TestAdapterArmWakesTheSessionAndOnlyWhenBound(t *testing.T) {
+	type hook = func(verb, stdin string) ([]byte, []byte, error)
+	isWake := func(text string) bool {
+		return strings.HasPrefix(text, "Conductor: ") && strings.Contains(text, "b: review")
+	}
+	release := func(t *testing.T, run hook, stdin string) {
+		t.Helper()
+		if _, stderr, err := run("release", stdin); err != nil {
+			t.Fatalf("release %s: %v: %s", stdin, err, stderr)
+		}
+	}
+	for _, host := range []struct {
+		name, environment, session string
+		serve, endTurn             string
+		passed                     []string
+		nothing                    string // what a hook that delivers nothing writes
+		announces                  bool   // identity writes an announcement, not nothing
+		run                        func(root, dir, verb, stdin string) ([]byte, []byte, error)
+		woke                       func(stdout []byte, err error) bool
+		end                        func(t *testing.T, root string, run hook, in cli)
+	}{{
+		name: "claude", environment: claude.SessionEnvironment, session: "session-1",
+		serve: sessionEvent("session-1"), endTurn: sessionEvent("session-1"), announces: true,
+		// Subagents fire the hook with the parent's session id.
+		passed: []string{`{"session_id":"session-1","agent_id":"worker-1"}`},
+		run: func(root, dir, verb, stdin string) ([]byte, []byte, error) {
+			return cli{home: root, dir: dir, stdin: stdin, env: map[string]string{claude.SessionEnvironment: "session-1"}}.run("adapter", "claude", verb)
+		},
+		// The wake *is* the exit code, asserted as the literal the host
+		// defines: stdout reaches the session on a waking exit and on no other.
+		woke: func(stdout []byte, err error) bool {
+			var exit *exec.ExitError
+			return errors.As(err, &exit) && exit.ExitCode() == 2 && isWake(string(stdout))
+		},
+		end: func(t *testing.T, _ string, run hook, _ cli) { release(t, run, sessionEvent("session-1")) },
+	}} {
+		t.Run(host.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "runtime-state")
+			run := func(verb, stdin string) ([]byte, []byte, error) { return host.run(root, t.TempDir(), verb, stdin) }
+			quiet := func(what, verb, stdin string) {
+				t.Helper()
+				if stdout, stderr, err := run(verb, stdin); err != nil || string(bytes.TrimSpace(stdout)) != host.nothing {
+					t.Fatalf("%s = %s, %v: %s; want %q", what, stdout, err, stderr, host.nothing)
+				}
+			}
+			quiet("arm in an unbound session", "arm", host.endTurn)
+			if host.announces {
+				if _, stderr, err := run("identity", host.serve); err != nil {
+					t.Fatalf("identity: %v: %s", err, stderr)
+				}
+			} else {
+				quiet("identity", "identity", host.serve)
+			}
+			in := cli{home: root, dir: t.TempDir(), env: map[string]string{host.environment: host.session}}
+			stdout, stderr, err := in.run("a", "join", "dev")
+			var answer struct {
+				Wake string `json:"wake"`
+			}
+			if err != nil || json.Unmarshal(stdout, &answer) != nil || answer.Wake != "adapter" {
+				t.Fatalf("join in a served session = %s, %v: %s", stdout, err, stderr)
+			}
+			// A second agent joining is work addressed to the first, so a hook
+			// that got past its filter would deliver it.
+			if _, stderr, err := (cli{home: root}).run("b", "join", "review"); err != nil {
+				t.Fatalf("join b: %v: %s", err, stderr)
+			}
+			for _, stdin := range host.passed {
+				quiet("arm on "+stdin, "arm", stdin)
+			}
+
+			if stdout, stderr, err := run("arm", host.endTurn); !host.woke(stdout, err) {
+				t.Fatalf("arm = %s, %v: %s; want the wake", stdout, err, stderr)
+			}
+			delta, stderr, err := cli{home: root}.run("a", "get", "collaboration/agents", "--delta")
+			var unread struct {
+				Publications []json.RawMessage `json:"publications"`
+			}
+			if err != nil || json.Unmarshal(delta, &unread) != nil || len(unread.Publications) != 0 {
+				t.Fatalf("delta after the wake = %s, %v: %s", delta, err, stderr)
+			}
+
+			owner := waitForOwner(t, root, "a")
+			if _, stderr, err := (cli{home: root}).run("a", "watch"); err == nil || !bytes.Contains(stderr, []byte(`"LOCKED"`)) {
+				t.Fatalf("watch while the holder runs = %v: %s", err, stderr)
+			}
+			host.end(t, root, run, in)
+			waitFor(t, "the holder to exit with its session", func() bool {
+				_, err := os.Stat(owner)
+				return os.IsNotExist(err)
+			})
+		})
+	}
+}
 
 // waitForOwner waits for a holder's owner record, which appears once it holds
 // the guard; probing the guard before then would take it first.
@@ -203,4 +311,52 @@ func guardLocked(t *testing.T, root string) bool {
 	}
 	var protocol *conductor.ProtocolError
 	return errors.As(err, &protocol) && protocol.Code == "LOCKED"
+}
+
+// Every host's install goes through one path, so one table pins them all: the
+// installed tree is worthless unless the binary it placed is the one the
+// hooks will spawn, and the hooks are spawned with no shell, so the command
+// each host's rewrite leaves in them is the whole wiring.
+func TestAdapterInstallPlacesARunnableAdapter(t *testing.T) {
+	exe := ""
+	if runtime.GOOS == "windows" {
+		exe = ".exe"
+	}
+	for _, host := range []struct{ name, adapter, manifest, hooks, command string }{
+		{"claude", claude.AdapterName, ".claude-plugin/marketplace.json", "hooks/hooks.json", "${CLAUDE_PLUGIN_ROOT}/bin/conductor"},
+	} {
+		t.Run(host.name, func(t *testing.T) {
+			destination := filepath.Join(t.TempDir(), ".conductor", "adapters", host.adapter)
+			stdout, stderr, err := cli{home: t.TempDir()}.run("adapter", host.name, "install", destination)
+			if err != nil {
+				t.Fatalf("install: %v: %s", err, stderr)
+			}
+			var result installer.Result
+			if err := json.Unmarshal(stdout, &result); err != nil || result.Status != "installed" || result.InstallPath != destination {
+				t.Fatalf("install result = %s, %v", stdout, err)
+			}
+			if expected := filepath.Join(destination, "bin", "conductor"+exe); result.BinaryPath != expected {
+				t.Fatalf("binary at %s, hooks look in %s", result.BinaryPath, expected)
+			}
+			if _, err := os.Stat(filepath.Join(destination, host.manifest)); err != nil {
+				t.Errorf("the manifest the host is pointed at is missing: %v", err)
+			}
+			hooks, err := os.ReadFile(filepath.Join(destination, host.hooks))
+			if err != nil || !strings.Contains(string(hooks), host.command) || strings.Contains(string(hooks), "${CONDUCTOR_BIN}") {
+				t.Fatalf("installed hooks = %s, %v; want %s", hooks, err, host.command)
+			}
+
+			for name, args := range map[string][]string{
+				"no destination":                   {},
+				"two destinations":                 {"a", "b"},
+				"a blank one":                      {"   "},
+				"a relative one":                   {filepath.Join("adapters", host.adapter)},
+				"one outside the adapter contract": {filepath.Join(t.TempDir(), "plugins", host.adapter)},
+			} {
+				if err := run(append([]string{"adapter", host.name, "install"}, args...)); err == nil {
+					t.Errorf("install with %s was accepted", name)
+				}
+			}
+		})
+	}
 }

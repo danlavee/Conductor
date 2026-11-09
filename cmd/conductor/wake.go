@@ -41,7 +41,7 @@ type adapterHost struct {
 	serve func(ctx context.Context, client *conductor.Client, s hold.Session) error
 }
 
-var adapterHosts []adapterHost
+var adapterHosts = []adapterHost{claudeHost}
 
 func (h adapterHost) usage() error {
 	return fmt.Errorf("usage: conductor adapter %s <%s> %s | install <absolute-adapter-directory> [--replace]",

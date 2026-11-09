@@ -8,6 +8,7 @@ This table is the one place that names each host's adapter. [Installation](../in
 
 | Host | `<host>` | Destination ends in | Enable (the user's step) | Status |
 | --- | --- | --- | --- | --- |
+| [Claude Code](claude-code.md) | `claude` | `adapters/claude-code` | `claude plugin marketplace add <destination>`, then `claude plugin install conductor@conductor-adapters` | Built; join binds the session |
 | Any other host | — | — | — | Fallback |
 
 Every built adapter installs the same way, placing its plugin tree and the executable its hooks name together:
