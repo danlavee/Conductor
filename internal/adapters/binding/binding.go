@@ -35,9 +35,11 @@ func Validate(session, placeholder string) error {
 	return nil
 }
 
-// Directory is adapters/<name> beside the state root's other durable files.
+// Directory is hosts/<name> beside the state root's other durable files. It is
+// not adapters/<name>: that is where adapters are conventionally installed, and
+// runtime files written into an installed tree would break its manifest.
 func Directory(root, adapter string) string {
-	return filepath.Join(root, "adapters", adapter)
+	return filepath.Join(root, "hosts", adapter)
 }
 
 // Identity reads the agent this session is bound to. Absence is an empty name.
@@ -107,12 +109,12 @@ func TakeOver(root, agent string) (tookOver string, err error) {
 // under the agent's lock. The lock order is agent lock, then session mutex,
 // one session at a time.
 func takeOver(root, agent, keep string, then func() error) (tookOver string, err error) {
-	release, err := platform.AcquireFileMutex(filepath.Join(root, "adapters", "agents", agent+".guard"), 3*time.Minute)
+	release, err := platform.AcquireFileMutex(filepath.Join(Directory(root, "agents"), agent+".guard"), 3*time.Minute)
 	if err != nil {
 		return "", err
 	}
 	defer func() { err = errors.Join(err, release()) }()
-	sessions, err := filepath.Glob(filepath.Join(root, "adapters", "*", "sessions", "*"))
+	sessions, err := filepath.Glob(filepath.Join(Directory(root, "*"), "sessions", "*"))
 	if err != nil {
 		return "", err
 	}

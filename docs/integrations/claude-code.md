@@ -10,7 +10,7 @@ Packaged as a Claude Code plugin: `.claude-plugin/plugin.json`, with `hooks/hook
 
 Two processes serve a bound session, and the hold is shared by every adapter; only the hooks and the exit code are this host's.
 
-The **watcher** is `arm`, a background hook marked `asyncRewake`. It takes the agent's watch lock under `<root>/adapters/watch/`, writes a waker record naming itself, spawns the holder, and blocks on the stream. On a delivery it re-reads what is unread under the session's lock, prints the plain-text wake to stdout, removes its waker record, acknowledges exactly what it printed, and exits 2; that output reaches the model as a system reminder, waking an idle session with no active turn. In a running turn the host queues it and attaches it whole after the next tool result, in the same turn (live check, Claude Code 2.1.216). It is the only process that acknowledges anything.
+The **watcher** is `arm`, a background hook marked `asyncRewake`. It takes the agent's watch lock under `<root>/hosts/watch/`, writes a waker record naming itself, spawns the holder, and blocks on the stream. On a delivery it re-reads what is unread under the session's lock, prints the plain-text wake to stdout, removes its waker record, acknowledges exactly what it printed, and exits 2; that output reaches the model as a system reminder, waking an idle session with no active turn. In a running turn the host queues it and attaches it whole after the next tool result, in the same turn (live check, Claude Code 2.1.216). It is the only process that acknowledges anything.
 
 `SessionStart`, `Stop` and `PostToolUse` all run `arm`. The `PostToolUse` one is for a turn a wake started: its watcher exited to start it, so without one armed at a tool result, what arrived during that turn would wait for its end. An `arm` that finds a live watcher's record exits at once, so arming on every tool result costs a process start. `PostToolUse` also fires inside subagents, with the parent's `session_id`; `arm` ignores an event carrying `agent_id`, so a subagent never arms the parent's watcher. Live gates: that an `asyncRewake` `PostToolUse` hook rewakes as a `Stop` one does, and that a subagent's tool use does not arm.
 
@@ -35,7 +35,7 @@ Each is one hook entry, and all of them run the same executable: `conductor adap
 | Lifecycle trigger | A `SessionStart` hook matching `startup`, `resume`, `clear`, `compact`, and `fork`. Runs `identity`, which serves the session and announces its binding into context, then `arm`. |
 | Teardown | A `SessionEnd` hook running `release`, which forgets the session's binding. The watcher and the holder see it gone at their next poll and exit. Not optional: the host awaits outstanding rewake hooks during session teardown, so a watcher that ignored session end would delay the host's exit. |
 
-`release` is scoped to its session: it forgets that session's binding and no other, so a second session in the same project keeps its own. Bindings live under `<root>/adapters/claude/sessions/`, and the watch lock and waker record under `<root>/adapters/watch/` — outside the protocol's own state, which has no concept of a host session and should not acquire one.
+`release` is scoped to its session: it forgets that session's binding and no other, so a second session in the same project keeps its own. Bindings live under `<root>/hosts/claude-code/sessions/`, and the watch lock and waker record under `<root>/hosts/watch/` — outside the protocol's own state, which has no concept of a host session and should not acquire one.
 
 ## Which session a hook is in
 
@@ -57,7 +57,7 @@ The plugin lives in the host's registry, which is private state nothing here may
 
 ## Binding a session to an agent
 
-A session's binding is one file under `<root>/adapters/claude/sessions/`, keyed by session identifier. `SessionStart`'s `identity` hook creates it empty — the session is *served* — and `join`, run by the model inside that session, finds it through the exported `CLAUDE_CODE_SESSION_ID`, writes the agent's name into it, and answers `"wake": "adapter"`. Teardown removes it. A join from a session no hook served answers `"watch"`, so the model holds its own stream exactly where nothing else will.
+A session's binding is one file under `<root>/hosts/claude-code/sessions/`, keyed by session identifier. `SessionStart`'s `identity` hook creates it empty — the session is *served* — and `join`, run by the model inside that session, finds it through the exported `CLAUDE_CODE_SESSION_ID`, writes the agent's name into it, and answers `"wake": "adapter"`. Teardown removes it. A join from a session no hook served answers `"watch"`, so the model holds its own stream exactly where nothing else will.
 
 The binding is made by the act that registers the name, so it cannot name an agent that has not joined, needs no per-project file, and lets any number of sessions in one directory act as different agents. A later join under another name rebinds the session, and the old name's holder and watcher release on it.
 

@@ -345,12 +345,12 @@ func protocolCode(err error) string {
 
 // quietHeads locates the heads of the agent's last read that found nothing.
 func quietHeads(client *state.Client) string {
-	return filepath.Join(client.Home, "adapters", "watch", client.Agent+".heads.json")
+	return filepath.Join(binding.Directory(client.Home, "watch"), client.Agent+".heads.json")
 }
 
 // records locates the agent's watch lock and waker record.
 func records(client *state.Client) (lock, waker string) {
-	base := filepath.Join(client.Home, "adapters", "watch", client.Agent)
+	base := filepath.Join(binding.Directory(client.Home, "watch"), client.Agent)
 	return base + ".guard", base + ".json"
 }
 

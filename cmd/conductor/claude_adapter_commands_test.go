@@ -32,7 +32,7 @@ func TestAToolResultArmsOnlyAMissingWatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stopWatch(t, watcher)
-	waker := filepath.Join(root, "adapters", "watch", "a.json")
+	waker := filepath.Join(root, "hosts", "watch", "a.json")
 	waitFor(t, "the first watcher to register", func() bool {
 		data, err := os.ReadFile(waker)
 		return err == nil && bytes.Contains(data, []byte(`"pid":`+strconv.Itoa(watcher.Process.Pid)))

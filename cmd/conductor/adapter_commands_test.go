@@ -366,8 +366,10 @@ func TestAdapterInstallPlacesARunnableAdapter(t *testing.T) {
 		{"agy", agy.AdapterName, "plugin.json", "hooks.json", agyCommand},
 	} {
 		t.Run(host.name, func(t *testing.T) {
-			destination := filepath.Join(t.TempDir(), ".conductor", "adapters", host.adapter)
-			stdout, stderr, err := cli{home: t.TempDir()}.run("adapter", host.name, "install", destination)
+			// The conventional destination, inside the state root the sessions write to.
+			home := t.TempDir()
+			destination := filepath.Join(home, "adapters", host.adapter)
+			stdout, stderr, err := cli{home: home}.run("adapter", host.name, "install", destination)
 			if err != nil {
 				t.Fatalf("install: %v: %s", err, stderr)
 			}
@@ -384,6 +386,13 @@ func TestAdapterInstallPlacesARunnableAdapter(t *testing.T) {
 			hooks, err := os.ReadFile(filepath.Join(destination, host.hooks))
 			if err != nil || !strings.Contains(string(hooks), host.command) || strings.Contains(string(hooks), "${CONDUCTOR_BIN}") {
 				t.Fatalf("installed hooks = %s, %v; want %s", hooks, err, host.command)
+			}
+			// A served session must leave the installed tree as installed.
+			if err := binding.Serve(home, host.adapter, "s1"); err != nil {
+				t.Fatal(err)
+			}
+			if stdout, _, err := (cli{home: home}).run("adapter", host.name, "install", destination); err != nil || !strings.Contains(string(stdout), `"already-installed"`) {
+				t.Fatalf("reinstall after a session = %s, %v", stdout, err)
 			}
 
 			for name, args := range map[string][]string{
