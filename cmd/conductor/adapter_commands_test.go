@@ -18,6 +18,7 @@ import (
 
 	"github.com/danlavee/Conductor/internal/adapters/binding"
 	"github.com/danlavee/Conductor/internal/adapters/claude"
+	"github.com/danlavee/Conductor/internal/adapters/grok"
 	"github.com/danlavee/Conductor/internal/adapters/hold"
 	installer "github.com/danlavee/Conductor/internal/install"
 	"github.com/danlavee/Conductor/internal/platform"
@@ -66,6 +67,25 @@ func TestAdapterArmWakesTheSessionAndOnlyWhenBound(t *testing.T) {
 			return errors.As(err, &exit) && exit.ExitCode() == 2 && isWake(string(stdout))
 		},
 		end: func(t *testing.T, _ string, run hook, _ cli) { release(t, run, sessionEvent("session-1")) },
+	}, {
+		name: "grok", environment: grok.SessionEnvironment, session: "session-1",
+		serve: `{}`, endTurn: `{"reason":"end_turn"}`,
+		passed: []string{`{"reason":"end_turn","subagentType":"worker"}`, `{"reason":"shutdown"}`},
+		run: func(root, dir, verb, stdin string) ([]byte, []byte, error) {
+			return cli{home: root, dir: dir, stdin: stdin}.run("adapter", "grok", verb, "--session=session-1")
+		},
+		woke: func(stdout []byte, err error) bool {
+			var block struct{ Decision, Reason string }
+			return err == nil && json.Unmarshal(stdout, &block) == nil && block.Decision == "block" && isWake(block.Reason)
+		},
+		// A release carrying subagentType is skipped, so a subagent's end does not end the session.
+		end: func(t *testing.T, root string, run hook, _ cli) {
+			release(t, run, `{"subagentType":"worker"}`)
+			if agent, err := binding.Identity(root, grok.AdapterName, "session-1"); err != nil || agent != "a" {
+				t.Fatalf("a subagent's end left the session bound to %q, %v", agent, err)
+			}
+			release(t, run, `{}`)
+		},
 	}} {
 		t.Run(host.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "runtime-state")
@@ -324,6 +344,7 @@ func TestAdapterInstallPlacesARunnableAdapter(t *testing.T) {
 	}
 	for _, host := range []struct{ name, adapter, manifest, hooks, command string }{
 		{"claude", claude.AdapterName, ".claude-plugin/marketplace.json", "hooks/hooks.json", "${CLAUDE_PLUGIN_ROOT}/bin/conductor"},
+		{"grok", grok.AdapterName, ".grok-plugin/marketplace.json", "hooks/hooks.json", "${GROK_PLUGIN_ROOT}/bin/conductor" + exe},
 	} {
 		t.Run(host.name, func(t *testing.T) {
 			destination := filepath.Join(t.TempDir(), ".conductor", "adapters", host.adapter)

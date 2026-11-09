@@ -1,0 +1,53 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "new|load",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CONDUCTOR_BIN}",
+            "args": ["adapter", "grok", "identity", "--session=${GROK_SESSION_ID}"],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CONDUCTOR_BIN}",
+            "args": ["adapter", "grok", "arm", "--session=${GROK_SESSION_ID}"],
+            "timeout": 86400
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CONDUCTOR_BIN}",
+            "args": ["adapter", "grok", "inject", "--session=${GROK_SESSION_ID}"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CONDUCTOR_BIN}",
+            "args": ["adapter", "grok", "release", "--session=${GROK_SESSION_ID}"],
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

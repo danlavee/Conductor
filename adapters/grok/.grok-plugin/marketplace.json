@@ -1,0 +1,11 @@
+{
+  "name": "conductor",
+  "description": "Conductor wake adapter for Grok",
+  "plugins": [
+    {
+      "name": "conductor",
+      "description": "Keep a Grok session that joined Conductor wakeable",
+      "source": "./"
+    }
+  ]
+}
