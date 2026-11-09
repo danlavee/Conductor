@@ -96,11 +96,7 @@ func TestAdapterArmWakesTheSessionAndOnlyWhenBound(t *testing.T) {
 		},
 		woke: func(stdout []byte, err error) bool {
 			var decision struct{ Decision, Reason string }
-			var batch struct {
-				Deliveries []json.RawMessage `json:"deliveries"`
-			}
-			return err == nil && json.Unmarshal(stdout, &decision) == nil && decision.Decision == "continue" &&
-				json.Unmarshal([]byte(decision.Reason), &batch) == nil && len(batch.Deliveries) != 0
+			return err == nil && json.Unmarshal(stdout, &decision) == nil && decision.Decision == "continue" && isWake(decision.Reason)
 		},
 		// With no session end, a rebind is what ends the hold.
 		end: func(t *testing.T, _ string, _ hook, in cli) {

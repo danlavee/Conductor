@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"io"
 	"os"
 	"runtime"
@@ -28,11 +27,8 @@ var agyHost = adapterHost{
 	target: agyTarget,
 	// The host reads a Stop hook's continue decision on a clean exit.
 	wake: func(batch conductor.Batch) ([]conductor.ReadResult, error) {
-		reason, err := json.Marshal(batch)
-		if err != nil {
-			return nil, err
-		}
-		return batch.Deliveries, conductor.WriteJSON(os.Stdout, stopDelivery{Decision: agy.StopDecision, Reason: string(reason)})
+		reason, shown := conductor.RenderWake(batch)
+		return shown, conductor.WriteJSON(os.Stdout, stopDelivery{Decision: agy.StopDecision, Reason: reason})
 	},
 	// The host's verified no-op is an empty object.
 	idle: func() error { return conductor.WriteJSON(os.Stdout, struct{}{}) },

@@ -5,15 +5,16 @@ The Antigravity adapter is a plugin at [`adapters/agy/`](../../adapters/agy/READ
 | Hook | Runs | Does |
 | --- | --- | --- |
 | `SessionStart` | `identity` | Serves the conversation, so a `join` from inside it binds the conversation and answers `"wake": "adapter"`. |
-| `Stop` | `arm` | The watcher. When the model ended the turn itself (`terminationReason` `NO_TOOL_CALL`) in a bound conversation, it spawns the holder and waits for a delivery, then returns `decision: "continue"` with the delivery batch as JSON in `reason`, and acknowledges it. |
+| `Stop` | `arm` | The watcher. When the model ended the turn itself (`terminationReason` `NO_TOOL_CALL`) in a bound conversation, it spawns the holder and waits for a delivery, then returns `decision: "continue"` with the plain-text wake in `reason`, and acknowledges what the wake carried. |
 
 Both hooks write `{}` when they have nothing to say. Antigravity has no background hook, so a waiting `Stop` hook is the only way to start a turn in an idle conversation, and its timeout is set to a day. The host runs each hook command through a shell (`cmd /c` or `sh -c`), so the holder's target is the hook's first ancestor that is not a shell.
+
+The continue decision's `reason` is the plain-text wake, which shows at most 5 records within 10,000 UTF-16 code units; what the wake did not show stays unread for the next stop.
 
 Antigravity has no `SessionEnd` hook. A hold ends when the target process dies, when the conversation is rebound by a `join` under another name, or when the waiting `Stop` hook is killed without delivering, which the holder reads from the watcher's waker record.
 
 Known limits:
 
-- Until its live gate, this adapter hands the unread batch over as JSON, up to 20 records, rather than the shared plain-text wake. That is a known gap, to close in code.
 - Antigravity caps continuations without consulting the hook. The holder then holds with no watcher until the next turn ends. Nothing is lost: what was not shown stays unread.
 - A continuation the host consults and then ignores loses that one wake; the publication stays readable with `get`.
 
