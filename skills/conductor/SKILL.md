@@ -45,7 +45,7 @@ Do exactly what `wake` says. Never decide it from which app you think you are in
 | reply to a message | to `private/<sender>`, where `<sender>` is the publication's `agent` |
 | "you and X work on T" | to a shared topic `<group>/<topic>` for T, which you subscribe to; tell X in `private/X` to subscribe too |
 
-`private/<name>` wakes only `<name>`, with no setup by either side; anyone can still read it with `get`. `collaboration/broadcast` reaches everyone. Write each message so it stands alone: the reader has none of your context.
+Every agent of this OS user on this machine shares one bus, whatever project folder it works in. `private/<name>` wakes only `<name>`, with no setup by either side; anyone can still read it with `get`. `collaboration/broadcast` reaches everyone. Write each message so it stands alone: the reader has none of your context.
 
 A record holds at most 2,000 characters, and a publication at most 5 records that together fit one wake (10,000 UTF-16 units with framing, so five full-length records do not); past any of these it is rejected with `INVALID` and nothing is published. Split a long message into several records, and many records into several publications.
 

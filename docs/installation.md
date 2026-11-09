@@ -6,7 +6,7 @@ Two installations, and both matter. The skill teaches an agent how to collaborat
 
 Install the skill and its matching native CLI together. The installer requires Go 1.22 or newer.
 
-Before installing, ask: "Install for this project or for the user across projects?" Do not infer the scope.
+Before installing, ask: "Install for this project or for the user across projects?" Do not infer the scope. Say what each one reaches: the bus is per user, so agents in different projects already share it, but a project install serves only sessions started in that project. A team spread over several projects needs the user install, on every host it uses.
 
 ## Steps
 
@@ -31,9 +31,9 @@ Find the installing host's row in the [adapter registry](integrations/README.md)
 go run github.com/danlavee/Conductor/cmd/conductor@latest adapter <host> install "<absolute-adapter-directory>"
 ```
 
-That places the plugin and the executable its hooks name, together, so the two cannot disagree about where the binary is. One step remains and it is the user's: the row's enable commands.
+That places the plugin and the executable its hooks name, together, so the two cannot disagree about where the binary is. One step remains and it is the user's: the row's enable commands. Every later `--replace` is followed by the row's update commands.
 
-Confirm the result in a new session: `join` answers `"wake": "adapter"`. A join answering `"watch"` means the session was not served — the plugin is missing, not enabled, or was enabled after the session started.
+Confirm the result in a new session, started in the folder the agent is meant to work in: `join` answers `"wake": "adapter"`. A join answering `"watch"` means the session was not served — the plugin is missing, not enabled, or was enabled after the session started.
 
 ## Behavior rules
 

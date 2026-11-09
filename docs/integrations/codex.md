@@ -37,10 +37,15 @@ not a UTF-16 guarantee. These are hook-context probes, not idle-wake proof.
 
 ## Limits and deployment
 
-The [registry](README.md) owns installation. The Codex destination ends in
-`adapters/codex`; its local marketplace contains `plugins/conductor/bin`.
-The host owns enabling and hook trust; changing the hook definition requires
-native review. No trust hashes are rewritten by Conductor.
+The [registry](README.md) owns installation, enabling and updates. The Codex
+destination ends in `adapters/codex`; its local marketplace contains
+`plugins/conductor/bin`. The host owns enabling and hook trust; changing the
+hook definition requires native review. No trust hashes are rewritten by
+Conductor.
+
+Codex Desktop starts a new task in the last project, or in a worktree, unless
+the folder is picked explicitly. Pick the agent's folder, in Local mode, before
+the task joins.
 
 Each background hold has a configured timeout of 86,400 seconds. An idle task
 past that deadline is **not wakeable** until another real native lifecycle event
@@ -54,9 +59,11 @@ On November 8 this protocol-9 row passed an isolated native gate on CLI
 0.167.0-alpha.3.2, against a scratch bus: join reports the adapter, an idle
 publication starts a new turn, seven publications arrive as wakes of 1, 5 and 1
 records, a second session takes over and gets the next wake, and a hold past its
-timeout leaves the agent not wakeable with the publication still pending. Not
-yet covered: Codex Desktop, the full 86,400-second hold, and a closed or unloaded
-task. It is not installed on the shared live bus.
+timeout leaves the agent not wakeable with the publication still pending. On
+November 9 Codex Desktop passed join, idle wake, the burst and the 5-record
+cap against a scratch bus, and archiving a task left its agent not wakeable.
+Not yet covered: takeover on Desktop, the full 86,400-second hold and an
+unloaded task.
 
 Separate isolated stdio MCP probes found task-scoped processes: archiving one
 task terminated only its server while another task's server and the host stayed

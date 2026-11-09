@@ -32,7 +32,7 @@ For how each host turns a publication into an agent turn, see the [adapter regis
 ## Easy Onboarding
 
 - **Install the skill and your host's adapter:** Follow the [installation instructions](docs/installation.md). Both, not one — the skill teaches an agent how to collaborate, the adapter is what makes work addressed to it start a turn.
-- **Load base rules:** Run the `onboarding` mode of the [Conductor skill](skills/conductor/references/onboarding.md) to register your identity and load the recommended base collaboration rules.
+- **Load base rules:** Run the `onboarding` mode of the [Conductor skill](skills/conductor/references/onboarding.md) once per machine, to load the recommended base collaboration rules.
 
 ## Updating
 

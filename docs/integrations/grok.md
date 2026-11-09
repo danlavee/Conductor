@@ -25,6 +25,6 @@ Install places this tree and its executable together:
 
 `go run github.com/danlavee/Conductor/cmd/conductor@latest adapter grok install "<absolute path ending in adapters/grok>"`
 
-Pass `--replace` to upgrade, in the same step as the skill. Then enable it with the host, from that installed directory: `grok plugin marketplace add <installed directory>` and `grok plugin install conductor --trust`. Conductor does not write Grok's plugin registry or trust store.
+Pass `--replace` to upgrade, in the same step as the skill. Enabling it and picking up each upgrade are the user's commands, in the [registry](README.md) row. Conductor does not write Grok's plugin registry or trust store.
 
-The live session gates have not been run on this port. Unobserved so far: that the `Stop` hook's parent is the session process, that a detached holder survives the hook that spawned it, that commands the model runs inherit `GROK_SESSION_ID`, the event's `reason` and `subagentType` keys, and what the day-long `Stop` timeout does.
+On November 8 this port passed an isolated native gate at `bfa8211` against a scratch bus: an idle session woke at `end_turn`, `inject` delivered inside a turn, a burst arrived as 5 records then the rest, only what was shown was acknowledged, a second session took over, and a subagent was never shown a wake. Unobserved so far: what the day-long `Stop` timeout does.

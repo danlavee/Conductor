@@ -22,6 +22,6 @@ Install places this tree and its executable together:
 
 `go run github.com/danlavee/Conductor/cmd/conductor@latest adapter agy install "<absolute path ending in adapters/agy>"`
 
-Pass `--replace` to upgrade, in the same step as the skill. Then validate and enable the plugin with `agy plugin validate <that path>` and `agy plugin enable conductor`. Conductor does not write Antigravity's plugin registry.
+Pass `--replace` to upgrade, in the same step as the skill. Enabling it and picking up each upgrade are the user's commands, in the [registry](README.md) row. Conductor does not write Antigravity's plugin registry.
 
-The live session gates have not been run on this mechanism. Unobserved so far: the `Stop` hook's ancestor chain on the CLI and on Desktop; whether that target lives exactly as long as the conversation, and whether closing a conversation or interrupting it kills the waiting `Stop` hook; that a detached holder survives the hook that spawned it; the payload's `conversationId` and `terminationReason` keys and the `NO_TOOL_CALL` value; the size limit on `reason`; and whether commands the model runs inherit `ANTIGRAVITY_CONVERSATION_ID`.
+On November 9 this mechanism passed an isolated native gate on CLI 1.5.3 against a scratch bus: join reports the adapter, an idle publication starts a turn, a burst of seven arrives as wakes of 5 and 2 records, a second conversation takes over and gets the next wake, and the session's exit releases the holder. The CLI's ancestor chain, the payload keys, `NO_TOOL_CALL`, and commands inheriting `ANTIGRAVITY_CONVERSATION_ID` were observed there. Unobserved so far: the ancestor chain on Desktop, whether closing or interrupting a conversation kills the waiting `Stop` hook, and the size limit on `reason`.

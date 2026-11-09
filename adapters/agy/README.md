@@ -10,6 +10,6 @@ conductor adapter agy install <absolute-directory>/adapters/agy
 
 That places this tree and puts the executable at `bin/conductor.exe` on Windows, or `bin/conductor` elsewhere, which is the path the hooks name. Installing twice reports `already-installed` and changes nothing.
 
-Then point the host at it and enable it with the host's own commands: `agy plugin validate <the installed adapters/agy directory>` and `agy plugin enable conductor`. Conductor does not write the host's plugin registry.
+Then enable it with the host's own command, run again after every upgrade: the [adapter registry](../../docs/integrations/README.md) row. Conductor does not write the host's plugin registry.
 
 After that, the agent's only action is `join`, from inside the conversation. How the hooks work is in [the integration page](../../docs/integrations/agy.md).

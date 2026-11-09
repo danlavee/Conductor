@@ -6,13 +6,15 @@ Conductor's core is host-neutral. `join` answers `"wake": "adapter"` exactly whe
 
 This table is the one place that names each host's adapter. [Installation](../installation.md) and the [update procedure](../../skills/conductor/references/update-skill.md) run whatever its row says.
 
-| Host | `<host>` | Destination ends in | Enable (the user's step) | Status |
-| --- | --- | --- | --- | --- |
-| [Claude Code](claude-code.md) | `claude` | `adapters/claude-code` | `claude plugin marketplace add <destination>`, then `claude plugin install conductor@conductor-adapters` | Built; join binds the session |
-| [Grok](grok.md) | `grok` | `adapters/grok` | `grok plugin marketplace add <destination>`, then `grok plugin install conductor --trust` | Built; join binds the session, live gates not run |
-| [Antigravity](agy.md) | `agy` | `adapters/agy` | `agy plugin validate <destination>`, then `agy plugin enable conductor` | Built; join binds the session, live gates not run |
-| [Codex](codex.md) | `codex` | `adapters/codex` | Add the local marketplace and trust the hooks; see [codex.md](codex.md) | Built; join binds the session, CLI live gate passed, Desktop not yet |
-| Any other host | — | — | — | Fallback |
+| Host | `<host>` | Destination ends in | Enable, once (the user's step) | Update, after each `--replace` (the user's step) | Live gates |
+| --- | --- | --- | --- | --- | --- |
+| [Claude Code](claude-code.md) | `claude` | `adapters/claude-code` | `claude plugin marketplace add <destination>`, then `claude plugin install conductor@conductor-adapters` | `claude plugin update conductor@conductor-adapters`, then restart the sessions | Wake passed; holder and watcher split not run |
+| [Grok](grok.md) | `grok` | `adapters/grok` | `grok plugin install <destination>`, then accept its trust prompt | `grok plugin uninstall conductor --confirm`, then `grok plugin install <destination>` again, accepting its trust prompt, then start new sessions; `grok plugin update` does not refresh it | CLI passed |
+| [Antigravity](agy.md) | `agy` | `adapters/agy` | `agy plugin install <destination>`; it is enabled on install | `agy plugin install <destination>` again, then start new conversations | CLI passed |
+| [Codex](codex.md) | `codex` | `adapters/codex` | `codex plugin marketplace add <destination>`, then `codex plugin add conductor@conductor-adapters`, then approve its hooks in the app | `codex plugin add conductor@conductor-adapters` again, approve the changed hooks, then start new tasks | CLI passed; Desktop passed except takeover |
+| Any other host | — | — | — | — | Fallback |
+
+Every host runs its own copy of the plugin, made when it was enabled. Claude and Codex file that copy under the version in the plugin's manifest, which is why each release installs with its own version. Until the update command runs, the host keeps running the old copy and the old executable, which can recreate a bus the update moved aside. Run it with the host's sessions stopped: on Windows a running hook holds the old executable open.
 
 Every built adapter installs the same way, placing its plugin tree and the executable its hooks name together:
 

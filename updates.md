@@ -4,6 +4,10 @@ This file contains only release-specific steps that fall outside Conductor's nor
 
 ## Unreleased
 
+Each adapter's plugin manifest now carries the release version, so a host that caches plugins by version sees each release as new. After reinstalling an adapter with `--replace`, run its host's update commands from the [adapter registry](docs/integrations/README.md); without them the host keeps running the old copy.
+
+Adapter runtime state (session bindings, watch locks) moved from `<root>/adapters/` to `<root>/hosts/`. It used to share names with the conventional install folders under `~/.conductor/adapters`, so running sessions wrote into the installed trees.
+
 Live cutover and `migrate` are removed. Start a fresh state root: the old one is not carried forward, and the sibling `.<root>-cutover-*` control directory is no longer read.
 
 `redact` and `strike` are removed; retire a record with `edit`. Writes now take an OS file lock per topic instead of a lease and durable transaction, so the state protocol is now 5 and needs a fresh state root.
