@@ -1,0 +1,15 @@
+# Antigravity adapter
+
+The [wake adapter](../../docs/design/wake-adapters.md) for Antigravity (`agy`), packaged as a plugin. It makes a conversation wakeable: team work addressed to its agent starts a real turn, with no tool call to remember and no handle to keep.
+
+## Installing
+
+```
+conductor adapter agy install <absolute-directory>/adapters/agy
+```
+
+That places this tree and puts the executable at `bin/conductor.exe` on Windows, or `bin/conductor` elsewhere, which is the path the hooks name. Installing twice reports `already-installed` and changes nothing.
+
+Then point the host at it and enable it with the host's own commands: `agy plugin validate <the installed adapters/agy directory>` and `agy plugin enable conductor`. Conductor does not write the host's plugin registry.
+
+After that, the agent's only action is `join`, from inside the conversation. How the hooks work is in [the integration page](../../docs/integrations/agy.md).

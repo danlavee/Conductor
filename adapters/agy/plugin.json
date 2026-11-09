@@ -1,0 +1,6 @@
+{
+  "name": "conductor",
+  "displayName": "Conductor",
+  "version": "0.1.0",
+  "description": "Keeps an Antigravity session that joined Conductor wakeable. Joining, subscribing, reading, and publishing stay with the Conductor skill."
+}

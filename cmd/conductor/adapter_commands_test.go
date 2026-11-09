@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danlavee/Conductor/internal/adapters/agy"
 	"github.com/danlavee/Conductor/internal/adapters/binding"
 	"github.com/danlavee/Conductor/internal/adapters/claude"
 	"github.com/danlavee/Conductor/internal/adapters/grok"
@@ -85,6 +86,27 @@ func TestAdapterArmWakesTheSessionAndOnlyWhenBound(t *testing.T) {
 				t.Fatalf("a subagent's end left the session bound to %q, %v", agent, err)
 			}
 			release(t, run, `{}`)
+		},
+	}, {
+		name: "agy", environment: agy.SessionEnvironment, session: "conv-1",
+		serve: `{"conversationId":"conv-1"}`, endTurn: `{"conversationId":"conv-1","terminationReason":"NO_TOOL_CALL"}`,
+		passed: []string{`{"conversationId":"conv-1","terminationReason":"USER_CANCELED"}`}, nothing: "{}",
+		run: func(root, dir, verb, stdin string) ([]byte, []byte, error) {
+			return cli{home: root, dir: dir, stdin: stdin}.run("adapter", "agy", verb)
+		},
+		woke: func(stdout []byte, err error) bool {
+			var decision struct{ Decision, Reason string }
+			var batch struct {
+				Deliveries []json.RawMessage `json:"deliveries"`
+			}
+			return err == nil && json.Unmarshal(stdout, &decision) == nil && decision.Decision == "continue" &&
+				json.Unmarshal([]byte(decision.Reason), &batch) == nil && len(batch.Deliveries) != 0
+		},
+		// With no session end, a rebind is what ends the hold.
+		end: func(t *testing.T, _ string, _ hook, in cli) {
+			if _, stderr, err := in.run("c", "join", "dev"); err != nil {
+				t.Fatalf("rebind: %v: %s", err, stderr)
+			}
 		},
 	}} {
 		t.Run(host.name, func(t *testing.T) {
@@ -338,13 +360,14 @@ func guardLocked(t *testing.T, root string) bool {
 // hooks will spawn, and the hooks are spawned with no shell, so the command
 // each host's rewrite leaves in them is the whole wiring.
 func TestAdapterInstallPlacesARunnableAdapter(t *testing.T) {
-	exe := ""
+	exe, agyCommand := "", "./bin/conductor"
 	if runtime.GOOS == "windows" {
-		exe = ".exe"
+		exe, agyCommand = ".exe", `bin\\conductor.exe`
 	}
 	for _, host := range []struct{ name, adapter, manifest, hooks, command string }{
 		{"claude", claude.AdapterName, ".claude-plugin/marketplace.json", "hooks/hooks.json", "${CLAUDE_PLUGIN_ROOT}/bin/conductor"},
 		{"grok", grok.AdapterName, ".grok-plugin/marketplace.json", "hooks/hooks.json", "${GROK_PLUGIN_ROOT}/bin/conductor" + exe},
+		{"agy", agy.AdapterName, "plugin.json", "hooks.json", agyCommand},
 	} {
 		t.Run(host.name, func(t *testing.T) {
 			destination := filepath.Join(t.TempDir(), ".conductor", "adapters", host.adapter)
