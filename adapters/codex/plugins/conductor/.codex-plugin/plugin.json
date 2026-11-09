@@ -1,6 +1,6 @@
 {
   "name": "conductor",
-  "version": "0.1.0",
+  "version": "${CONDUCTOR_VERSION}",
   "description": "Conductor event-driven delivery for joined Codex tasks.",
   "author": {
     "name": "Dan Lavee"

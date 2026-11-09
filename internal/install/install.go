@@ -3,7 +3,6 @@
 package install
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -36,6 +35,11 @@ type Payload struct {
 
 // HookCommandPlaceholder stands in a payload's hooks for the installed executable.
 const HookCommandPlaceholder = "${CONDUCTOR_BIN}"
+
+// VersionPlaceholder stands in a payload's plugin manifests for the release.
+// Hosts run a copy cached under the manifest version, so each release must carry
+// its own or a host update finds nothing new and keeps the old executable.
+const VersionPlaceholder = "${CONDUCTOR_VERSION}"
 
 // Check enforces the destination contract without writing anything.
 func (p Payload) Check(destination string) error {
@@ -189,16 +193,27 @@ func (s Source) build(destination string) (map[string][]byte, manifest, error) {
 	if err != nil {
 		return nil, manifest{}, fmt.Errorf("read payload: %w", err)
 	}
+	substitutions := []string{VersionPlaceholder, pluginVersion(s.Version)}
 	if s.HookCommand != nil {
-		command := []byte(s.HookCommand(s.executable()))
-		for name, data := range files {
-			files[name] = bytes.ReplaceAll(data, []byte(HookCommandPlaceholder), command)
-		}
+		substitutions = append(substitutions, HookCommandPlaceholder, s.HookCommand(s.executable()))
+	}
+	replacer := strings.NewReplacer(substitutions...)
+	for name, data := range files {
+		files[name] = []byte(replacer.Replace(string(data)))
 	}
 	if files[s.executable()], err = os.ReadFile(s.Executable); err != nil {
 		return nil, manifest{}, fmt.Errorf("read running executable: %w", err)
 	}
 	return files, manifest{Version: s.Version, Protocol: s.Protocol, SHA256: digest(files)}, nil
+}
+
+// pluginVersion is the release as the bare semantic version plugin manifests
+// require; a build without module version information is 0.0.0-devel.
+func pluginVersion(release string) string {
+	if version, ok := strings.CutPrefix(release, "v"); ok {
+		return version
+	}
+	return "0.0.0-devel"
 }
 
 func classify(destination string, want manifest) (Currency, error) {

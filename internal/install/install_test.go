@@ -27,6 +27,7 @@ func testSource(t *testing.T, skillText string) Source {
 	bundle := fstest.MapFS{
 		"SKILL.md":               {Data: []byte(skillText)},
 		"references/protocol.md": {Data: []byte("# Protocol\n")},
+		"plugin.json":            {Data: []byte(`{"version":"` + VersionPlaceholder + `"}`)},
 	}
 	return Source{
 		Payload:    Payload{Bundle: bundle, Parent: "skills", Name: "conductor", ExecutableDir: "scripts"},
@@ -79,6 +80,13 @@ func TestInstallIsIdempotentAndRunnable(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(destination, "references", "protocol.md")); err != nil || string(data) != "# Protocol\n" {
 		t.Fatalf("payload file = %q, %v", data, err)
+	}
+	// Hosts cache plugins by manifest version, so each release installs as its own.
+	if data, err := os.ReadFile(filepath.Join(destination, "plugin.json")); err != nil || string(data) != `{"version":"1.2.3"}` {
+		t.Fatalf("plugin manifest = %q, %v", data, err)
+	}
+	if got := pluginVersion("(devel)"); got != "0.0.0-devel" {
+		t.Fatalf("unversioned build = %q", got)
 	}
 	if got := status(t, destination, source); got != "current" {
 		t.Fatalf("status = %s", got)

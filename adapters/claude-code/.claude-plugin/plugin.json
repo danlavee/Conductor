@@ -1,7 +1,7 @@
 {
   "name": "conductor",
   "description": "Keeps this session wakeable on the Conductor bus: holds a delivery stream, wakes the session when team work arrives, and re-arms itself without the agent doing anything.",
-  "version": "0.1.0",
+  "version": "${CONDUCTOR_VERSION}",
   "author": {
     "name": "Dan Lavee"
   }
