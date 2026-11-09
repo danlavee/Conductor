@@ -56,7 +56,16 @@ publication starts a new turn, seven publications arrive as wakes of 1, 5 and 1
 records, a second session takes over and gets the next wake, and a hold past its
 timeout leaves the agent not wakeable with the publication still pending. Not
 yet covered: Codex Desktop, the full 86,400-second hold, and a closed or unloaded
-task. It is not installed on the shared live bus. A task-owned MCP endpoint is a probe candidate, not a
-proven way to remove the timeout gap. Until the plugin is loaded and trusted,
+task. It is not installed on the shared live bus.
+
+Separate isolated stdio MCP probes found task-scoped processes: archiving one
+task terminated only its server while another task's server and the host stayed
+alive. Startup carried no identity. A native PostToolUse MCP hook did supply
+the matching task ID in `_meta.threadId`, with empty arguments and no model
+registration call. This establishes a zero-ceremony association candidate,
+not an implemented Conductor waker. MCP-backed queue delivery, reconnect,
+subagent behavior and Desktop scope remain unverified.
+
+Until the plugin is loaded and trusted,
 the common skill's watch rule applies; do not claim reachability from a process
 whose output cannot start a turn.
