@@ -1,0 +1,48 @@
+{
+  "description": "Conductor delivery while a native Codex hook is alive.",
+  "hooks": {
+    "SessionStart": [{"hooks": [
+      {
+        "type": "command",
+        "command": "exec \"$PLUGIN_ROOT/bin/conductor\" adapter codex identity",
+        "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ([Environment]::GetEnvironmentVariable('PLUGIN_ROOT')) 'bin\\conductor.exe') adapter codex identity\"",
+        "timeout": 30
+      },
+      {
+        "type": "command",
+        "command": "exec \"$PLUGIN_ROOT/bin/conductor\" adapter codex arm",
+        "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ([Environment]::GetEnvironmentVariable('PLUGIN_ROOT')) 'bin\\conductor.exe') adapter codex arm\"",
+        "async": true,
+        "timeout": 86400
+      }
+    ]}],
+    "PostToolUse": [{"hooks": [
+      {
+        "type": "command",
+        "command": "exec \"$PLUGIN_ROOT/bin/conductor\" adapter codex inject",
+        "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ([Environment]::GetEnvironmentVariable('PLUGIN_ROOT')) 'bin\\conductor.exe') adapter codex inject\"",
+        "additionalContextLimit": 0,
+        "timeout": 3
+      },
+      {
+      "type": "command",
+      "command": "exec \"$PLUGIN_ROOT/bin/conductor\" adapter codex arm",
+      "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ([Environment]::GetEnvironmentVariable('PLUGIN_ROOT')) 'bin\\conductor.exe') adapter codex arm\"",
+      "async": true,
+      "timeout": 86400
+    }]}],
+    "Stop": [{"hooks": [{
+      "type": "command",
+      "command": "exec \"$PLUGIN_ROOT/bin/conductor\" adapter codex arm",
+      "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ([Environment]::GetEnvironmentVariable('PLUGIN_ROOT')) 'bin\\conductor.exe') adapter codex arm\"",
+      "async": true,
+      "timeout": 86400
+    }]}],
+    "SessionEnd": [{"hooks": [{
+      "type": "command",
+      "command": "exec \"$PLUGIN_ROOT/bin/conductor\" adapter codex release",
+      "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ([Environment]::GetEnvironmentVariable('PLUGIN_ROOT')) 'bin\\conductor.exe') adapter codex release\"",
+      "timeout": 3
+    }]}]
+  }
+}

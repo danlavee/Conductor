@@ -11,6 +11,7 @@ This table is the one place that names each host's adapter. [Installation](../in
 | [Claude Code](claude-code.md) | `claude` | `adapters/claude-code` | `claude plugin marketplace add <destination>`, then `claude plugin install conductor@conductor-adapters` | Built; join binds the session |
 | [Grok](grok.md) | `grok` | `adapters/grok` | `grok plugin marketplace add <destination>`, then `grok plugin install conductor --trust` | Built; join binds the session, live gates not run |
 | [Antigravity](agy.md) | `agy` | `adapters/agy` | `agy plugin validate <destination>`, then `agy plugin enable conductor` | Built; join binds the session, live gates not run |
+| [Codex](codex.md) | `codex` | `adapters/codex` | Add the local marketplace and trust the hooks; see [codex.md](codex.md) | Built; join binds the session, CLI live gate passed, Desktop not yet |
 | Any other host | — | — | — | Fallback |
 
 Every built adapter installs the same way, placing its plugin tree and the executable its hooks name together:

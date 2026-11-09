@@ -1,0 +1,16 @@
+{
+  "name": "conductor",
+  "version": "0.1.0",
+  "description": "Conductor event-driven delivery for joined Codex tasks.",
+  "author": {
+    "name": "Dan Lavee"
+  },
+  "interface": {
+    "displayName": "Conductor",
+    "shortDescription": "Wake an idle task when durable collaborator work arrives.",
+    "longDescription": "Keeps one Conductor delivery stream resident for an opted-in Codex task and queues accepted deliveries into that task.",
+    "developerName": "Conductor",
+    "category": "Productivity",
+    "capabilities": ["Automation"]
+  }
+}

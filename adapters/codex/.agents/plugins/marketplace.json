@@ -1,0 +1,20 @@
+{
+  "name": "conductor-adapters",
+  "interface": {
+    "displayName": "Conductor Adapters"
+  },
+  "plugins": [
+    {
+      "name": "conductor",
+      "source": {
+        "source": "local",
+        "path": "./plugins/conductor"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
